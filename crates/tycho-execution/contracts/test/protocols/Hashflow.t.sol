@@ -54,9 +54,11 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
     }
 
     function testDecodeParams() public view {
-        // Every field is distinct so a decoding offset mixup — like reading the
-        // trader slice as the effectiveTrader — fails the assertions. Decoding
-        // needs no valid signature.
+        // Synthetic quote instead of the realistic rfqtQuote() fixture: there
+        // trader == effectiveTrader, so a decoder reading the wrong byte slice
+        // still returns the expected value. Unique values per field make any
+        // offset mistake fail an assertion; decoding never checks the
+        // signature, so the values need not be real.
         IHashflowRouter.RFQTQuote memory expected_quote =
             IHashflowRouter.RFQTQuote({
                 pool: address(0x1111111111111111111111111111111111111111),
