@@ -303,6 +303,67 @@ contract HashflowExecutorNativeTest is Constants, HashflowUtils {
     }
 }
 
+contract HashflowExecutorEffectiveTraderTest is Constants, HashflowUtils {
+    HashflowExecutorExposed executor;
+    uint256 forkBlock;
+
+    IERC20 USDC = IERC20(USDC_ADDR);
+
+    function setUp() public {
+        // The quote below lives from its nonce (a maker timestamp) to its
+        // expiry, ~45s; the router rejects it outside that window ("Nonce too
+        // high" before, "Quote expired" after). This block is inside it.
+        forkBlock = 25975788; // Using expiry date: 1789390008
+        vm.createSelectFork("mainnet", forkBlock);
+        executor = new HashflowExecutorExposed(HASHFLOW_ROUTER);
+    }
+
+    function testSwapEffectiveTraderNotCaller() public {
+        // The maker signed this quote with an effectiveTrader nobody controls
+        // (0x…DeaDBeef). The router reads effectiveTrader only to scope quote
+        // nonces, so the swap executes exactly like one whose effectiveTrader
+        // equals the trader.
+        IHashflowRouter.RFQTQuote memory quote = IHashflowRouter.RFQTQuote({
+            pool: address(0x478Eca1b93865dcA0b9f325935eb123C8a4aF011),
+            externalAccount: address(
+                0xBEE3211ab312a8D065c4FeF0247448e17A8da000
+            ),
+            trader: address(ALICE),
+            effectiveTrader: address(
+                0x00000000000000000000000000000000DeaDBeef
+            ),
+            baseToken: WETH_ADDR,
+            quoteToken: USDC_ADDR,
+            effectiveBaseTokenAmount: 0,
+            baseTokenAmount: 1000000000000000000,
+            quoteTokenAmount: 2510840211,
+            quoteExpiry: 1789390008,
+            nonce: 1789389963406,
+            txid: bytes32(
+                uint256(
+                    0x125000064000640000e43f2da72000ffffffffffffff0031418d1897fb6d0000
+                )
+            ),
+            signature: hex"00e59648df10ba85d06a4c6b1eda60d3b48ac658bbfbd969f6b4ff5b7cdce13c3650ce5f8a0ab917164316e2d75886045d5ed7f5dea08a8de2f689e3c37cb7231c"
+        });
+        uint256 amountIn = quote.baseTokenAmount;
+        bytes memory encodedQuote = encodeRfqtQuote(quote);
+
+        deal(WETH_ADDR, address(executor), amountIn);
+        uint256 balanceBefore = USDC.balanceOf(ALICE);
+
+        vm.prank(address(executor));
+        IERC20(quote.baseToken).approve(HASHFLOW_ROUTER, amountIn);
+        vm.stopPrank();
+
+        vm.prank(ALICE);
+        executor.swap(amountIn, encodedQuote, address(executor));
+
+        uint256 balanceAfter = USDC.balanceOf(ALICE);
+        assertEq(balanceAfter - balanceBefore, quote.quoteTokenAmount);
+    }
+}
+
 contract HashflowExecutorExposed is HashflowExecutor {
     constructor(address _hashflowRouter) HashflowExecutor(_hashflowRouter) {}
 
