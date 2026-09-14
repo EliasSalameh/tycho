@@ -367,7 +367,7 @@ impl RFQClient for HashflowClient {
         let hashflow_chain = HashflowChain::from(self.chain);
         // A fresh random address becomes the quote's effectiveTrader — the address Hashflow
         // scopes its strictly increasing quote nonces to — so quotes never invalidate each
-        // other, at the cost of a cold nonce storage slot on Hashflow's router (~15k gas per
+        // other, at the cost of a cold nonce storage slot on Hashflow's router (~17k gas per
         // swap). The receiver executes the trade on-chain, so it is Hashflow's trader.
         let effective_trader = Bytes::from(Address::random().to_vec());
         let quote_request = HashflowQuoteRequest {

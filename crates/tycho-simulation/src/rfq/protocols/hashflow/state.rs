@@ -125,7 +125,7 @@ impl ProtocolSim for HashflowState {
                     SimulationError::RecoverableError("Can't convert amount out to BigUInt".into())
                 })?,
             gas: BigUint::from(151_000u64), // Rough gas estimation
-            new_state: self.clone_box(), // The state doesn't change after a swap
+            new_state: self.clone_box(),    // The state doesn't change after a swap
         };
 
         if remaining_amount_in > 0.0 {

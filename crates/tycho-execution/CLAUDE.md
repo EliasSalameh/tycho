@@ -324,7 +324,7 @@ Liquorice, Metric). Otherwise encoding runs serially on the calling thread. Inpu
 either way. Hashflow quotes stay independent under this parallelism because the Hashflow RFQ client
 (tycho-simulation) sends a fresh random effectiveTrader with every quote request: Hashflow scopes its strictly
 increasing quote nonces per effective trader, so quotes with unique addresses never invalidate each other. The
-cost is a cold nonce storage slot on Hashflow's router (~15k extra gas per swap).
+cost is a cold nonce storage slot on Hashflow's router (~17k extra gas per swap).
 
 **Swap grouping** (`evm/group_swaps.rs`): Consecutive swaps on the same groupable protocol
 (`GROUPABLE_PROTOCOLS` in `evm/constants.rs`: `uniswap_v4`, `uniswap_v4_hooks`, `vm:balancer_v3`,

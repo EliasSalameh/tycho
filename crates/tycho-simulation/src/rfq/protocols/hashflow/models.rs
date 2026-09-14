@@ -456,8 +456,8 @@ mod tests {
 
         #[test]
         fn test_validate_effective_trader_absent() {
-            // Without an effective trader the quote defaults to the trader's scope, never
-            // the requested one.
+            // An answer without an effectiveTrader is not tied to the address we requested
+            // (Hashflow ties it to the trader instead), so validation must reject it.
             let mut quote = quote();
             quote.quote_data.effective_trader = None;
             let params = params();
