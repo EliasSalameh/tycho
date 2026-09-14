@@ -124,9 +124,7 @@ impl ProtocolSim for HashflowState {
                 .ok_or_else(|| {
                     SimulationError::RecoverableError("Can't convert amount out to BigUInt".into())
                 })?,
-            // Rough estimate, plus 17k because the fresh random effectiveTrader per quote
-            // writes a cold nonce storage slot (~22k) instead of updating a reused one (~5k).
-            gas: BigUint::from(151_000u64),
+            gas: BigUint::from(151_000u64), // Rough gas estimation
             new_state: self.clone_box(), // The state doesn't change after a swap
         };
 
