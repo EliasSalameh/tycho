@@ -378,7 +378,7 @@ contract HashflowExecutorExposed is HashflowExecutor {
 
 contract TychoRouterSingleSwapTestForHashflow is TychoRouterTestSetup {
     function getForkBlock() public pure override returns (uint256) {
-        return 24290334;
+        return 25975860;
     }
 
     function testHashflowIntegration() public {
@@ -387,10 +387,11 @@ contract TychoRouterSingleSwapTestForHashflow is TychoRouterTestSetup {
         //   USDC ───(Hashflow RFQ)──> WBTC
 
         // The Hashflow order expects:
-        // - 4308094737 USDC input -> 4795673 WBTC output
+        // - 4308094737 USDC input -> 5542168 WBTC output
+        // The maker signed it with a random effectiveTrader (0x...deadbeef)
 
         uint256 amountIn = 4308094737;
-        uint256 expectedAmountOut = 4795673;
+        uint256 expectedAmountOut = 5542168;
         deal(USDC_ADDR, ALICE, amountIn);
         uint256 balanceBefore = IERC20(WBTC_ADDR).balanceOf(ALICE);
 
