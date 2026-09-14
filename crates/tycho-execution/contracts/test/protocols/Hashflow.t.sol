@@ -28,14 +28,6 @@ contract HashflowUtils is Test {
             quote.signature // signature data
         );
     }
-
-    function encodeRfqtQuoteWithDefaults(IHashflowRouter.RFQTQuote memory quote)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return encodeRfqtQuote(quote);
-    }
 }
 
 contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
@@ -79,7 +71,7 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
                 txid: bytes32(uint256(0xabcdef)),
                 signature: hex"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041"
             });
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(expected_quote);
+        bytes memory encodedQuote = encodeRfqtQuote(expected_quote);
         (IHashflowRouter.RFQTQuote memory quote) =
             executor.decodeData(encodedQuote);
 
@@ -137,7 +129,7 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
 
     function testGetTransferData() public {
         IHashflowRouter.RFQTQuote memory expected_quote = rfqtQuote();
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(expected_quote);
+        bytes memory encodedQuote = encodeRfqtQuote(expected_quote);
 
         (
             TransferManager.TransferType transferType,
@@ -162,7 +154,7 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
         address trader = address(ALICE);
         IHashflowRouter.RFQTQuote memory quote = rfqtQuote();
         uint256 amountIn = quote.baseTokenAmount;
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(quote);
+        bytes memory encodedQuote = encodeRfqtQuote(quote);
 
         deal(WETH_ADDR, address(executor), amountIn);
         uint256 balanceBefore = USDC.balanceOf(trader);
@@ -183,7 +175,7 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
         address trader = address(ALICE);
         IHashflowRouter.RFQTQuote memory quote = rfqtQuote();
         uint256 amountIn = quote.baseTokenAmount - 1;
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(quote);
+        bytes memory encodedQuote = encodeRfqtQuote(quote);
 
         deal(WETH_ADDR, address(executor), amountIn);
         uint256 balanceBefore = USDC.balanceOf(trader);
@@ -204,7 +196,7 @@ contract HashflowExecutorECR20Test is Constants, TestUtils, HashflowUtils {
         address trader = address(ALICE);
         IHashflowRouter.RFQTQuote memory quote = rfqtQuote();
         uint256 amountIn = quote.baseTokenAmount + 1;
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(quote);
+        bytes memory encodedQuote = encodeRfqtQuote(quote);
 
         deal(WETH_ADDR, address(executor), amountIn);
         uint256 balanceBefore = USDC.balanceOf(trader);
@@ -269,7 +261,7 @@ contract HashflowExecutorNativeTest is Constants, HashflowUtils {
         address trader = address(ALICE);
         IHashflowRouter.RFQTQuote memory quote = rfqtQuote();
         uint256 amountIn = quote.baseTokenAmount;
-        bytes memory encodedQuote = encodeRfqtQuoteWithDefaults(quote);
+        bytes memory encodedQuote = encodeRfqtQuote(quote);
 
         vm.deal(address(executor), amountIn);
         uint256 balanceBefore = USDC.balanceOf(trader);
