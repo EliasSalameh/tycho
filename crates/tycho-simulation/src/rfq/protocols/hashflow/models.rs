@@ -209,7 +209,11 @@ pub struct HashflowQuote {
 }
 
 impl HashflowQuote {
-    pub fn validate(&self, params: &GetAmountOutParams) -> Result<(), RFQError> {
+    pub fn validate(
+        &self,
+        params: &GetAmountOutParams,
+        expected_effective_trader: &Bytes,
+    ) -> Result<(), RFQError> {
         if self.quote_data.base_token != params.token_in {
             return Err(RFQError::FatalError(format!(
                 "Base token mismatch: expected {}, got {}",
@@ -233,10 +237,9 @@ impl HashflowQuote {
             .effective_trader
             .clone()
             .unwrap_or_else(|| self.quote_data.trader.clone());
-        if effective_trader != params.sender {
+        if &effective_trader != expected_effective_trader {
             return Err(RFQError::FatalError(format!(
-                "Effective trader mismatch: expected {}, got {effective_trader}",
-                params.sender
+                "Effective trader mismatch: expected {expected_effective_trader}, got {effective_trader}"
             )));
         }
         if self.quote_data.base_token_amount != params.amount_in.to_string() {
@@ -382,6 +385,10 @@ mod tests {
             }
         }
 
+        fn expected_effective_trader() -> Bytes {
+            hex_to_bytes("0x6666666666666666666666666666666666666666")
+        }
+
         fn quote() -> HashflowQuote {
             HashflowQuote {
                 quote_data: quote_data(),
@@ -395,7 +402,9 @@ mod tests {
         fn test_validate_success() {
             let quote = quote();
             let params = params();
-            assert!(quote.validate(&params).is_ok());
+            assert!(quote
+                .validate(&params, &expected_effective_trader())
+                .is_ok());
         }
 
         #[test]
@@ -404,7 +413,9 @@ mod tests {
             quote.quote_data.base_token =
                 hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Base token mismatch"));
         }
 
@@ -414,7 +425,9 @@ mod tests {
             quote.quote_data.quote_token =
                 hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Quote token mismatch"));
         }
 
@@ -423,7 +436,9 @@ mod tests {
             let mut quote = quote();
             quote.quote_data.trader = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Trader address mismatch"));
         }
 
@@ -433,18 +448,22 @@ mod tests {
             quote.quote_data.effective_trader =
                 Some(hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"));
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Effective trader mismatch"));
         }
 
         #[test]
         fn test_validate_effective_trader_absent() {
-            // Without an effective trader the quote defaults to the trader's scope, which only
-            // passes when that is what was requested.
+            // Without an effective trader the quote defaults to the trader's scope, never
+            // the requested one.
             let mut quote = quote();
             quote.quote_data.effective_trader = None;
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Effective trader mismatch"));
         }
 
@@ -453,7 +472,9 @@ mod tests {
             let mut quote = quote();
             quote.quote_data.base_token_amount = "9999".to_string();
             let params = params();
-            let err = quote.validate(&params).unwrap_err();
+            let err = quote
+                .validate(&params, &expected_effective_trader())
+                .unwrap_err();
             assert!(format!("{err:?}").contains("Base token amount mismatch"));
         }
     }
