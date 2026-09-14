@@ -1,3 +1,21 @@
+## [0.406.0](https://github.com/propeller-heads/tycho/compare/0.405.0...0.406.0) (2026-09-14)
+
+
+### Features
+
+* **execution:** add venue fallback contract for swap legs ([496fc9b](https://github.com/propeller-heads/tycho/commit/496fc9b0dea3bb2c90bb593862e364b5850351f9))
+* **execution:** emit FellBack when the pAMM fails ([ad86a1e](https://github.com/propeller-heads/tycho/commit/ad86a1e7a441754b6bf1e86bf2d3a9fba43e548a))
+* **execution:** rename FellBack to FallbackSwap and name the venue ([6e2e87d](https://github.com/propeller-heads/tycho/commit/6e2e87d53ed0890724db51979926d79183da9015))
+* **execution:** venue fallback for swap legs via TychoFallbackRouter ([#1384](https://github.com/propeller-heads/tycho/issues/1384)) ([723d37f](https://github.com/propeller-heads/tycho/commit/723d37fcd3662213b00392391a5cab61b9c40129))
+
+
+### Bug Fixes
+
+* **execution:** cap gas forwarded to the pAMM try ([cad8dd5](https://github.com/propeller-heads/tycho/commit/cad8dd575d4be4e2e9684a8f63a3f0313ca57d5f))
+* **execution:** gate TychoFallbackRouter.swap behind CALLER_ROLE ([7c30f72](https://github.com/propeller-heads/tycho/commit/7c30f72a923bdc4f51c3967e9da8dacb55cf054b))
+* **execution:** make swap permissionless again, drop rescue ([388c422](https://github.com/propeller-heads/tycho/commit/388c422b755bf2a453d930c59c22d88941e24984))
+* **execution:** name the cause when Fluid requests the wrong side ([46cf5bc](https://github.com/propeller-heads/tycho/commit/46cf5bc6098db66fea98abf9262cd77590a28a23))
+
 ## [0.405.0](https://github.com/propeller-heads/tycho/compare/0.404.2...0.405.0) (2026-09-14)
 
 
