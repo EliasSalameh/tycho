@@ -1,3 +1,10 @@
+## [0.405.0](https://github.com/propeller-heads/tycho/compare/0.404.2...0.405.0) (2026-09-14)
+
+
+### Features
+
+* **simulation:** serve Tempest from the price level stream ([eefc1ab](https://github.com/propeller-heads/tycho/commit/eefc1ab0e339d61676b0b22be6fa6105861a6146))
+
 ## [0.404.2](https://github.com/propeller-heads/tycho/compare/0.404.1...0.404.2) (2026-09-11)
 
 
