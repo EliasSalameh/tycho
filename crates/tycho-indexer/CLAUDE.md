@@ -14,7 +14,7 @@ testing.rs                  Test utilities
 extractor/
   protocol_extractor.rs     ProtocolExtractor — core message processor (see below)
   runner.rs                 ExtractorRunner: drives the Substreams stream; ExtractorHandle for control
-  supervisor.rs             ExtractorSupervisor: restart lifecycle with exponential backoff; owns the subscription map
+  supervisor.rs             ExtractorSupervisor: restart lifecycle with exponential backoff; owns the subscription map; counts rebuilds in `extractor_restarts_total` (registered at zero)
   factory.rs                ExtractorFactory: builds a fresh extractor + runner per (re)start; extractor config types
   reorg_buffer.rs           ReorgBuffer — finality-aware block queue; chain-reorg purge
   models.rs                 Re-exports the block types (defined in tycho-common's models/blockchain.rs); merge helpers + test fixtures
@@ -117,10 +117,12 @@ On `BlockUndoSignal(target_hash, target_number)` from Substreams:
    created and deleted is malformed module output, so it goes through the lookup like a
    pre-existing attribute. Attributes with no prior value anywhere revert as deletions,
    emit one summary warning, and increment `extractor_revert_attr_miss` per attribute; its
-   `component_state_found` label says whether the DB returned state rows for the
-   component. The extractor registers both label sets at zero at startup so the first
-   miss is visible to `increase()`. Any hit means an upstream module emitted an Update
-   or Deletion for an attribute that never had a Creation.
+   `component_known` label says whether the component is known anywhere: a
+   `TxWithChanges.protocol_components` entry in buffer history or a row in the
+   `protocol_component` table. `false` means an upstream module emitted state for a
+   component Tycho never saw created. The extractor registers both label sets at zero at
+   startup so the first miss is visible to `increase()`. Any hit means an upstream module
+   emitted an Update or Deletion for an attribute that never had a Creation.
 4. If nothing was invalidated, only the cursor advances — no message is emitted. Otherwise
    a `BlockAggregatedChanges` with `revert = true` is broadcast.
 5. **No DB rollback is needed** — only finalized blocks ever reach the DB, so the persisted

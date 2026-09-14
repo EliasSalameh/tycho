@@ -274,6 +274,8 @@ impl ProtocolStreamProcessor {
                     "sushiswap_v3".to_string(),
                     "robinswap_v3".to_string(),
                     "ramses_v3".to_string(),
+                    "ekubo_v3".to_string(),
+                    "up_v3".to_string(),
                 ]
             }
             Chain::Arbitrum => {
@@ -390,6 +392,12 @@ impl ProtocolStreamProcessor {
                     tvl_filter.clone(),
                     None,
                 );
+            }
+            // UP on Robinhood Chain deploys the Slipstream contracts verbatim, so it decodes
+            // with the same state as Aerodrome.
+            "up_v3" => {
+                stream =
+                    stream.exchange::<AerodromeSlipstreamsState>("up_v3", tvl_filter.clone(), None);
             }
             "ramses_v3" => {
                 stream = stream.exchange::<RamsesV3State>("ramses_v3", tvl_filter.clone(), None);
