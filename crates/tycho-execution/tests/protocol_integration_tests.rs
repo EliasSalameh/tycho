@@ -1231,7 +1231,7 @@ fn test_single_encoding_strategy_hashflow() {
     let wbtc = wbtc();
 
     // USDC -> WBTC via Hashflow RFQ using real order data
-    let quote_amount_out = BigUint::from_str("3714751").unwrap();
+    let quote_amount_out = BigUint::from_str("5542168").unwrap();
 
     let hashflow_state = MockRFQState {
         quote_amount_in: None,
@@ -1239,15 +1239,21 @@ fn test_single_encoding_strategy_hashflow() {
         quote_data: HashMap::from([
             (
                 "pool".to_string(),
-                Bytes::from_str("0x4c4c3e005c6cb9ce249a267f28299293a628cf38").unwrap(),
+                Bytes::from_str("0x478eca1b93865dca0b9f325935eb123c8a4af011").unwrap(),
             ),
             (
                 "external_account".to_string(),
-                Bytes::from_str("0x6047b384d58dc7f8f6fef85d75754e6928f06484").unwrap(),
+                Bytes::from_str("0xbee3211ab312a8d065c4fef0247448e17a8da000").unwrap(),
             ),
             (
                 "trader".to_string(),
                 Bytes::from_str("0x6bc529dc7b81a031828ddce2bc419d01ff268c66").unwrap(),
+            ),
+            (
+                // The market maker signed this quote with a random effective trader — the
+                // shape the encoder produces.
+                "effective_trader".to_string(),
+                Bytes::from_str("0x00000000000000000000000000000000deadbeef").unwrap(),
             ),
             (
                 "base_token".to_string(),
@@ -1263,18 +1269,18 @@ fn test_single_encoding_strategy_hashflow() {
             ),
             (
                 "quote_token_amount".to_string(),
-                Bytes::from(biguint_to_u256(&BigUint::from(4795673_u64)).to_be_bytes::<32>().to_vec()),
+                Bytes::from(biguint_to_u256(&BigUint::from(5542168_u64)).to_be_bytes::<32>().to_vec()),
             ),
-            ("quote_expiry".to_string(), Bytes::from_str("0x0000000000000000000000000000000000000000000000000000000069721877").unwrap()),
-            ("nonce".to_string(), Bytes::from_str("0x0000000000000000000000000000000000000000000000000000019be5aea5f8").unwrap()),
+            ("quote_expiry".to_string(), Bytes::from(biguint_to_u256(&BigUint::from(1789390875_u64)).to_be_bytes::<32>().to_vec())),
+            ("nonce".to_string(), Bytes::from(biguint_to_u256(&BigUint::from(1789390830060_u64)).to_be_bytes::<32>().to_vec())),
             (
                 "tx_id".to_string(),
                 Bytes::from_str(
-                    "0x1250000640006400000017471dc488ffffffffffffff002c8747bfe4f0440000",
+                    "0x125000064000640000001746eec160ffffffffffffff0031419a51f2fb6d0000",
                 )
                     .unwrap(),
             ),
-            ("signature".to_string(), Bytes::from_str("0xdedc8a21a00afdac18e0a62b3f0d641d21de75e1fa0bb8f402ccf047923274fe40df9e249f693d88be4a005f4217d21ed920eac7373fd23d8329d3c6b0c873f71c").unwrap()),
+            ("signature".to_string(), Bytes::from_str("0xd2735a6a4143235222ee5ba1dad96a5a207e33cf00939ba142c4076f6b68e8887bfedd78fa9683f3ea2ba5377d97c7621f84ed4dfdcd2824ee9ad42d3bf7742c1b").unwrap()),
         ]),
         ..Default::default()
     };
@@ -1301,8 +1307,8 @@ fn test_single_encoding_strategy_hashflow() {
         usdc,
         wbtc,
         BigUint::from_str("4308094737").unwrap(),
-        BigUint::from_str("3714751").unwrap(),
-        BigUint::from_str("3640455").unwrap(),
+        BigUint::from_str("5542168").unwrap(),
+        BigUint::from_str("5431325").unwrap(),
         vec![swap_usdc_wbtc],
     );
 
