@@ -43,6 +43,7 @@ use tycho_simulation::{
             hashflow::{client_builder::HashflowClientBuilder, state::HashflowState},
             liquorice::{client_builder::LiquoriceClientBuilder, state::LiquoriceState},
             metric::{client_builder::MetricClientBuilder, state::MetricState},
+            native::{client_builder::NativeClientBuilder, state::NativeState},
         },
         stream::RFQStreamBuilder,
     },
@@ -130,14 +131,16 @@ async fn main() {
         (env::var("HASHFLOW_USER").ok(), env::var("HASHFLOW_KEY").ok());
     let (liquorice_user, liquorice_key) =
         (env::var("LIQUORICE_USER").ok(), env::var("LIQUORICE_KEY").ok());
+    let native_key = env::var("NATIVE_API_KEY").ok();
     if bebop_key.is_none() &&
         (hashflow_user.is_none() || hashflow_key.is_none()) &&
-        (liquorice_user.is_none() || liquorice_key.is_none())
+        (liquorice_user.is_none() || liquorice_key.is_none()) &&
+        native_key.is_none()
     {
         if cli.run_pamm_protocols {
             println!("No authenticated RFQ credentials found. Continuing with PAMM RFQ protocols only.\n");
         } else {
-            panic!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, or LIQUORICE_USER and LIQUORICE_KEY environment variables. To run PAMM RFQ protocols, pass --run-pamm-protocols.");
+            panic!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, LIQUORICE_USER and LIQUORICE_KEY, or NATIVE_API_KEY environment variables. To run PAMM RFQ protocols, pass --run-pamm-protocols.");
         }
     }
 
@@ -233,11 +236,20 @@ async fn main() {
         rfq_stream_builder =
             rfq_stream_builder.add_client::<LiquoriceState>("liquorice", Box::new(liquorice_client))
     }
+    if let Some(key) = native_key {
+        println!("Setting up Native RFQ client...\n");
+        let native_client = NativeClientBuilder::new(chain, key)
+            .tokens(rfq_tokens.clone())
+            .tvl_threshold(cli.tvl_threshold)
+            .build()
+            .expect("Failed to create Native RFQ client");
+        rfq_stream_builder =
+            rfq_stream_builder.add_client::<NativeState>("native", Box::new(native_client))
+    }
     if cli.run_pamm_protocols {
         println!("Setting up Metric RFQ client...\n");
         match MetricClientBuilder::new(chain)
             .tokens(rfq_tokens.clone())
-            .token_metadata(all_tokens.clone())
             .tvl_threshold(cli.tvl_threshold)
             .build()
         {
@@ -780,16 +792,8 @@ fn create_solution(
         .with_protocol_state(state)
         .with_estimated_amount_in(sell_amount.clone());
 
-    // Compute a minimum amount out
-    //
-    // # ⚠️ Important Responsibility Note
-    // For maximum security, in production code, this minimum amount out should be computed
-    // from a third-party source.
-    let slippage = 0.0025; // 0.25% slippage
-    let bps = BigUint::from(10_000u32);
-    let slippage_percent = BigUint::from((slippage * 10000.0) as u32);
-    let multiplier = &bps - slippage_percent;
-    let min_amount_out = (expected_amount * &multiplier) / &bps;
+    // 0.25% below the quote
+    let min_amount_out = &expected_amount * BigUint::from(9975u64) / BigUint::from(10_000u64);
 
     // Then we create a solution object with the previous swap
     Solution::new(
@@ -798,6 +802,7 @@ fn create_solution(
         sell_token.address,
         buy_token.address,
         sell_amount,
+        expected_amount,
         min_amount_out,
         vec![simple_swap],
     )
@@ -811,7 +816,8 @@ fn create_solution(
 /// This function is intended as **an illustrative example only** and supports only the method of
 /// interest of this quickstart. **Users must implement their own encoding logic** to ensure:
 /// - Full control of parameters passed to the router.
-/// - Proper validation and setting of critical inputs such as `minAmountOut`.
+/// - Proper validation and setting of critical inputs such as `expectedAmountOut` and
+///   `minAmountOut`.
 fn encode_tycho_router_call(
     chain_id: u64,
     encoded_solution: EncodedSolution,
@@ -820,6 +826,7 @@ fn encode_tycho_router_call(
     signer: PrivateKeySigner,
 ) -> Result<Transaction, EncodingError> {
     let given_amount = biguint_to_u256(solution.amount_in());
+    let amount_out = biguint_to_u256(solution.expected_amount_out());
     let min_amount_out = biguint_to_u256(solution.min_amount_out());
     let given_token = Address::from_slice(solution.token_in());
     let checked_token = Address::from_slice(solution.token_out());
@@ -844,6 +851,7 @@ fn encode_tycho_router_call(
         given_amount,
         given_token,
         checked_token,
+        amount_out,
         min_amount_out,
         receiver,
         client_fee_params,

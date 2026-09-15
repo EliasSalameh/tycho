@@ -3,8 +3,6 @@ pragma solidity ^0.8.26;
 
 import {IExecutor} from "@interfaces/IExecutor.sol";
 import {ICallback} from "@interfaces/ICallback.sol";
-import {IFeeCalculator} from "@interfaces/IFeeCalculator.sol";
-import {FeeRecipient} from "../lib/FeeStructs.sol";
 import {TransferManager} from "./TransferManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
@@ -52,7 +50,7 @@ contract Dispatcher is TransferManager {
     uint256 private constant _SWAP_INPUT_TOKEN_SLOT =
         0x0c22c14aba48b0e26e3b58475c66f358c352532122e537c32e8184c0159e6e10;
 
-    uint256 public constant DELAY_EXECUTOR_ACTIVATION = 3 days;
+    uint256 public constant DELAY_EXECUTOR_ACTIVATION = 1 days;
 
     event ExecutorSet(address indexed executor, uint256 timelockExpiresAt);
     event ExecutorRemoved(address indexed executor);
@@ -284,29 +282,5 @@ contract Dispatcher is TransferManager {
         if (block.timestamp < activationTimestamp) {
             revert Dispatcher__ExecutorIsTimelocked(executor);
         }
-    }
-
-    function _callGetEffectiveRouterFeeOnOutput(
-        address feeCalculator,
-        address client
-    ) internal view returns (uint16 routerFeeOnOutputBps) {
-        // slither-disable-next-line calls-loop
-        routerFeeOnOutputBps =
-            IFeeCalculator(feeCalculator).getEffectiveRouterFeeOnOutput(client);
-    }
-
-    function _callCalculateFee(
-        address feeCalculator,
-        uint256 amountIn,
-        uint16 clientFeeBps,
-        address client
-    )
-        internal
-        view
-        returns (uint256 amountOut, FeeRecipient[] memory feeRecipients)
-    {
-        // slither-disable-next-line calls-loop
-        (amountOut, feeRecipients) = IFeeCalculator(feeCalculator)
-            .calculateFee(amountIn, client, clientFeeBps);
     }
 }

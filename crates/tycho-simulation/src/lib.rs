@@ -18,10 +18,14 @@ pub use tycho_common;
 pub mod tycho_core {
     pub use tycho_common::*;
 }
+#[cfg(feature = "evm")]
+pub use revm::DatabaseRef;
 pub use tycho_ethereum;
 
 #[cfg(feature = "evm")]
 pub mod evm;
+#[cfg(feature = "price-level-stream")]
+pub mod price_level_stream;
 pub mod protocol;
 #[cfg(feature = "rfq")]
 pub mod rfq;

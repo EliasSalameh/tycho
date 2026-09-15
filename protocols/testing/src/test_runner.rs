@@ -10,10 +10,6 @@ use alloy::{
     primitives::{Address, U256},
     rpc::types::Block,
 };
-use figment::{
-    providers::{Format, Yaml},
-    Figment,
-};
 use futures::StreamExt;
 use itertools::Itertools;
 use miette::{ensure, miette, IntoDiagnostic, WrapErr};
@@ -21,7 +17,6 @@ use num_bigint::{BigInt, BigUint};
 use num_rational::BigRational;
 use num_traits::{Signed, ToPrimitive, Zero};
 use postgres::NoTls;
-use regex::Regex;
 use serde_json::json;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, warn};
@@ -65,18 +60,24 @@ use crate::{
     state_registry::register_protocol,
     tycho_rpc::TychoClient,
     tycho_runner::TychoRunner,
-    utils::build_spkg,
+    utils::{build_spkg, extract_initial_block},
 };
 
 static CLONE_TO_BASE_PROTOCOL: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     HashMap::from([
         ("ethereum-sushiswap-v2", "ethereum-uniswap-v2"),
+        ("base-sushiswap-v2", "ethereum-uniswap-v2"),
         ("ethereum-pancakeswap-v2", "ethereum-uniswap-v2"),
         ("base-balancer-v3", "ethereum-balancer-v3"),
         ("arbitrum-balancer-v3", "ethereum-balancer-v3"),
         ("gnosis-balancer-v3", "ethereum-balancer-v3"),
         ("base-alienbase-v3", "ethereum-uniswap-v3-logs-only"),
+        ("robinhood-sushiswap-v3", "ethereum-uniswap-v3-logs-only"),
+        ("robinhood-robinswap-v3", "ethereum-uniswap-v3-logs-only"),
         ("unichain-curve", "ethereum-curve"),
+        ("robinhood-ramses-v3", "polygon-ramses-v3"),
+        ("robinhood-ekubo-v3", "ethereum-ekubo-v3"),
+        ("robinhood-up-v3", "base-aerodrome-slipstreams"),
     ])
 });
 
@@ -123,6 +124,21 @@ pub struct TestTypeRange {
     pub match_test: Option<String>,
 }
 
+pub struct RunnerConfig {
+    pub test_type: TestType,
+    /// Directory holding `substreams/` and `adapter-integration/evm/`.
+    pub root_path: PathBuf,
+    pub chain: Chain,
+    pub protocol: String,
+    pub db_url: String,
+    pub rpc_url: String,
+    pub tycho_server_port: u16,
+    pub vm_simulation_traces: bool,
+    pub reuse_last_sync: bool,
+    /// Skip compiling the Substreams WASM binaries and pack the ones already present.
+    pub prebuilt_wasm: bool,
+}
+
 pub struct TestRunner {
     test_type: TestType,
     chain: Chain,
@@ -136,21 +152,24 @@ pub struct TestRunner {
     rpc_provider: RPCProvider,
     protocol_components: Arc<RwLock<HashMap<String, ProtocolComponentModel>>>,
     reuse_last_sync: bool,
+    prebuilt_wasm: bool,
 }
 
 impl TestRunner {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        test_type: TestType,
-        root_path: PathBuf,
-        chain: Chain,
-        protocol: String,
-        db_url: String,
-        rpc_url: String,
-        tycho_server_port: u16,
-        vm_simulation_traces: bool,
-        reuse_last_sync: bool,
-    ) -> miette::Result<Self> {
+    pub fn new(config: RunnerConfig) -> miette::Result<Self> {
+        let RunnerConfig {
+            test_type,
+            root_path,
+            chain,
+            protocol,
+            db_url,
+            rpc_url,
+            tycho_server_port,
+            vm_simulation_traces,
+            reuse_last_sync,
+            prebuilt_wasm,
+        } = config;
+
         let base_protocol = CLONE_TO_BASE_PROTOCOL
             .get(protocol.as_str())
             .unwrap_or(&protocol.as_str())
@@ -186,6 +205,7 @@ impl TestRunner {
             runtime,
             rpc_provider,
             reuse_last_sync,
+            prebuilt_wasm,
             protocol_components: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -235,13 +255,12 @@ impl TestRunner {
 
     fn parse_config(config_yaml_path: &PathBuf) -> miette::Result<IntegrationTestsConfig> {
         info!("Parsing config YAML at {}", config_yaml_path.display());
-        let yaml = Yaml::file(config_yaml_path);
-        let figment = Figment::new().merge(yaml);
-        let config = figment
-            .extract::<IntegrationTestsConfig>()
+        let file = std::fs::File::open(config_yaml_path)
             .into_diagnostic()
-            .wrap_err("Failed to load test configuration:")?;
-        Ok(config)
+            .wrap_err_with(|| format!("Failed to open {}", config_yaml_path.display()))?;
+        serde_yaml::from_reader(file)
+            .into_diagnostic()
+            .wrap_err("Failed to load test configuration:")
     }
 
     async fn run_full_test(
@@ -253,18 +272,24 @@ impl TestRunner {
         let start_block = match test_type.initial_block {
             Some(b) => b,
             None => {
-                let content = std::fs::read_to_string(substreams_yaml_path).into_diagnostic()?;
-                let re = Regex::new(r"initialBlock:\s*(\d+)").unwrap();
-                re.captures(&content)
-                    .and_then(|cap| cap.get(1))
-                    .and_then(|m| m.as_str().parse::<u64>().ok())
-                    .ok_or_else(|| {
-                        miette!("Failed to extract initialBlock from substreams.yaml. Please specify it explicitly.")
-                    })?
+                let yaml = std::fs::read_to_string(substreams_yaml_path)
+                    .into_diagnostic()
+                    .wrap_err_with(|| {
+                        format!("Failed to read {}", substreams_yaml_path.display())
+                    })?;
+                extract_initial_block(&yaml).wrap_err_with(|| {
+                    format!(
+                        "Failed to determine the initial block from {}",
+                        substreams_yaml_path.display()
+                    )
+                })?
             }
         };
+        // Only an explicit override rewrites the manifest — a start block derived from the manifest
+        // is where the package already starts.
         let spkg_path =
-            build_spkg(substreams_yaml_path, start_block).wrap_err("Failed to build spkg")?;
+            build_spkg(substreams_yaml_path, test_type.initial_block, self.prebuilt_wasm)
+                .wrap_err("Failed to build spkg")?;
         let initialized_accounts = config
             .initialized_accounts
             .clone()
@@ -538,8 +563,9 @@ impl TestRunner {
             if self.reuse_last_sync {
                 info!("Skipping indexing and using existent DB")
             } else {
-                let spkg_path = build_spkg(substreams_yaml_path, test.start_block)
-                    .wrap_err("Failed to build spkg")?;
+                let spkg_path =
+                    build_spkg(substreams_yaml_path, Some(test.start_block), self.prebuilt_wasm)
+                        .wrap_err("Failed to build spkg")?;
 
                 tycho_runner
                     .run_tycho(
@@ -1135,12 +1161,6 @@ impl TestRunner {
                 .ok_or_else(|| miette!("Couldn't find protocol component {id}"))?;
 
             let tokens = component.tokens.clone();
-            let formatted_token_str = format!("{:}/{:}", tokens[0].symbol, tokens[1].symbol);
-            state
-                .spot_price(&tokens[0], &tokens[1])
-                .map(|price| info!("[{}] Spot price {:?}: {:?}", id, formatted_token_str, price))
-                .into_diagnostic()
-                .wrap_err(format!("Error calculating spot price for Pool {id:?}."))?;
 
             // Test get_amount_out with different percentages of limits. The reserves or limits
             // are relevant because we need to know how much to test with. We
@@ -1157,6 +1177,8 @@ impl TestRunner {
                 .map(|perm| (perm[0], perm[1]))
                 .collect();
 
+            let mut quoted_any_direction = false;
+
             for (token_in, token_out) in &swap_directions {
                 let (max_input, max_output) = state
                     .get_limits(token_in.address.clone(), token_out.address.clone())
@@ -1169,6 +1191,36 @@ impl TestRunner {
                 info!(
                     "[{}] Retrieved limits. | Max input: {max_input} {} | Max output: {max_output} {}",
                     id, token_in.symbol, token_out.symbol
+                );
+
+                // A zero limit means the venue does not quote this direction at all - a
+                // one-directional component such as ETH -> stETH staking, or a redemption
+                // rate limit with no capacity at this block. Skip the direction instead of
+                // failing the component; the guard below still requires that at least one
+                // direction was exercised.
+                if max_input.is_zero() {
+                    warn!(
+                        "[{}] Zero limit for {} -> {}, skipping direction",
+                        id, token_in.symbol, token_out.symbol
+                    );
+                    continue;
+                }
+
+                // Priced per direction rather than once per component: consumers key their
+                // price data by swap direction, so a venue that quotes only one ordering
+                // leaves them without a price for a direction that does trade. Asked after
+                // the zero-limit skip, so a direction the venue does not trade is not
+                // required to have a price either.
+                let spot_price = state
+                    .spot_price(token_in, token_out)
+                    .into_diagnostic()
+                    .wrap_err(format!(
+                        "Error calculating spot price for Pool {id:?} for in token: {}, and out token: {}",
+                        token_in.address, token_out.address
+                    ))?;
+                info!(
+                    "[{}] Spot price {}/{}: {:?}",
+                    id, token_in.symbol, token_out.symbol, spot_price
                 );
 
                 for percentage in percentages.iter() {
@@ -1204,6 +1256,8 @@ impl TestRunner {
                             amount_out_result.gas
                         );
 
+                    quoted_any_direction = true;
+
                     if skip_execution.contains(id) {
                         info!("Skipping execution for component {id}");
                         continue;
@@ -1224,6 +1278,7 @@ impl TestRunner {
                         chain_model,
                         Some(executors_json.to_string()),
                         amount_out_result.gas.clone(),
+                        amount_out_result.amount.clone(),
                     )?;
 
                     // Create unique simulation ID
@@ -1246,6 +1301,12 @@ impl TestRunner {
                         },
                     );
                 }
+            }
+
+            if !quoted_any_direction {
+                return Err(miette!(
+                    "No tradable direction for pool {id}: every swap direction reported a zero limit."
+                ));
             }
         }
 
@@ -1309,7 +1370,7 @@ impl TestRunner {
 
         // Prepare router overwrites data
         let router_overwrites_data =
-            Some(execution::create_router_overwrites_data(protocol_system)?);
+            execution::create_router_overwrites_data(self.chain, protocol_system)?;
 
         info!("Executing {} simulations in batches ...", filtered_execution_data.len());
 
@@ -1340,6 +1401,7 @@ impl TestRunner {
                 batch.clone(),
                 block,
                 router_overwrites_data.clone(),
+                None,
             )
             .await;
 
@@ -1596,17 +1658,18 @@ mod tests {
         dotenv().ok();
         let rpc_url = env::var("RPC_URL").unwrap();
         let current_dir = std::env::current_dir().unwrap();
-        TestRunner::new(
-            TestType::Range(TestTypeRange { match_test: None }),
-            current_dir,
-            Chain::Ethereum,
-            "test-protocol".to_string(),
-            "".to_string(),
+        TestRunner::new(RunnerConfig {
+            test_type: TestType::Range(TestTypeRange { match_test: None }),
+            root_path: current_dir,
+            chain: Chain::Ethereum,
+            protocol: "test-protocol".to_string(),
+            db_url: "".to_string(),
             rpc_url,
-            4242,
-            false,
-            false,
-        )
+            tycho_server_port: 4242,
+            vm_simulation_traces: false,
+            reuse_last_sync: false,
+            prebuilt_wasm: false,
+        })
         .unwrap()
     }
     #[test]

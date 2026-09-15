@@ -6,7 +6,7 @@ import {BalancerV3Executor} from "../src/executors/BalancerV3Executor.sol";
 import {BebopExecutor} from "../src/executors/BebopExecutor.sol";
 import {CurveExecutor} from "../src/executors/CurveExecutor.sol";
 import {EkuboExecutor} from "../src/executors/EkuboExecutor.sol";
-import {EkuboV3Executor} from "../src/executors/EkuboV3Executor.sol";
+import {EkuboV3Executor} from "../src/executors/ekubo_v3/EkuboV3Executor.sol";
 import {EtherfiExecutor} from "../src/executors/EtherfiExecutor.sol";
 import {FermiSwapExecutor} from "../src/executors/FermiSwapExecutor.sol";
 import {BopAMMExecutor} from "../src/executors/BopAMMExecutor.sol";
@@ -15,6 +15,12 @@ import {
 } from "../src/executors/LiquidityPartyExecutor.sol";
 import {HashflowExecutor} from "../src/executors/HashflowExecutor.sol";
 import {MaverickV2Executor} from "../src/executors/MaverickV2Executor.sol";
+import {PropAMMExecutor} from "../src/executors/PropAMMExecutor.sol";
+import {
+    PropAMMFallbackExecutor
+} from "../src/executors/PropAMMFallbackExecutor.sol";
+import {FallbackExecutor} from "../src/executors/FallbackExecutor.sol";
+import {TychoFallbackRouter} from "../src/fallback/TychoFallbackRouter.sol";
 import {UniswapV2Executor} from "../src/executors/UniswapV2Executor.sol";
 import {
     UniswapV3Executor,
@@ -30,6 +36,8 @@ import {LiquoriceExecutor} from "../src/executors/LiquoriceExecutor.sol";
 import {AerodromeV1Executor} from "../src/executors/AerodromeV1Executor.sol";
 import {MetricExecutor} from "../src/executors/MetricExecutor.sol";
 import {RingSwapV2Executor} from "../src/executors/RingSwapV2Executor.sol";
+import {NativeExecutor} from "../src/executors/NativeExecutor.sol";
+import {SkyExecutor} from "../src/executors/SkyExecutor.sol";
 // Test utilities and mocks
 import "./Constants.sol";
 import "./TestUtils.sol";
@@ -38,10 +46,10 @@ import {ClientFeeTestHelper} from "./ClientFeeTestHelper.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 // Core contracts
-import "@src/TychoRouter.sol";
+import "@src/TychoRouterV3.sol";
 import "@src/FeeCalculator.sol";
 
-contract TychoRouterExposed is TychoRouter {
+contract TychoRouterExposed is TychoRouterV3 {
     constructor(
         address permit2_,
         address feeCalculator,
@@ -50,7 +58,7 @@ contract TychoRouterExposed is TychoRouter {
         address executorSetter,
         address routerFeeSetter
     )
-        TychoRouter(
+        TychoRouterV3(
             permit2_,
             feeCalculator,
             pauser,
@@ -129,6 +137,12 @@ contract TychoRouterTestSetup is
     MetricExecutor public metricExecutor;
     BopAMMExecutor public bopAMMExecutor;
     RingSwapV2Executor public ringSwapV2Executor;
+    NativeExecutor public nativeExecutor;
+    PropAMMExecutor public propAMMExecutor;
+    PropAMMFallbackExecutor public propAMMFallbackExecutor;
+    SkyExecutor public skyExecutor;
+    TychoFallbackRouter public fallbackRouter;
+    FallbackExecutor public fallbackExecutor;
 
     FeeCalculator feeCalculator;
     address routerFeeReceiver;
@@ -247,12 +261,45 @@ contract TychoRouterTestSetup is
         liquidityPartyExecutor = new LiquidityPartyExecutor();
         aerodromeV1Executor = new AerodromeV1Executor();
         fermiSwapExecutor = new FermiSwapExecutor(FERMI_SWAPPER);
-        metricExecutor = new MetricExecutor(METRIC_ORACLE);
+        metricExecutor = new MetricExecutor();
         bopAMMExecutor = new BopAMMExecutor(BOPAMM_SETTLEMENT);
         ringSwapV2Executor =
             new RingSwapV2Executor(RING_FEW_FACTORY, RING_SWAP_FACTORY);
+        propAMMExecutor = new PropAMMExecutor();
+        propAMMFallbackExecutor = new PropAMMFallbackExecutor();
+        // Every executor's address here is deterministic from its deploy order, and the
+        // Rust-generated calldata.txt hardcodes those addresses, so inserting a deployment
+        // invalidates every entry after it. Add new deployments at the end of this block.
+        //
+        // The Sky venues exist only on mainnet, and the executor's constructor
+        // reads their token wiring, so it cannot deploy on forks where the
+        // venues have no code. It is deployed after the fixed executor set, so
+        // skipping it does not shift those executors' deterministic addresses.
+        bool skyDeployable = SKY_DAI_USDS_CONVERTER.code.length != 0;
+        if (skyDeployable) {
+            skyExecutor = new SkyExecutor(
+                SKY_LITE_PSM, SKY_USDS_PSM_WRAPPER, SKY_DAI_USDS_CONVERTER
+            );
+        }
 
-        address[] memory executors = new address[](25);
+        address nativeRouterV6 = getNativeRouterV6();
+        bool supportsNative = nativeRouterV6 != address(0);
+        if (supportsNative) {
+            // Some protocol tests use fork blocks from before Native V6 was
+            // deployed. The executor is not exercised in those tests, but its
+            // constructor still requires the configured Router to have code.
+            if (nativeRouterV6.code.length == 0) {
+                vm.etch(nativeRouterV6, bytes("1"));
+            }
+            nativeExecutor = new NativeExecutor(nativeRouterV6);
+        }
+
+        fallbackRouter = new TychoFallbackRouter(poolManager, FLUIDV1_LIQUIDITY);
+        fallbackExecutor = new FallbackExecutor(address(fallbackRouter));
+
+        address[] memory executors = new address[](
+            28 + (skyDeployable ? 1 : 0) + (supportsNative ? 1 : 0)
+        );
         executors[0] = address(usv2Executor);
         executors[1] = address(usv3Executor);
         executors[2] = address(pancakev3Executor);
@@ -278,7 +325,26 @@ contract TychoRouterTestSetup is
         executors[22] = address(metricExecutor);
         executors[23] = address(bopAMMExecutor);
         executors[24] = address(ringSwapV2Executor);
+        executors[25] = address(propAMMExecutor);
+        executors[26] = address(propAMMFallbackExecutor);
+        executors[27] = address(fallbackExecutor);
+        uint256 nextExecutorIndex = 28;
+        if (skyDeployable) {
+            executors[nextExecutorIndex] = address(skyExecutor);
+            nextExecutorIndex++;
+        }
+        if (supportsNative) {
+            executors[nextExecutorIndex] = address(nativeExecutor);
+        }
         return executors;
+    }
+
+    function getNativeRouterV6() internal view returns (address) {
+        if (block.chainid == 1) return NATIVE_ROUTER_V6_ETHEREUM;
+        if (block.chainid == 8453) return NATIVE_ROUTER_V6_BASE;
+        if (block.chainid == 42161) return NATIVE_ROUTER_V6_ARBITRUM;
+        if (block.chainid == 56) return NATIVE_ROUTER_V6_BSC;
+        return address(0);
     }
 
     function deployFeeCalculator() public {
@@ -286,7 +352,13 @@ contract TychoRouterTestSetup is
         routerFeeReceiver = makeAddr("routerFeeReceiver");
         // clientFeeReceiver is the address corresponding to CLIENT_FEE_RECEIVER_PK
         clientFeeReceiver = vm.addr(CLIENT_FEE_RECEIVER_PK);
-        feeCalculator = new FeeCalculator(FEE_SETTER);
+        feeCalculator = new FeeCalculator(FEE_SETTER, routerFeeReceiver);
+        // The calculator enables positive slippage capture in its constructor.
+        // The swap tests quote a round `expectedAmountOut` below the real pool
+        // output and assert the receiver gets that whole output, so capture is
+        // switched off here and exercised by the tests that opt back in.
+        vm.prank(FEE_SETTER);
+        feeCalculator.setPositiveSlippageEnabled(false);
     }
 
     function pleEncode(bytes[] memory data)
