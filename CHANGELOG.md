@@ -1,3 +1,17 @@
+## [0.407.0](https://github.com/propeller-heads/tycho/compare/0.406.2...0.407.0) (2026-09-15)
+
+
+### Features
+
+* **execution:** isolate Hashflow quote nonce sequences ([6db0a64](https://github.com/propeller-heads/tycho/commit/6db0a64ed5364e0196b97a85a4a564e73bbcdf26))
+* **execution:** randomize the Hashflow effective trader per quote ([c8ea371](https://github.com/propeller-heads/tycho/commit/c8ea3718574bce0f9fc7741ec29a34623b7d05a2))
+
+
+### Bug Fixes
+
+* **simulation:** include the cold nonce slot in Hashflow gas ([efb019a](https://github.com/propeller-heads/tycho/commit/efb019aa62e4d75d4ab3f12bad642836d5552be5))
+* stop Hashflow quotes from invalidating each other ([#1420](https://github.com/propeller-heads/tycho/issues/1420)) ([eb2990a](https://github.com/propeller-heads/tycho/commit/eb2990a2b89e5b18dff99de5eda26707c40c50ad))
+
 ## [0.406.2](https://github.com/propeller-heads/tycho/compare/0.406.1...0.406.2) (2026-09-15)
 
 
