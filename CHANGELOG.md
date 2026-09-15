@@ -1,3 +1,11 @@
+## [0.407.1](https://github.com/propeller-heads/tycho/compare/0.407.0...0.407.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **indexer:** instrument commit task body, not its JoinHandle ([5175b45](https://github.com/propeller-heads/tycho/commit/5175b45e45f96c0f0a6c81830b580ac4b3ef6b4f))
+* **indexer:** instrument commit task body, not its JoinHandle ([#1408](https://github.com/propeller-heads/tycho/issues/1408)) ([1cf4934](https://github.com/propeller-heads/tycho/commit/1cf49342c3b40d58d778f9a2ab3f46b467123067))
+
 ## [0.407.0](https://github.com/propeller-heads/tycho/compare/0.406.2...0.407.0) (2026-09-15)
 
 
