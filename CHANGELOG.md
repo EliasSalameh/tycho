@@ -1,3 +1,320 @@
+## [0.407.0](https://github.com/propeller-heads/tycho/compare/0.406.2...0.407.0) (2026-09-15)
+
+
+### Features
+
+* **execution:** isolate Hashflow quote nonce sequences ([6db0a64](https://github.com/propeller-heads/tycho/commit/6db0a64ed5364e0196b97a85a4a564e73bbcdf26))
+* **execution:** randomize the Hashflow effective trader per quote ([c8ea371](https://github.com/propeller-heads/tycho/commit/c8ea3718574bce0f9fc7741ec29a34623b7d05a2))
+
+
+### Bug Fixes
+
+* **simulation:** include the cold nonce slot in Hashflow gas ([efb019a](https://github.com/propeller-heads/tycho/commit/efb019aa62e4d75d4ab3f12bad642836d5552be5))
+* stop Hashflow quotes from invalidating each other ([#1420](https://github.com/propeller-heads/tycho/issues/1420)) ([eb2990a](https://github.com/propeller-heads/tycho/commit/eb2990a2b89e5b18dff99de5eda26707c40c50ad))
+
+## [0.406.2](https://github.com/propeller-heads/tycho/compare/0.406.1...0.406.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.45 ([491d160](https://github.com/propeller-heads/tycho/commit/491d160f27eddf137ab77fd44f839f14648ffb1b))
+* **deps:** bump rustls to 0.23.45 ([#1443](https://github.com/propeller-heads/tycho/issues/1443)) ([e87a4f3](https://github.com/propeller-heads/tycho/commit/e87a4f32ea692bbd4444be669b7ca2c4d91512f9))
+
+## [0.406.1](https://github.com/propeller-heads/tycho/compare/0.406.0...0.406.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* scope contract snapshot queries to the returned page ([6e8f1a1](https://github.com/propeller-heads/tycho/commit/6e8f1a1fe3c5e8e3c3f17bbc4fa1ba58d414f0c7))
+* scope contract snapshot queries to the returned page ([#1273](https://github.com/propeller-heads/tycho/issues/1273)) ([f9c972c](https://github.com/propeller-heads/tycho/commit/f9c972c494280f99cb24fe0043f748cde8839c9e))
+
+## [0.406.0](https://github.com/propeller-heads/tycho/compare/0.405.0...0.406.0) (2026-09-14)
+
+
+### Features
+
+* **execution:** add venue fallback contract for swap legs ([496fc9b](https://github.com/propeller-heads/tycho/commit/496fc9b0dea3bb2c90bb593862e364b5850351f9))
+* **execution:** emit FellBack when the pAMM fails ([ad86a1e](https://github.com/propeller-heads/tycho/commit/ad86a1e7a441754b6bf1e86bf2d3a9fba43e548a))
+* **execution:** rename FellBack to FallbackSwap and name the venue ([6e2e87d](https://github.com/propeller-heads/tycho/commit/6e2e87d53ed0890724db51979926d79183da9015))
+* **execution:** venue fallback for swap legs via TychoFallbackRouter ([#1384](https://github.com/propeller-heads/tycho/issues/1384)) ([723d37f](https://github.com/propeller-heads/tycho/commit/723d37fcd3662213b00392391a5cab61b9c40129))
+
+
+### Bug Fixes
+
+* **execution:** cap gas forwarded to the pAMM try ([cad8dd5](https://github.com/propeller-heads/tycho/commit/cad8dd575d4be4e2e9684a8f63a3f0313ca57d5f))
+* **execution:** gate TychoFallbackRouter.swap behind CALLER_ROLE ([7c30f72](https://github.com/propeller-heads/tycho/commit/7c30f72a923bdc4f51c3967e9da8dacb55cf054b))
+* **execution:** make swap permissionless again, drop rescue ([388c422](https://github.com/propeller-heads/tycho/commit/388c422b755bf2a453d930c59c22d88941e24984))
+* **execution:** name the cause when Fluid requests the wrong side ([46cf5bc](https://github.com/propeller-heads/tycho/commit/46cf5bc6098db66fea98abf9262cd77590a28a23))
+
+## [0.405.0](https://github.com/propeller-heads/tycho/compare/0.404.2...0.405.0) (2026-09-14)
+
+
+### Features
+
+* **simulation:** serve Tempest from the price level stream ([eefc1ab](https://github.com/propeller-heads/tycho/commit/eefc1ab0e339d61676b0b22be6fa6105861a6146))
+
+## [0.404.2](https://github.com/propeller-heads/tycho/compare/0.404.1...0.404.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **indexer:** base revert attr miss label on component existence ([78dd99f](https://github.com/propeller-heads/tycho/commit/78dd99f2d0f23c94a1a9918a622e96fe3ea67f37))
+
+## [0.404.1](https://github.com/propeller-heads/tycho/compare/0.404.0...0.404.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **token-analyzer:** compute transfer fee without intermediate underflow ([6087b63](https://github.com/propeller-heads/tycho/commit/6087b63e77b84b4a27a14f3a45b94ac5d8e3f024))
+
+## [0.404.0](https://github.com/propeller-heads/tycho/compare/0.403.0...0.404.0) (2026-09-11)
+
+
+### Features
+
+* **simulation:** pending-block state for Curve pools ([#1362](https://github.com/propeller-heads/tycho/issues/1362)) ([3513d46](https://github.com/propeller-heads/tycho/commit/3513d46c74bfc54224a7905b9c2ef472a2fd9b0a))
+* **simulation:** re-export revm ([f850250](https://github.com/propeller-heads/tycho/commit/f85025062fa0be928467eb62ba7557a0e90d53b9))
+* **simulation:** rebuild curve pools from a delta attribute ([5bf9153](https://github.com/propeller-heads/tycho/commit/5bf91535d575a23a793b785f9b320905f18bd8cf))
+
+
+### Bug Fixes
+
+* **simulation:** register vm:curve for pending indexing ([00a346f](https://github.com/propeller-heads/tycho/commit/00a346f1c6791c9e8058783779b881df3ebb1076))
+
+## [0.403.0](https://github.com/propeller-heads/tycho/compare/0.402.0...0.403.0) (2026-09-11)
+
+
+### Features
+
+* **indexer:** count extractor restarts in extractor_restarts_total ([ac41ab1](https://github.com/propeller-heads/tycho/commit/ac41ab1bee9e79bae4bfa6d1764e4e08e8cda8f7))
+
+## [0.402.0](https://github.com/propeller-heads/tycho/compare/0.401.0...0.402.0) (2026-09-11)
+
+
+### Features
+
+* **integration-test:** test ekubo_v3 and up_v3 on Robinhood Chain ([#1436](https://github.com/propeller-heads/tycho/issues/1436)) ([6469e33](https://github.com/propeller-heads/tycho/commit/6469e33d517b6d1587cb51199fee318d4fa6bcb3))
+* **integration-test:** test ekubo_v3 on Robinhood Chain ([976acca](https://github.com/propeller-heads/tycho/commit/976accadb08f8925d17124e977f0e9adc6a24889))
+* **integration-test:** test up_v3 on Robinhood Chain ([b45584f](https://github.com/propeller-heads/tycho/commit/b45584f252624a09c55870ffeff834f745f7ba34))
+
+## [0.401.0](https://github.com/propeller-heads/tycho/compare/0.400.0...0.401.0) (2026-09-11)
+
+
+### Features
+
+* **execution:** enable positive slippage capture by default ([868df8e](https://github.com/propeller-heads/tycho/commit/868df8e138bd8edc76188cd70d9aa6d597627003))
+* **execution:** take the router fee receiver as a constructor arg ([2de051e](https://github.com/propeller-heads/tycho/commit/2de051e019762c76111512c4fdd4d6679e7f48ed))
+
+
+### Bug Fixes
+
+* set fee calculator receiver at deployment time ([#1433](https://github.com/propeller-heads/tycho/issues/1433)) ([838bf6c](https://github.com/propeller-heads/tycho/commit/838bf6c153d9a5c84a40a3b2dbb039c0d5cd64ff))
+
+## [0.400.0](https://github.com/propeller-heads/tycho/compare/0.399.0...0.400.0) (2026-09-10)
+
+
+### Features
+
+* **common:** add StorageError::TransactionConflict for concurrent aborts ([944868c](https://github.com/propeller-heads/tycho/commit/944868c2c8d380fb056348550c6c1c721f70ca07))
+
+
+### Bug Fixes
+
+* **storage:** retry conflicts via Unexpected, drop TransactionConflict ([38f9342](https://github.com/propeller-heads/tycho/commit/38f9342c378f4770ad561e4be299c5fa12ab96b4))
+* **storage:** retry write batches on serialization failure ([e541e9b](https://github.com/propeller-heads/tycho/commit/e541e9bc41166ae06d2ea15739b1bd1cac3acded))
+
+## [0.399.0](https://github.com/propeller-heads/tycho/compare/0.398.0...0.399.0) (2026-09-10)
+
+
+### Features
+
+* add Robinhood Ekubo V3 executor address ([ed45d21](https://github.com/propeller-heads/tycho/commit/ed45d21602358ee70cf9879c03fb7ef2c2de3bee))
+* add Robinhood Ekubo V3 executor address ([#1425](https://github.com/propeller-heads/tycho/issues/1425)) ([7fe82fd](https://github.com/propeller-heads/tycho/commit/7fe82fdd0b3d7e8130684094fdc4348fe2f4e325))
+
+## [0.398.0](https://github.com/propeller-heads/tycho/compare/0.397.0...0.398.0) (2026-09-10)
+
+
+### Features
+
+* **substreams:** index UP V3 on Robinhood Chain ([#1426](https://github.com/propeller-heads/tycho/issues/1426)) ([dcfc5a0](https://github.com/propeller-heads/tycho/commit/dcfc5a08fb088ba99004ebfe75424705b5844b96))
+
+## [0.397.0](https://github.com/propeller-heads/tycho/compare/0.396.0...0.397.0) (2026-09-08)
+
+
+### Features
+
+* add metric executor deployment ([f58a55e](https://github.com/propeller-heads/tycho/commit/f58a55eebce95a60cf73792c263d71be50005100))
+* add metric executor deployment ([#1421](https://github.com/propeller-heads/tycho/issues/1421)) ([6e2858d](https://github.com/propeller-heads/tycho/commit/6e2858d5cfe10bf8f7d34856ac4cc18c74380ac7))
+
+## [0.396.0](https://github.com/propeller-heads/tycho/compare/0.395.0...0.396.0) (2026-09-08)
+
+
+### Features
+
+* **integration-test:** add --test-every-n-updates, alias the old flag ([07c64fe](https://github.com/propeller-heads/tycho/commit/07c64fe33090984aaffff5629d6c3f4119f1e39a))
+* **integration-test:** allow --test-every-n-blocks with --partial-blocks ([2903018](https://github.com/propeller-heads/tycho/commit/290301886d477ffc7d2bbef96152fc85486a9785))
+* **integration-test:** sample every Nth protocol update, not block ([3005f03](https://github.com/propeller-heads/tycho/commit/3005f03aa46b62ff0b04b305221356fdf006bc71))
+
+
+### Bug Fixes
+
+* **integration-test:** mark protocols skipped when the RPC poll times out ([36421b0](https://github.com/propeller-heads/tycho/commit/36421b0075e5e8ac28a5c3bd9fca78b32bb9c6f8))
+
+## [0.395.0](https://github.com/propeller-heads/tycho/compare/0.394.0...0.395.0) (2026-09-08)
+
+
+### Features
+
+* integrate native RFQ protocol ([f7b8b5b](https://github.com/propeller-heads/tycho/commit/f7b8b5bb7ef7df468c23885ff9c240794c0ac49f))
+* integrate native RFQ protocol ([#1244](https://github.com/propeller-heads/tycho/issues/1244)) ([c0ec407](https://github.com/propeller-heads/tycho/commit/c0ec40776103f6aa2175f5db5f4b6cd73d590bc0))
+* **native:** migrate RFQ integration to router v6 ([ed084cb](https://github.com/propeller-heads/tycho/commit/ed084cb69ff3b85d185262fcad95fd2980c88663))
+
+
+### Bug Fixes
+
+* address Native integration review feedback ([9446093](https://github.com/propeller-heads/tycho/commit/944609350cd69b066322c667a624d018f2bf54ba))
+* **execution:** support Native input over-delivery ([a09bdf4](https://github.com/propeller-heads/tycho/commit/a09bdf4225ba89fbd5fbde742750fdbf01869216))
+* harden Native quote and executor handling ([6274323](https://github.com/propeller-heads/tycho/commit/6274323357c31315fecb2a9cab8e7eb217342f9e))
+* **native:** address final review feedback ([d636d1c](https://github.com/propeller-heads/tycho/commit/d636d1cd73252897605a1ee76630ef51a1440b73))
+* **native:** address follow-up review feedback ([507cee3](https://github.com/propeller-heads/tycho/commit/507cee352356d5774d1bfdc3e6c4731018b3ff49))
+* **native:** address maintainer feedback ([3abf9f9](https://github.com/propeller-heads/tycho/commit/3abf9f9b3276a367b340612d303b84368958f90f))
+* **native:** address second-round review feedback ([1fa47db](https://github.com/propeller-heads/tycho/commit/1fa47db36c5c8a9cf7b1708f19ab4e1a9e53e18e))
+* **native:** annotate reviewed assembly for slither ([26e6c66](https://github.com/propeller-heads/tycho/commit/26e6c664af0ed0da6e12cbaa313c6444689418bb))
+* **native:** enable RFQ quickstart ([7c05250](https://github.com/propeller-heads/tycho/commit/7c05250e2c30a9649fa5f23ef27abc9894bd7faa))
+* **native:** enforce directional orderbook minimums ([42123d7](https://github.com/propeller-heads/tycho/commit/42123d7cc4b5deea34fc51cd6719c0a55ae2c4ea))
+* **native:** reject zero polling intervals ([9933db6](https://github.com/propeller-heads/tycho/commit/9933db67b11bb55150b7fb214dda3deafe0644f7))
+* **native:** retain conversion books for TVL normalization ([67b53ab](https://github.com/propeller-heads/tycho/commit/67b53ab4f8f1053450c9ffed904a2fa185baa0eb))
+* **native:** select deterministic tvl conversion source ([e89ba6b](https://github.com/propeller-heads/tycho/commit/e89ba6b9881803603daddcbb9ad4a764d7d2c0cc))
+* **native:** validate derived pricing values ([bc4d08d](https://github.com/propeller-heads/tycho/commit/bc4d08d50af4044324251bee419335131d5d0ad3))
+* **native:** validate firm quote input amount ([e7edfaa](https://github.com/propeller-heads/tycho/commit/e7edfaa734fb6098775a951dcaa4101852e22c1d))
+* **native:** validate orderbook price levels ([f4bf670](https://github.com/propeller-heads/tycho/commit/f4bf670cda4aaf5d1d6728aedc134f16b85dade1))
+* update calldata.txt ([0eaa015](https://github.com/propeller-heads/tycho/commit/0eaa0158a5f5ae9e601bcf7c360124768b923805))
+* update monad deployment config ([cdf9db5](https://github.com/propeller-heads/tycho/commit/cdf9db5ab5878acca1c16c32f48988fb874aa3bc))
+* use safe Native midpoint calculations ([fe680db](https://github.com/propeller-heads/tycho/commit/fe680db10985e47b3376900e4ce090b717c9151a))
+
+## [0.394.0](https://github.com/propeller-heads/tycho/compare/0.393.1...0.394.0) (2026-09-08)
+
+
+### Features
+
+* add Robinhood manifest and integration test for Ekubo V3 ([4acd2f1](https://github.com/propeller-heads/tycho/commit/4acd2f1afb4f1fb54bb2ab026eddb9213dd40852))
+* pass the Ve33 address to Ekubo V3 substreams via module params ([c956670](https://github.com/propeller-heads/tycho/commit/c956670b3e92925781054f951a368f8f3bf05667))
+* support Ekubo V3 Ve33 pools ([0877143](https://github.com/propeller-heads/tycho/commit/08771437bba0d835eeff6da915b290971086df2b))
+* support Ekubo V3 Ve33 pools ([#1337](https://github.com/propeller-heads/tycho/issues/1337)) ([bc2d4db](https://github.com/propeller-heads/tycho/commit/bc2d4db197edb210e30b63c9cb1f102d65ba419c))
+* **testing:** decode ekubo_v3 with its native state ([3818b51](https://github.com/propeller-heads/tycho/commit/3818b51b48369d68768d8a945831c8931007dc4f))
+* **testing:** make robinhood-ekubo-v3 testable ([1b20a89](https://github.com/propeller-heads/tycho/commit/1b20a896e945134ca44cb5a04623f36c1909b344))
+* **testing:** pick the executor for the chain under test ([d28bdfa](https://github.com/propeller-heads/tycho/commit/d28bdfa59e005fca7c4f8b65dd072fc90ffe2136))
+
+
+### Bug Fixes
+
+* adapt testVe33Swap to merged Ve33 ABI constraints ([7073a54](https://github.com/propeller-heads/tycho/commit/7073a54fde23448736c522b008b42e0f000bb2ef))
+* resolve EkuboPoolQuote at enum_delegate expansion sites ([b0044ae](https://github.com/propeller-heads/tycho/commit/b0044ae0b732a2a5f9c72cb6867ea434a9262e67))
+* **testing:** keep the generic RPC URL across multi-package runs ([8a723a5](https://github.com/propeller-heads/tycho/commit/8a723a5d82ee3f276cfdaae53d2ef93fede25453))
+
+## [0.393.1](https://github.com/propeller-heads/tycho/compare/0.393.0...0.393.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* correct the unsupported pool list in erc4626_filter ([#1322](https://github.com/propeller-heads/tycho/issues/1322)) ([11364de](https://github.com/propeller-heads/tycho/commit/11364de49b8741c86ccef20a508184613861fa36))
+
+## [0.393.0](https://github.com/propeller-heads/tycho/compare/0.392.0...0.393.0) (2026-09-07)
+
+
+### Features
+
+* **execution:** update MetricExecutor to the MetricOmm pool interface ([7ff4994](https://github.com/propeller-heads/tycho/commit/7ff4994c3161222060314f01845a5efd9bf4d8ea))
+* **metric:** gate quotability on the new priceProviderStatus field ([0a78182](https://github.com/propeller-heads/tycho/commit/0a78182345a3e59c80721634128f26448909096a))
+* **metric:** support Robinhood Chain ([499163b](https://github.com/propeller-heads/tycho/commit/499163ba2977c53b7e77c98c8b29b6e6177f17ed))
+* **rfq:** drive Metric depth walk by cumulativeInputVolume; fetch tvlFiat ([6b2a1e2](https://github.com/propeller-heads/tycho/commit/6b2a1e2a56f407dd91b9bc8a9e1625ad527038c3))
+* **rfq:** migrate Metric integration to v1 API ([f167eb8](https://github.com/propeller-heads/tycho/commit/f167eb820cc95faadb31fce357c9b747e58af8b5))
+* **rfq:** migrate Metric integration to v1 API ([#1220](https://github.com/propeller-heads/tycho/issues/1220)) ([61267c9](https://github.com/propeller-heads/tycho/commit/61267c971a1a3e65a8461b33cccfa03ab0a5d014))
+* **rfq:** price Metric partial-bin fills pro-rata in integer units ([2a34a1c](https://github.com/propeller-heads/tycho/commit/2a34a1cf09764309eea779ef46ce2b52f2fc3488))
+* **rfq:** skip Metric pools with empty depth ([c1aa202](https://github.com/propeller-heads/tycho/commit/c1aa202773ef28d9df36c2a78f08e5cdd6e9151e))
+* **rfq:** take Metric input limits from depth cumulativeInputVolume ([c155ffc](https://github.com/propeller-heads/tycho/commit/c155ffccac5c92dc4c3ac784ff4b294a65466e01))
+
+
+### Bug Fixes
+
+* **execution:** silence Slither unused-return on the Metric pool swap ([5ae2fdc](https://github.com/propeller-heads/tycho/commit/5ae2fdc96feab4f158b3ae7e06a35b81fab9d08e))
+* **metric:** decode explicit null depth as an empty book ([d9f4990](https://github.com/propeller-heads/tycho/commit/d9f4990d40a3a0717087e33bc58c4404036af712))
+
+
+### Reverts
+
+* drop unrelated Ramses ABI formatting ([934bba2](https://github.com/propeller-heads/tycho/commit/934bba20836f2e8d747c9fcf74b260e41990b959))
+
+## [0.392.0](https://github.com/propeller-heads/tycho/compare/0.391.0...0.392.0) (2026-09-07)
+
+
+### Features
+
+* switch sf as provider for robinhood ([3b3d7f5](https://github.com/propeller-heads/tycho/commit/3b3d7f562dfe51993767daad740f64850088f995))
+* switch sf as provider for robinhood ([#1419](https://github.com/propeller-heads/tycho/issues/1419)) ([3b710bc](https://github.com/propeller-heads/tycho/commit/3b710bc7843376b4483e9b6804770fc22b9cbf62))
+
+## [0.391.0](https://github.com/propeller-heads/tycho/compare/0.390.0...0.391.0) (2026-09-07)
+
+
+### Features
+
+* **integration-test:** wire up Robinhood Chain protocols ([1372b11](https://github.com/propeller-heads/tycho/commit/1372b11eb5661795daf35f9cf7170cbec002105c))
+* **integration-test:** wire up Robinhood Chain protocols ([#1418](https://github.com/propeller-heads/tycho/issues/1418)) ([6b12f35](https://github.com/propeller-heads/tycho/commit/6b12f35d48f220e16cfec5791c6de3bdcd813f6e))
+
+## [0.390.0](https://github.com/propeller-heads/tycho/compare/0.389.0...0.390.0) (2026-09-05)
+
+
+### Features
+
+* **router-trades:** start each chain at its first v3 router ([#1415](https://github.com/propeller-heads/tycho/issues/1415)) ([034d9f2](https://github.com/propeller-heads/tycho/commit/034d9f23def3f88d0b9d64ad2aa08a47de34d62a))
+
+
+### Performance Improvements
+
+* **router-trades:** start each chain at its first v3 router ([630fe7f](https://github.com/propeller-heads/tycho/commit/630fe7fadef263e078c4c942133017f07567743b))
+
+## [0.389.0](https://github.com/propeller-heads/tycho/compare/0.388.0...0.389.0) (2026-09-04)
+
+
+### Features
+
+* **router-trades:** index the per-client positive slippage exemption ([5b7b6b6](https://github.com/propeller-heads/tycho/commit/5b7b6b68fff035996d607629946cfb11ea924951)), closes [#1371](https://github.com/propeller-heads/tycho/issues/1371)
+* **router-trades:** index the vault balances that hold router fees ([ac98632](https://github.com/propeller-heads/tycho/commit/ac98632983954459eb45efe8bcc56d7b2ca79c90))
+* **router-trades:** name executors from a table and settle on one flag ([dad1739](https://github.com/propeller-heads/tycho/commit/dad173906c71caaff92f69321a8b420e9382b2d6))
+* **router-trades:** skip a block that touched no router, with a block index ([88ec891](https://github.com/propeller-heads/tycho/commit/88ec891992f0daa609bd27ccf16eea15344520b6))
+
+
+### Bug Fixes
+
+* **router-trades:** read the fee bps scale off the calculator ([e7dd0a3](https://github.com/propeller-heads/tycho/commit/e7dd0a3f9751207abfb889f93d226ca6a4478224))
+* **router-trades:** read the fee bps scale off the calculator ([#1412](https://github.com/propeller-heads/tycho/issues/1412)) ([a37407e](https://github.com/propeller-heads/tycho/commit/a37407e3d6e8915990c501dfeb818b2aa7205466))
+
+## [0.388.0](https://github.com/propeller-heads/tycho/compare/0.387.0...0.388.0) (2026-09-04)
+
+
+### Features
+
+* **router-trades:** release the spkg packages apart from the image ([18e7d07](https://github.com/propeller-heads/tycho/commit/18e7d07762992b4dcb92469546b8c815b0857cdb))
+* **router-trades:** release the spkg packages apart from the image ([#1401](https://github.com/propeller-heads/tycho/issues/1401)) ([4586a6a](https://github.com/propeller-heads/tycho/commit/4586a6a96dfb1b6ec22587f40b7c8e3068e249d8))
+
+## [0.387.0](https://github.com/propeller-heads/tycho/compare/0.386.1...0.387.0) (2026-09-04)
+
+
+### Features
+
+* add sky executor ([af20b85](https://github.com/propeller-heads/tycho/commit/af20b852919b532e4a4508a9c7e846e46da43d8c))
+* add sky executor ([#1393](https://github.com/propeller-heads/tycho/issues/1393)) ([856f3c1](https://github.com/propeller-heads/tycho/commit/856f3c1131921ccc6896c715856ada578ba3d8e1))
+
+## [0.386.1](https://github.com/propeller-heads/tycho/compare/0.386.0...0.386.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **testing:** make Robinhood Chain packages testable ([d93a698](https://github.com/propeller-heads/tycho/commit/d93a698d014b33c9ffd3ef8e1a91282ac4990f6b))
+* **testing:** make Robinhood Chain packages testable ([#1410](https://github.com/propeller-heads/tycho/issues/1410)) ([f39d07e](https://github.com/propeller-heads/tycho/commit/f39d07ee096a4182248c6f4179bc24880f1ce158))
+* **testing:** set ROBINHOOD_RPC_URL for the Foundry fork tests ([f2b689f](https://github.com/propeller-heads/tycho/commit/f2b689fb893c6c65bdb4e1d108fe5285d81813c4)), closes [#1337](https://github.com/propeller-heads/tycho/issues/1337)
+* **testing:** wire ROBINHOOD_RPC_URL through CI, and require it ([10d89ad](https://github.com/propeller-heads/tycho/commit/10d89adb27764913f76f8314fd2016ea7566dd54))
+
 ## [0.386.0](https://github.com/propeller-heads/tycho/compare/0.385.0...0.386.0) (2026-09-04)
 
 
