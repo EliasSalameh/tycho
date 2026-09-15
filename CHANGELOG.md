@@ -1,3 +1,11 @@
+## [0.406.1](https://github.com/propeller-heads/tycho/compare/0.406.0...0.406.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* scope contract snapshot queries to the returned page ([6e8f1a1](https://github.com/propeller-heads/tycho/commit/6e8f1a1fe3c5e8e3c3f17bbc4fa1ba58d414f0c7))
+* scope contract snapshot queries to the returned page ([#1273](https://github.com/propeller-heads/tycho/issues/1273)) ([f9c972c](https://github.com/propeller-heads/tycho/commit/f9c972c494280f99cb24fe0043f748cde8839c9e))
+
 ## [0.406.0](https://github.com/propeller-heads/tycho/compare/0.405.0...0.406.0) (2026-09-14)
 
 
