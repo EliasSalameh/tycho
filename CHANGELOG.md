@@ -1,3 +1,11 @@
+## [0.406.2](https://github.com/propeller-heads/tycho/compare/0.406.1...0.406.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.45 ([491d160](https://github.com/propeller-heads/tycho/commit/491d160f27eddf137ab77fd44f839f14648ffb1b))
+* **deps:** bump rustls to 0.23.45 ([#1443](https://github.com/propeller-heads/tycho/issues/1443)) ([e87a4f3](https://github.com/propeller-heads/tycho/commit/e87a4f32ea692bbd4444be669b7ca2c4d91512f9))
+
 ## [0.406.1](https://github.com/propeller-heads/tycho/compare/0.406.0...0.406.1) (2026-09-15)
 
 
