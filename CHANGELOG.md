@@ -1,3 +1,10 @@
+## [0.407.2](https://github.com/propeller-heads/tycho/compare/0.407.1...0.407.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* **indexer:** exit the services task on a pump error ([3d73f2b](https://github.com/propeller-heads/tycho/commit/3d73f2b8f4262febb4e8a2c62042ff552c9beb0c))
+
 ## [0.407.1](https://github.com/propeller-heads/tycho/compare/0.407.0...0.407.1) (2026-09-15)
 
 
