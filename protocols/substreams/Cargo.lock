@@ -414,6 +414,8 @@ dependencies = [
  "num-bigint",
  "prost 0.11.9",
  "rstest",
+ "serde",
+ "serde_qs 0.13.0",
  "substreams 0.5.22",
  "substreams-ethereum 0.9.13",
  "substreams-helper 0.0.2",

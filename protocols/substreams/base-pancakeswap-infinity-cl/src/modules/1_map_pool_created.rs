@@ -3,15 +3,32 @@ use crate::{
     parameters::{self, CL_POOLS_MAPPING_SLOT},
 };
 use ethabi::ethereum_types::Address;
-use std::str::FromStr;
+use serde::Deserialize;
 use substreams::scalar::BigInt;
 use substreams_ethereum::pb::eth::v2::{self as eth};
 use substreams_helper::{event_handler::EventHandler, hex::Hexable};
 use tycho_substreams::prelude::*;
 
-/// Holds every pool's funds, so it is `balance_owner` on every component. Same address on Base
-/// and BNB (CREATE3), so a constant rather than a manifest param like the pool manager.
-const VAULT_ADDRESS: &str = "238a358808379702088667322f80aC48bAd5e6c4";
+/// Per-chain deployment addresses, hex without the 0x prefix.
+#[derive(Debug, Deserialize, PartialEq)]
+struct Params {
+    /// `CLPoolManager`, the emitter of `Initialize`.
+    pool_manager: String,
+    /// Holds every pool's funds, so it is `balance_owner` on every component.
+    vault: String,
+}
+
+fn decode_address(name: &str, value: &str) -> Result<Vec<u8>, substreams::errors::Error> {
+    let bytes =
+        hex::decode(value).map_err(|err| anyhow::anyhow!("Invalid {name} {value:?}: {err}"))?;
+    if bytes.len() != 20 {
+        return Err(anyhow::anyhow!(
+            "Invalid {name} {value:?}: expected 20 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
 
 /// One `ProtocolComponent` per `CLPoolManager.Initialize`, for pools with no swap hook and a
 /// static LP fee.
@@ -26,9 +43,12 @@ pub fn map_pools_created(
     block: eth::Block,
 ) -> Result<BlockEntityChanges, substreams::errors::Error> {
     let mut new_pools: Vec<TransactionEntityChanges> = vec![];
-    let pool_manager = params.as_str();
+    let params: Params = serde_qs::from_str(&params)
+        .map_err(|err| anyhow::anyhow!("Invalid map_pools_created params {params:?}: {err}"))?;
+    let pool_manager = decode_address("pool_manager", &params.pool_manager)?;
+    let vault = decode_address("vault", &params.vault)?;
 
-    get_new_pools(&block, &mut new_pools, pool_manager);
+    get_new_pools(&block, &mut new_pools, &pool_manager, &vault);
 
     Ok(BlockEntityChanges { block: None, changes: new_pools })
 }
@@ -37,17 +57,17 @@ pub fn map_pools_created(
 fn get_new_pools(
     block: &eth::Block,
     new_pools: &mut Vec<TransactionEntityChanges>,
-    pool_manager_address: &str,
+    pool_manager: &[u8],
+    vault: &[u8],
 ) {
-    let pool_manager = hex::decode(pool_manager_address).unwrap();
     let mut on_pool_created = |event: Initialize, tx: &eth::TransactionTrace, log: &eth::Log| {
-        if let Some(changes) = pool_created(event, tx, log, &pool_manager) {
+        if let Some(changes) = pool_created(event, tx, log, pool_manager, vault) {
             new_pools.push(changes);
         }
     };
 
     let mut eh = EventHandler::new(block);
-    eh.filter_by_address(vec![Address::from_str(pool_manager_address).unwrap()]);
+    eh.filter_by_address(vec![Address::from_slice(pool_manager)]);
     eh.on::<Initialize, _>(&mut on_pool_created);
     eh.handle_events();
 }
@@ -59,6 +79,7 @@ fn pool_created(
     tx: &eth::TransactionTrace,
     log: &eth::Log,
     pool_manager: &[u8],
+    vault: &[u8],
 ) -> Option<TransactionEntityChanges> {
     let fee: u32 = event.fee.clone().into();
     if parameters::has_swap_hooks(&event.parameters) || parameters::is_dynamic_fee(fee) {
@@ -94,7 +115,7 @@ fn pool_created(
         entity_changes: vec![EntityChanges {
             component_id: component_id.clone(),
             attributes: vec![
-                attribute("balance_owner", hex::decode(VAULT_ADDRESS).unwrap()),
+                attribute("balance_owner", vault.to_vec()),
                 attribute("liquidity", BigInt::from(0).to_signed_bytes_be()),
                 attribute("tick", event.tick.to_signed_bytes_be()),
                 attribute(
@@ -196,6 +217,7 @@ mod tests {
     };
 
     const POOL_MANAGER: &str = "a0FfB9c1CE1Fe56963B0321B32E7A0302114058b";
+    const VAULT: &str = "238a358808379702088667322f80aC48bAd5e6c4";
     const CURRENCY0: [u8; 20] = [0x11; 20];
     const CURRENCY1: [u8; 20] = [0x22; 20];
     const POOL_ID: [u8; 32] = [0xab; 32];
@@ -286,7 +308,12 @@ mod tests {
 
     fn run(block: &Block) -> Vec<TransactionEntityChanges> {
         let mut new_pools = vec![];
-        get_new_pools(block, &mut new_pools, POOL_MANAGER);
+        get_new_pools(
+            block,
+            &mut new_pools,
+            &hex::decode(POOL_MANAGER).unwrap(),
+            &hex::decode(VAULT).unwrap(),
+        );
         new_pools
     }
 
@@ -303,6 +330,18 @@ mod tests {
             initialize_log(hooks, fee, &pool_key_parameters(hook_bitmap, 60)),
             vec![slot0_write(slot0_with_protocol_fee(200, 300))],
         )
+    }
+
+    #[test]
+    fn params_parse_pool_manager_and_vault() {
+        let params: Params =
+            serde_qs::from_str(&format!("pool_manager={POOL_MANAGER}&vault={VAULT}")).unwrap();
+        assert_eq!(
+            params,
+            Params { pool_manager: POOL_MANAGER.to_string(), vault: VAULT.to_string() }
+        );
+        assert!(serde_qs::from_str::<Params>(POOL_MANAGER).is_err(), "bare address is rejected");
+        assert!(decode_address("vault", "0x1234").is_err(), "0x prefix and short input rejected");
     }
 
     #[test]
@@ -339,7 +378,7 @@ mod tests {
         );
 
         let state = &pool.entity_changes[0].attributes;
-        assert_attr(state, "balance_owner", hex::decode(VAULT_ADDRESS).unwrap());
+        assert_attr(state, "balance_owner", hex::decode(VAULT).unwrap());
         assert_attr(state, "protocol_fees/zero2one", BigInt::from(200).to_signed_bytes_be());
         assert_attr(state, "protocol_fees/one2zero", BigInt::from(300).to_signed_bytes_be());
 
