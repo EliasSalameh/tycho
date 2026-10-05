@@ -47,8 +47,12 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
     /// @dev Packed swap data. Layout above.
     uint256 private constant _DATA_LENGTH = 97;
     /// @dev Lock payload: 32 + 20 + _DATA_LENGTH.
+    // Used only as a calldata slice bound, which Slither does not count as a use.
+    // slither-disable-next-line unused-state
     uint256 private constant _PAYLOAD_LENGTH = 149;
     /// @dev lockAcquired header: 4 + 32 + 32.
+    // Same slice-bound false positive as _PAYLOAD_LENGTH.
+    // slither-disable-next-line unused-state
     uint256 private constant _CALLBACK_HEADER = 68;
     bytes4 private constant _LOCK_ACQUIRED =
         bytes4(keccak256("lockAcquired(bytes)"));
@@ -152,12 +156,7 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
         address receiver = address(bytes20(payload[32:52]));
         bytes calldata swapData = payload[52:_PAYLOAD_LENGTH];
 
-        (address tokenIn, address tokenOut,,,,,) = _decodeData(swapData);
-        (tokenIn, tokenOut) =
-        (_toInfinityCurrency(tokenIn), _toInfinityCurrency(tokenOut));
-        _settle(tokenIn, amountIn);
-        _swap(swapData, amountIn);
-        _take(tokenOut, receiver, _getFullCredit(tokenOut));
+        _swap(swapData, amountIn, receiver);
         // Dispatcher abi.decodes the result, so encode the empty.
         return abi.encode(bytes(""));
     }
@@ -190,9 +189,11 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
         hooks = address(bytes20(data[77:97]));
     }
 
-    /// @dev Swaps on whichever manager the pool-type byte selects. Returns nothing: the output
-    /// amount is read from the Vault in handleCallback, never from the returned delta.
-    function _swap(bytes calldata swapData, uint256 amountIn) internal {
+    /// @dev Settles the input, swaps on whichever manager the pool-type byte selects and takes
+    /// the output. Both amounts are read from the Vault, never from the delta a swap returns.
+    function _swap(bytes calldata swapData, uint256 amountIn, address receiver)
+        internal
+    {
         (
             address tokenIn,
             address tokenOut,
@@ -202,13 +203,20 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
             bytes32 parameters,
             address hooks
         ) = _decodeData(swapData);
+        // Mapping first puts native ETH at currency0.
+        (tokenIn, tokenOut) =
+        (_toInfinityCurrency(tokenIn), _toInfinityCurrency(tokenOut));
+        _settle(tokenIn, amountIn);
+        // Swap what the Vault credited rather than what was sent, as UniswapV4Executor does: a
+        // token that takes a fee on transfer credits less than amountIn.
+        uint256 swapAmountIn = _getFullCredit(tokenIn);
+
         address manager =
             poolType == _POOL_TYPE_CL ? clPoolManager : binPoolManager;
         // Order from the direction byte, never by re-comparing addresses: the encoder owns
-        // direction (CANONICAL note above). Mapping first puts native ETH at currency0.
-        (address currency0, address currency1) = zeroForOne
-            ? (_toInfinityCurrency(tokenIn), _toInfinityCurrency(tokenOut))
-            : (_toInfinityCurrency(tokenOut), _toInfinityCurrency(tokenIn));
+        // direction (CANONICAL note above).
+        (address currency0, address currency1) =
+            zeroForOne ? (tokenIn, tokenOut) : (tokenOut, tokenIn);
         // poolManager is part of the key and feeds the pool id hash, so a wrong one yields an
         // uninitialized pool and the swap reverts with PoolNotInitialized.
         InfinityPoolKey memory key = InfinityPoolKey({
@@ -230,7 +238,7 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
                     key,
                     IPancakeswapInfinityCLPoolManager.SwapParams({
                         zeroForOne: zeroForOne,
-                        amountSpecified: -amountIn.toInt256(),
+                        amountSpecified: -swapAmountIn.toInt256(),
                         sqrtPriceLimitX96: zeroForOne
                             ? TickMath.MIN_SQRT_PRICE + 1
                             : TickMath.MAX_SQRT_PRICE - 1
@@ -241,8 +249,9 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
             // swapForY == zeroForOne: spend token0/X, receive token1/Y.
             // slither-disable-next-line unused-return
             IPancakeswapInfinityBinPoolManager(manager)
-                .swap(key, zeroForOne, -amountIn.toInt128(), "");
+                .swap(key, zeroForOne, -swapAmountIn.toInt128(), "");
         }
+        _take(tokenOut, receiver, _getFullCredit(tokenOut));
     }
 
     /// @dev Full amount the Vault owes this locker. address(this) is the router, not this
