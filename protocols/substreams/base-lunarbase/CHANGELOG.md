@@ -6,22 +6,20 @@
   fee changes from `PunishmentApplied`, and the complete uint160 anchor price.
   This changes the state schema and requires the matching simulator using
   `lunarbase-pmm-math` 0.4.1 and a fresh indexing replay.
-- Require a `quote_caller` parameter and track its whitelist status alongside the
-  pool's blacklist fee multiplier. Quotes now apply the configured caller's policy
-  instead of assuming multiplier one. Replaying state is required when changing
-  callers or migrating snapshots that lack these attributes.
-- Add a BNB Smart Chain manifest sharing the existing WASM, with the native
-  BNB/USDT pool and its configured Tycho quote caller.
-- Seed Base at block 51297755 and BSC at block 121835899 with complete,
-  caller-bound snapshots of their parent blocks. Validate parent number/hash and
-  all eleven attributes; seed
-  active reserve balances before applying events. Include RPC capture provenance
-  and observed quotes, and enable simulation/execution for both modern ranges.
+- Assume integrated partners, including Tycho, are whitelisted: quote with fee
+  multiplier one while retaining directional fees and punishment. Remove router
+  identity and caller fee policy from Substreams parameters and state, so a router
+  change does not require reindexing.
+- Add a BNB Smart Chain manifest sharing the existing WASM for the native BNB/USDT pool.
+- Seed Base at block 51297755 and BSC at block 121835899 with complete snapshots
+  of their parent blocks. Validate parent number/hash and all nine attributes;
+  seed active reserve balances before applying events. Retain RPC capture provenance
+  and historical caller policy separately from the indexed state.
 - Accept optional `bootstrap_states` JSON in module parameters for verified
-  snapshots when indexing an existing pool. Changing the caller also requires
-  replacing its bootstrap snapshot.
-- Document bootstrap completeness, caller fee policy, and the validation and
-  execution registration needed before enabling the new deployment.
+  snapshots when indexing an existing pool.
+- Document bootstrap completeness, the whitelist assumption, and validation and
+  execution registration requirements. Historical Base execution validation needs
+  a range with a whitelisted router to match the simulator.
 
 ## v0.1.3
 

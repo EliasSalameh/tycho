@@ -22,8 +22,6 @@ fn main() -> Result<(), anyhow::Error> {
         "BlockDelaySet",
         "MaxPunishmentX24Set",
         "PunishmentApplied",
-        "BlacklistFeeMultiplierSet",
-        "WhitelistSet",
         "Paused",
         "Unpaused",
     ];

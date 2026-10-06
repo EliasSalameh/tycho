@@ -18,8 +18,6 @@ mod attrs {
     pub const RESERVE_X: &str = "reserve_x";
     pub const RESERVE_Y: &str = "reserve_y";
     pub const MAX_PUNISHMENT_X24: &str = "max_punishment_x24";
-    pub const BLACKLIST_FEE_MULTIPLIER: &str = "blacklist_fee_multiplier";
-    pub const QUOTE_CALLER_WHITELISTED: &str = "quote_caller_whitelisted";
     pub const BLOCK_DELAY: &str = "block_delay";
     pub const PAUSED: &str = "paused";
 }
@@ -58,18 +56,6 @@ pub fn encode_state(state: &LunarBaseState) -> HashMap<String, Bytes> {
         (attrs::RESERVE_X.to_owned(), Bytes::from(state.reserve_x)),
         (attrs::RESERVE_Y.to_owned(), Bytes::from(state.reserve_y)),
         (attrs::MAX_PUNISHMENT_X24.to_owned(), Bytes::from(state.max_punishment_x24)),
-        (
-            attrs::BLACKLIST_FEE_MULTIPLIER.to_owned(),
-            Bytes::from(
-                state
-                    .blacklist_fee_multiplier
-                    .to_be_bytes::<32>(),
-            ),
-        ),
-        (
-            attrs::QUOTE_CALLER_WHITELISTED.to_owned(),
-            Bytes::from([u8::from(state.quote_caller_whitelisted)]),
-        ),
         (attrs::BLOCK_DELAY.to_owned(), Bytes::from(state.block_delay)),
         (attrs::PAUSED.to_owned(), Bytes::from([u8::from(state.paused)])),
     ])
@@ -94,13 +80,6 @@ pub fn apply_delta(
             attrs::RESERVE_Y => next.reserve_y = decode_uint(&name, &value, 112, 16)?.to(),
             attrs::MAX_PUNISHMENT_X24 => {
                 next.max_punishment_x24 = decode_uint(&name, &value, 24, 4)?.to();
-            }
-            attrs::BLACKLIST_FEE_MULTIPLIER => {
-                next.blacklist_fee_multiplier = decode_uint(&name, &value, 256, 32)?;
-            }
-            attrs::QUOTE_CALLER_WHITELISTED => {
-                next.quote_caller_whitelisted =
-                    decode_bool(attrs::QUOTE_CALLER_WHITELISTED, &value)?;
             }
             attrs::BLOCK_DELAY => next.block_delay = decode_uint(&name, &value, 48, 8)?.to(),
             attrs::PAUSED => next.paused = decode_bool(attrs::PAUSED, &value)?,
@@ -159,16 +138,6 @@ pub fn decode_lunarbase_snapshot(
             4,
         )?
         .to(),
-        blacklist_fee_multiplier: decode_uint(
-            attrs::BLACKLIST_FEE_MULTIPLIER,
-            required_attr(attrs, attrs::BLACKLIST_FEE_MULTIPLIER)?,
-            256,
-            32,
-        )?,
-        quote_caller_whitelisted: decode_bool(
-            attrs::QUOTE_CALLER_WHITELISTED,
-            required_attr(attrs, attrs::QUOTE_CALLER_WHITELISTED)?,
-        )?,
         block_delay: decode_uint(
             attrs::BLOCK_DELAY,
             required_attr(attrs, attrs::BLOCK_DELAY)?,
@@ -295,8 +264,6 @@ mod tests {
             reserve_x: 1_000_000,
             reserve_y: 2_000_000,
             max_punishment_x24: 4096,
-            blacklist_fee_multiplier: U256::from(1u64),
-            quote_caller_whitelisted: false,
             block_delay: 2,
             paused: false,
             head_block: 100,
@@ -389,8 +356,6 @@ mod tests {
             (attrs::LATEST_UPDATE_BLOCK, Bytes::from(1u64 << 48)),
             (attrs::BLOCK_DELAY, Bytes::from(1u64 << 48)),
             (attrs::PAUSED, Bytes::from([2u8])),
-            (attrs::BLACKLIST_FEE_MULTIPLIER, Bytes::from(vec![0u8; 33])),
-            (attrs::QUOTE_CALLER_WHITELISTED, Bytes::from([2u8])),
             ("block_number", Bytes::from(vec![0u8; 9])),
         ];
         for (name, value) in cases {
@@ -401,24 +366,5 @@ mod tests {
             assert!(apply_delta(&mut state, delta).is_err(), "accepted {name}");
             assert_eq!(state, before, "partially applied {name}");
         }
-    }
-
-    #[test]
-    fn preserves_full_uint256_multiplier_and_caller_policy() {
-        let mut state = state();
-        apply_delta(
-            &mut state,
-            HashMap::from([
-                (
-                    attrs::BLACKLIST_FEE_MULTIPLIER.to_owned(),
-                    Bytes::from(U256::MAX.to_be_bytes::<32>()),
-                ),
-                (attrs::QUOTE_CALLER_WHITELISTED.to_owned(), Bytes::from([1u8])),
-            ]),
-        )
-        .unwrap();
-        assert_eq!(state.blacklist_fee_multiplier, U256::MAX);
-        assert!(state.quote_caller_whitelisted);
-        assert_eq!(state.fee_multiplier(), U256::from(1u64));
     }
 }

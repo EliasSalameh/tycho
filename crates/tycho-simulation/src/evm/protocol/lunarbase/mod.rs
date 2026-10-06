@@ -53,8 +53,6 @@ mod tests {
             reserve_x: 1_000_000,
             reserve_y: 2_000_000,
             max_punishment_x24: 0,
-            blacklist_fee_multiplier: U256::from(1u64),
-            quote_caller_whitelisted: false,
             block_delay: 2,
             paused: false,
             head_block: 100,
@@ -190,14 +188,19 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_requires_explicit_caller_fee_policy() {
+    fn snapshot_does_not_require_caller_fee_policy() {
+        let mut snapshot = snapshot(state());
         for name in ["blacklist_fee_multiplier", "quote_caller_whitelisted"] {
-            let mut snapshot = snapshot(state());
-            snapshot.state.attributes.remove(name);
-            let error = decode_lunarbase_snapshot(&snapshot).unwrap_err();
-            assert!(
-                matches!(error, crate::protocol::errors::InvalidSnapshotError::MissingAttribute(missing) if missing == name)
-            );
+            assert!(!snapshot
+                .state
+                .attributes
+                .contains_key(name));
         }
+        let decoded = decode_lunarbase_snapshot(&snapshot).unwrap();
+        snapshot.state.attributes.extend([
+            ("blacklist_fee_multiplier".to_owned(), Bytes::from(U256::MAX.to_be_bytes::<32>())),
+            ("quote_caller_whitelisted".to_owned(), Bytes::from([0u8])),
+        ]);
+        assert_eq!(decode_lunarbase_snapshot(&snapshot).unwrap(), decoded);
     }
 }

@@ -31,7 +31,6 @@ mod config {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Config {
         pub pools: Vec<PoolConfig>,
-        pub quote_caller: lunarbase::Address,
         pub bootstrap_states: HashMap<lunarbase::Address, BootstrapState>,
     }
 
@@ -44,7 +43,6 @@ mod config {
                     token_y: BASE_USDC,
                     bootstrap_block: None,
                 }],
-                quote_caller: [0; 20],
                 bootstrap_states: HashMap::new(),
             }
         }
@@ -54,7 +52,6 @@ mod config {
         pub fn parse(params: &str) -> Result<Self> {
             let mut config = Self::default();
             let mut single_pool = config.pools[0];
-            let mut quote_caller = None;
             let mut bootstrap_states = None;
             for pair in params
                 .split('&')
@@ -70,7 +67,6 @@ mod config {
                     "token_y" => single_pool.token_y = parse_address(value)?,
                     "bootstrap_block" => single_pool.bootstrap_block = Some(value.parse()?),
                     "pools" => config.pools = parse_pools(value)?,
-                    "quote_caller" => quote_caller = Some(parse_address(value)?),
                     "bootstrap_states" => bootstrap_states = Some(value),
                     _ => return Err(anyhow!("unknown LunarBase Substreams param `{key}`")),
                 }
@@ -82,12 +78,8 @@ mod config {
             {
                 config.pools = vec![single_pool];
             }
-            config.quote_caller = quote_caller.ok_or_else(|| {
-                anyhow!("missing required LunarBase `quote_caller` address parameter")
-            })?;
             if let Some(value) = bootstrap_states {
-                config.bootstrap_states =
-                    parse_snapshots(value, &config.pools, config.quote_caller)?;
+                config.bootstrap_states = parse_snapshots(value, &config.pools)?;
             }
             Ok(config)
         }
@@ -166,7 +158,7 @@ mod tests {
             "pool=0x0000000000000000000000000000000000000001&\
              token_x=0x0000000000000000000000000000000000000002&\
              token_y=0x0000000000000000000000000000000000000003&\
-             bootstrap_block=10&quote_caller=0x0000000000000000000000000000000000000009",
+             bootstrap_block=10",
         )
         .expect("valid config");
 
@@ -175,7 +167,6 @@ mod tests {
         assert_eq!(config.pools[0].token_x, address(2));
         assert_eq!(config.pools[0].token_y, address(3));
         assert_eq!(config.pools[0].bootstrap_block, Some(10));
-        assert_eq!(config.quote_caller, address(9));
     }
 
     #[test]
@@ -187,8 +178,7 @@ mod tests {
              0x0000000000000000000000000000000000000003:10,\
              0x0000000000000000000000000000000000000004:\
              0x0000000000000000000000000000000000000005:\
-             0x0000000000000000000000000000000000000006:20&\
-             quote_caller=0x0000000000000000000000000000000000000009",
+             0x0000000000000000000000000000000000000006:20",
         )
         .expect("valid config");
 
@@ -199,16 +189,12 @@ mod tests {
         assert_eq!(config.pools[1].token_x, address(5));
         assert_eq!(config.pools[1].token_y, address(6));
         assert_eq!(config.pools[1].bootstrap_block, Some(20));
-        assert_eq!(config.quote_caller, address(9));
     }
 
     #[test]
-    fn requires_an_explicit_valid_quote_caller() {
-        assert!(Config::parse("bootstrap_block=10")
-            .unwrap_err()
-            .to_string()
-            .contains("quote_caller"));
-        assert!(Config::parse("quote_caller=0x1234").is_err());
+    fn uses_default_pool_without_a_caller_parameter() {
+        let config = Config::parse("bootstrap_block=10").unwrap();
+        assert_eq!(config.pools[0].bootstrap_block, Some(10));
     }
 
     fn address(last_byte: u8) -> [u8; 20] {

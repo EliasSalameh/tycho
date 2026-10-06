@@ -25,12 +25,7 @@ pub fn map_protocol_components(
         else {
             continue;
         };
-        let component = lunarbase::protocol_component(
-            pool.pool,
-            pool.token_x,
-            pool.token_y,
-            config.quote_caller,
-        );
+        let component = lunarbase::protocol_component(pool.pool, pool.token_x, pool.token_y);
         if let Some(existing) = tx_components
             .iter_mut()
             .find(|tx_components| {

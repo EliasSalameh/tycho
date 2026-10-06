@@ -20,33 +20,26 @@ Implementation addresses are upgradeable and must be verified at the validation 
 | `token_y` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `0x55d398326f99059fF775485246999027B3197955` |
 | Token decimals X / Y | 18 / 6 | 18 / 18 |
 | Configured start / bootstrap block | 51297755 | 121835899 |
-| `quote_caller` (Tycho router) | `0xAbA5B53b03eAfaD1C5fc8BD5Fc765fC85Bb3de67` | `0x7f3D12BBaFb8955E51B3ab9588b34c8ad95BDA4e` |
-
-Caller addresses come from `crates/tycho-execution/config/router_addresses.json`.
-Configuring the BSC router here does not assert that its LunarBase executor is deployed
-or registered.
 
 Singleton parameters have this form:
 
 ```text
-pool=0x...&token_x=0x...&token_y=0x...&bootstrap_block=51297755&quote_caller=0x...
+pool=0x...&token_x=0x...&token_y=0x...&bootstrap_block=51297755
 ```
 
 For multiple known pools, use:
 
 ```text
-pools=0xpool:0xtokenX:0xtokenY:bootstrapBlock,0xpool2:0xtokenX2:0xtokenY2:bootstrapBlock2&quote_caller=0x...
+pools=0xpool:0xtokenX:0xtokenY:bootstrapBlock,0xpool2:0xtokenX2:0xtokenY2:bootstrapBlock2
 ```
 
 Both `map_protocol_components` and `map_protocol_changes` must receive the same
-parameters. Each pool becomes a component keyed by its proxy address. `quote_caller`
-is required and applies to every pool in the manifest; it must match the caller
-seen by the Pool during execution.
+parameters. Each pool becomes a component keyed by its proxy address.
 
-This address selects the Pool's caller-dependent fee policy, not a Tycho router
-fee. The executor runs through the router via `delegatecall`, so the Pool sees the
-router as `msg.sender`. Whitelisting that address applies multiplier one to the
-Pool's directional fee and immediate punishment; it does not make swaps free.
+Integrated partners, including Tycho, are assumed to be whitelisted by the Pool.
+Quotes always use fee multiplier one; directional fees and immediate punishment
+still apply. The feed contains no router address or caller-specific fee policy,
+so changing the Tycho router does not require reindexing.
 
 ## State schema and quote compatibility
 
@@ -61,25 +54,15 @@ successful swaps also change stored directional fees for subsequent quotes.
   `latest_update_block`. Only `StateUpdated` refreshes the operator update block.
 - `Sync` supplies active reserves. These differ from raw contract balances, which
   can include pending deposits and fee buckets.
-- `blacklist_fee_multiplier` stores the uint256 multiplier in 32 big-endian bytes;
-  `BlacklistFeeMultiplierSet` replaces it. `quote_caller_whitelisted` is a one-byte
-  boolean updated only by `WhitelistSet` events for the configured caller.
 
 Historical quotes from implementations before v0.4 are unsupported by the new
 simulator. Replaying their events to reconstruct later state does not make those
 earlier quotes compatible. This package does not identify the v0.4 activation block
 or automatically gate historical quote requests by implementation version.
 
-Quotes use the indexed caller policy: a whitelisted caller has multiplier one;
-otherwise the blacklist multiplier applies, with raw zero interpreted as one to
-match the Pool getter. This is necessary even when the execution ABI is unchanged:
-at Base block 51297469 the configured Tycho router was not whitelisted and the
-blacklist multiplier was 100. Assuming a multiplier of one would misprice its swaps.
-
-Changing `quote_caller` requires a fresh replay because whitelist events for other
-addresses were previously ignored; replace any bootstrap snapshot with one for the
-new caller. Quotes from this feed are specific to that caller; reconcile its
-whitelist status and multiplier with block-pinned getters.
+On-chain execution must use a whitelisted router to match the simulator. Historical
+quotes from an unwhitelisted caller with a higher multiplier are not directly
+comparable to the simulator's whitelist quotes.
 
 The later Pool policy that also checks `blacklist[tx.origin]` is outside this
 v0.4.1 integration. This feed does not track transaction-origin blacklist entries
@@ -97,7 +80,7 @@ parameter; changing only `initialBlock` loses component discovery.
 
 For an existing pool, `bootstrap_states` supplies the complete state at the end of
 the parent block. Its value is a JSON object keyed by lowercase pool address; each
-entry contains `block_number`, `block_hash`, `quote_caller` and all eleven fixed-width
+entry contains `block_number`, `block_hash` and all nine fixed-width
 `attributes`. The exact JSON is embedded in both module parameter strings. The WASM
 does not read a fixture file or make a runtime snapshot request.
 
@@ -107,16 +90,15 @@ the parameter value from a fixture before packing, use
 it as `&bootstrap_states=<JSON>` to both module parameter strings. Passing a file
 path as `bootstrap_states` is unsupported.
 
-The parser requires `block_number == bootstrap_block - 1`, the configured caller,
-all attributes and their expected byte widths. At bootstrap it verifies the actual
-parent block hash once when consuming each pool's snapshot, seeds the complete
+The parser requires `block_number == bootstrap_block - 1`, all attributes and their
+expected byte widths. At bootstrap it verifies the actual parent block hash once
+when consuming each pool's snapshot, seeds the complete
 attributes and active reserve balances, then applies the bootstrap block's events.
 A mismatched parent hash stops indexing.
 
 Without `bootstrap_states`, initialization starts paused with zero price, reserves,
-fees and maximum punishment, block delay two, multiplier one and a non-whitelisted
-caller. These defaults are appropriate for a replay from verified deployment,
-not for an already operating pool after an upgrade.
+fees and maximum punishment, and block delay two. These defaults are appropriate
+for a replay from verified deployment, not for an already operating pool after an upgrade.
 
 The Base manifest starts at **51297755** with a complete snapshot from parent block
 **51297754**, hash
@@ -138,13 +120,21 @@ policy and six observed quote results in both directions. Snapshot bytes encode
 block-pinned getter results; quotes are observed `eth_call` responses, not generated
 expectations from the Rust simulator. Each parent hash was checked again after
 capture. The captured Base caller has multiplier 100, while the BSC caller has
-multiplier one; neither caller was whitelisted at its snapshot block.
+multiplier one; neither caller was whitelisted at its snapshot block. These historical
+observations are retained in `observed_caller_policy`, outside the indexed snapshot.
+The Base observations are not expected whitelist quote outputs. The native math
+regression derives whitelist fees from a separate Base capture by dividing its
+observed fee by 100; this is not a new on-chain parity check.
 
 ## Validation and release
 
 The Base range covers **51297755–51297765** and the BSC range covers
 **121835899–121835909**. Both enable component checks, snapshot decoding, simulation
-and execution from their verified parent snapshots. From `protocols/testing`, run:
+and execution from their verified parent snapshots. The historical Base range
+predates router whitelisting: its execution comparison will not match multiplier-one
+quotes unless the execution environment whitelists the router. For on-chain parity,
+recapture a parent snapshot and update the range to blocks with a whitelisted router.
+From `protocols/testing`, run:
 
 ```bash
 cargo run -- range --package base-lunarbase --chain base
@@ -167,12 +157,12 @@ Before publishing or enabling either updated feed:
 1. Verify the active implementation and compare all indexed quote inputs against
    block-pinned getters after the v0.4 upgrade.
 2. Compare quotes and simulated swaps in both directions with on-chain execution,
-   using the actual caller fee policy. Include fee changes after a swap, punishment
+   using a whitelisted router. Include fee changes after a swap, punishment
    cap boundaries, reserve limits and the exact freshness boundary.
 3. Publish the matching Substreams schema and simulator together, rebuilding
-   snapshots by replay for the configured caller, using a complete verified parent
-   snapshot when starting after deployment. Old snapshots lack the required
-   punishment and caller-policy fields and encode the anchor at the old width.
+   snapshots by replay, using a complete verified parent snapshot when starting after
+   deployment. Version 0.1 snapshots lack the required punishment field and encode
+   the anchor at the old width.
 4. Release each manifest separately using package `base-lunarbase` and config file
    `base-lunarbase` or `bsc-lunarbase`, following the package release instructions.
 
@@ -200,6 +190,6 @@ substreams pack base-lunarbase/bsc-lunarbase.yaml -o /tmp/bsc-lunarbase-v0.2.0.s
 
 The BSC manifest enables indexing configuration only. The repository has no
 registered BSC LunarBase executor address or default live LunarBase subscription.
-Verify the deployed executor, router registration and caller fee policy before
+Verify the deployed executor, router registration and router whitelisting before
 adding those production registrations. The generic execution test harness uses
 the existing LunarBase runtime fixture through a local bytecode override.

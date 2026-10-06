@@ -5,10 +5,7 @@ use tycho_substreams::prelude as tycho;
 
 use crate::{
     abi::pool::events as pool_events,
-    lunarbase::{
-        state::{attribute, attrs},
-        Address,
-    },
+    lunarbase::state::{attribute, attrs},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,8 +15,6 @@ pub enum LunarBaseEvent {
     BlockDelaySet { block_delay: u64 },
     MaxPunishmentX24Set { max_punishment_x24: u32 },
     PunishmentApplied { fee_ask_x24: u32, fee_bid_x24: u32 },
-    BlacklistFeeMultiplierSet { multiplier: [u8; 32] },
-    QuoteCallerWhitelistSet { whitelisted: bool },
     Paused,
     Unpaused,
 }
@@ -43,7 +38,6 @@ impl std::error::Error for LogDecodeError {}
 
 pub fn decode_lunarbase_state_log(
     log: &eth::v2::Log,
-    quote_caller: &Address,
 ) -> Result<Option<LunarBaseEvent>, LogDecodeError> {
     if log.topics.is_empty() {
         return Ok(None);
@@ -97,30 +91,6 @@ pub fn decode_lunarbase_state_log(
         }));
     }
 
-    if matches_event::<pool_events::BlacklistFeeMultiplierSet>(
-        log,
-        &topics::BLACKLIST_FEE_MULTIPLIER_SET,
-    )? {
-        let event = pool_events::BlacklistFeeMultiplierSet::decode(log).map_err(|message| {
-            LogDecodeError::Decode { event: "BlacklistFeeMultiplierSet", message }
-        })?;
-        return Ok(Some(LunarBaseEvent::BlacklistFeeMultiplierSet {
-            multiplier: bigint_to_fixed_bytes(
-                "BlacklistFeeMultiplierSet.multiplier",
-                &event.multiplier,
-            )?,
-        }));
-    }
-
-    if matches_event::<pool_events::WhitelistSet>(log, &topics::WHITELIST_SET)? {
-        let event = pool_events::WhitelistSet::decode(log)
-            .map_err(|message| LogDecodeError::Decode { event: "WhitelistSet", message })?;
-        if event.account.as_slice() != quote_caller {
-            return Ok(None);
-        }
-        return Ok(Some(LunarBaseEvent::QuoteCallerWhitelistSet { whitelisted: event.whitelisted }));
-    }
-
     if matches_event::<pool_events::Paused>(log, &topics::PAUSED)? {
         pool_events::Paused::decode(log)
             .map_err(|message| LogDecodeError::Decode { event: "Paused", message })?;
@@ -164,12 +134,6 @@ pub fn event_attributes(event: &LunarBaseEvent, block_number: u64) -> Vec<tycho:
             attribute(attrs::FEE_ASK_X24, fee_ask_x24.to_be_bytes().to_vec()),
             attribute(attrs::FEE_BID_X24, fee_bid_x24.to_be_bytes().to_vec()),
         ],
-        LunarBaseEvent::BlacklistFeeMultiplierSet { multiplier } => {
-            vec![attribute(attrs::BLACKLIST_FEE_MULTIPLIER, multiplier.to_vec())]
-        }
-        LunarBaseEvent::QuoteCallerWhitelistSet { whitelisted } => {
-            vec![attribute(attrs::QUOTE_CALLER_WHITELISTED, vec![u8::from(*whitelisted)])]
-        }
         LunarBaseEvent::Paused => vec![attribute(attrs::PAUSED, vec![1u8])],
         LunarBaseEvent::Unpaused => vec![attribute(attrs::PAUSED, vec![0u8])],
     }
@@ -220,23 +184,16 @@ fn bigint_to_u160(
     name: &'static str,
     value: &substreams::scalar::BigInt,
 ) -> Result<[u8; 20], LogDecodeError> {
-    bigint_to_fixed_bytes(name, value)
-}
-
-fn bigint_to_fixed_bytes<const N: usize>(
-    name: &'static str,
-    value: &substreams::scalar::BigInt,
-) -> Result<[u8; N], LogDecodeError> {
     let value = value
         .to_string()
         .parse::<num_bigint::BigUint>()
         .map_err(|_| LogDecodeError::IntegerOverflow(name))?;
     let bytes = value.to_bytes_be();
-    if bytes.len() > N {
+    if bytes.len() > 20 {
         return Err(LogDecodeError::IntegerOverflow(name));
     }
-    let mut result = [0; N];
-    result[N - bytes.len()..].copy_from_slice(&bytes);
+    let mut result = [0; 20];
+    result[20 - bytes.len()..].copy_from_slice(&bytes);
     Ok(result)
 }
 
@@ -256,14 +213,6 @@ mod tests {
 
     use super::*;
     use crate::lunarbase::indexed;
-
-    const QUOTE_CALLER: Address = [0x42; 20];
-
-    fn decode_lunarbase_state_log(
-        log: &eth::v2::Log,
-    ) -> Result<Option<LunarBaseEvent>, LogDecodeError> {
-        super::decode_lunarbase_state_log(log, &QUOTE_CALLER)
-    }
 
     fn event_log(
         name: &str,
@@ -301,72 +250,23 @@ mod tests {
     }
 
     #[test]
-    fn caller_multiplier_preserves_all_uint256_bits() {
-        for multiplier in [U256::one(), U256::from(100), U256::MAX] {
-            let log = event_log(
-                "BlacklistFeeMultiplierSet",
-                &[ParamType::Uint(256)],
-                &[],
-                &[Token::Uint(multiplier)],
-            );
-            let event = decode_lunarbase_state_log(&log)
-                .unwrap()
-                .unwrap();
-            let attributes = event_attributes(&event, 100);
-            assert_eq!(attributes.len(), 1);
-            assert_eq!(attributes[0].name, attrs::BLACKLIST_FEE_MULTIPLIER);
-            assert_eq!(attributes[0].value.len(), 32);
-            assert_eq!(U256::from_big_endian(&attributes[0].value), multiplier);
-        }
-    }
-
-    #[test]
-    fn whitelist_updates_only_affect_the_configured_quote_caller() {
-        for whitelisted in [true, false] {
-            for account in [QUOTE_CALLER, [0x99; 20]] {
-                let log = event_log(
-                    "WhitelistSet",
-                    &[ParamType::Address, ParamType::Bool],
-                    &[Token::Address(account.into())],
-                    &[Token::Bool(whitelisted)],
-                );
-                let decoded = decode_lunarbase_state_log(&log).unwrap();
-                if account == QUOTE_CALLER {
-                    let attributes = event_attributes(&decoded.unwrap(), 100);
-                    assert_eq!(attributes.len(), 1);
-                    assert_eq!(attributes[0].name, attrs::QUOTE_CALLER_WHITELISTED);
-                    assert_eq!(attributes[0].value, vec![u8::from(whitelisted)]);
-                } else {
-                    assert_eq!(decoded, None);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn malformed_caller_fee_events_fail_decoding() {
-        let mut multiplier = event_log(
+    fn ignores_caller_fee_policy_events() {
+        let multiplier = event_log(
             "BlacklistFeeMultiplierSet",
             &[ParamType::Uint(256)],
             &[],
             &[Token::Uint(100.into())],
         );
-        multiplier.data.pop();
-        assert!(matches!(
-            decode_lunarbase_state_log(&multiplier),
-            Err(LogDecodeError::Decode { event: "BlacklistFeeMultiplierSet", .. })
-        ));
-        let mut whitelist = event_log(
-            "WhitelistSet",
-            &[ParamType::Address, ParamType::Bool],
-            &[Token::Address(QUOTE_CALLER.into())],
-            &[Token::Bool(true)],
-        );
-        whitelist.topics.pop();
-        assert!(matches!(
-            decode_lunarbase_state_log(&whitelist),
-            Err(LogDecodeError::Decode { event: "WhitelistSet", .. })
-        ));
+        assert_eq!(decode_lunarbase_state_log(&multiplier).unwrap(), None);
+        for whitelisted in [true, false] {
+            let whitelist = event_log(
+                "WhitelistSet",
+                &[ParamType::Address, ParamType::Bool],
+                &[Token::Address([0x42; 20].into())],
+                &[Token::Bool(whitelisted)],
+            );
+            assert_eq!(decode_lunarbase_state_log(&whitelist).unwrap(), None);
+        }
     }
 
     #[test]
@@ -546,18 +446,6 @@ mod tests {
 }
 
 mod topics {
-    // BlacklistFeeMultiplierSet(uint256)
-    pub const BLACKLIST_FEE_MULTIPLIER_SET: [u8; 32] = [
-        0xa1, 0x50, 0x57, 0x88, 0x6e, 0x6e, 0xbc, 0xdf, 0x47, 0x29, 0x4b, 0xcb, 0x09, 0x1d, 0x68,
-        0x60, 0x31, 0x12, 0x4d, 0x10, 0x41, 0xca, 0xfe, 0x00, 0x74, 0x0e, 0x93, 0x66, 0x7b, 0xac,
-        0xd1, 0x86,
-    ];
-    // WhitelistSet(address,bool)
-    pub const WHITELIST_SET: [u8; 32] = [
-        0x0a, 0xa5, 0xec, 0x5f, 0xfd, 0xc7, 0xf6, 0xf9, 0xc4, 0xd0, 0xdd, 0xed, 0x48, 0x9d, 0x74,
-        0x50, 0x29, 0x71, 0x55, 0xcb, 0x2f, 0x71, 0xcb, 0x77, 0x1e, 0x02, 0x42, 0x7f, 0x7d, 0xff,
-        0x4f, 0x51,
-    ];
     // Keccak-256 of the canonical event signatures. Match the signature before validating the
     // payload so malformed state events cannot be silently treated as unrelated events.
     // StateUpdated(uint160,uint24,uint24)

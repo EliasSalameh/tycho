@@ -58,7 +58,7 @@ impl BootstrapState {
 }
 
 // Fixed wire width, followed by the Solidity value width.
-const SCHEMA: [(&str, usize, u64); 11] = [
+const SCHEMA: [(&str, usize, u64); 9] = [
     (attrs::ANCHOR_PRICE_X96, 20, 160),
     (attrs::FEE_ASK_X24, 4, 24),
     (attrs::FEE_BID_X24, 4, 24),
@@ -68,14 +68,11 @@ const SCHEMA: [(&str, usize, u64); 11] = [
     (attrs::MAX_PUNISHMENT_X24, 4, 24),
     (attrs::BLOCK_DELAY, 8, 48),
     (attrs::PAUSED, 1, 1),
-    (attrs::BLACKLIST_FEE_MULTIPLIER, 32, 256),
-    (attrs::QUOTE_CALLER_WHITELISTED, 1, 1),
 ];
 
 pub fn parse_snapshots(
     value: &str,
     pools: &[PoolConfig],
-    quote_caller: Address,
 ) -> Result<HashMap<Address, BootstrapState>> {
     let document: Value =
         serde_json::from_str(value).context("invalid LunarBase bootstrap_states JSON")?;
@@ -92,23 +89,19 @@ pub fn parse_snapshots(
             .iter()
             .find(|pool| pool.pool == address)
             .ok_or_else(|| anyhow!("bootstrap_states contains unknown pool {pool_address}"))?;
-        let snapshot = parse_snapshot(value, pool, quote_caller)
+        let snapshot = parse_snapshot(value, pool)
             .with_context(|| format!("invalid bootstrap state for {pool_address}"))?;
         parsed.insert(address, snapshot);
     }
     Ok(parsed)
 }
 
-fn parse_snapshot(
-    value: &Value,
-    pool: &PoolConfig,
-    quote_caller: Address,
-) -> Result<BootstrapState> {
+fn parse_snapshot(value: &Value, pool: &PoolConfig) -> Result<BootstrapState> {
     let snapshot = value
         .as_object()
         .ok_or_else(|| anyhow!("snapshot must be an object"))?;
     for key in snapshot.keys() {
-        if !["block_number", "block_hash", "quote_caller", "attributes"].contains(&key.as_str()) {
+        if !["block_number", "block_hash", "attributes"].contains(&key.as_str()) {
             bail!("unknown bootstrap snapshot field {key}");
         }
     }
@@ -126,13 +119,6 @@ fn parse_snapshot(
     let block_hash: [u8; 32] = decode_hex(snapshot.get("block_hash"), "block_hash", 32)?
         .try_into()
         .map_err(|_| anyhow!("snapshot block_hash must be 32 bytes"))?;
-    let snapshot_caller = snapshot
-        .get("quote_caller")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("snapshot quote_caller must be an address"))?;
-    if parse_address(snapshot_caller)? != quote_caller {
-        bail!("snapshot quote_caller does not match configured quote_caller");
-    }
     let encoded = snapshot
         .get("attributes")
         .and_then(Value::as_object)
@@ -180,7 +166,7 @@ mod tests {
     };
 
     const POOL: &str = "0x0000000000000000000000000000000000000001";
-    const CALLER: &str = "0x0000000000000000000000000000000000000009";
+    const OTHER_POOL: &str = "0x0000000000000000000000000000000000000009";
     const PARENT_HASH: [u8; 32] = [0xab; 32];
 
     fn snapshots() -> Value {
@@ -194,19 +180,16 @@ mod tests {
         serde_json::json!({POOL: {
             "block_number": 9,
             "block_hash": format!("0x{}", hex::encode(PARENT_HASH)),
-            "quote_caller": CALLER,
             "attributes": attributes,
         }})
     }
 
     fn config(snapshots: &Value) -> Result<Config> {
-        Config::parse(&format!(
-            "pool={POOL}&bootstrap_block=10&quote_caller={CALLER}&bootstrap_states={snapshots}"
-        ))
+        Config::parse(&format!("pool={POOL}&bootstrap_block=10&bootstrap_states={snapshots}"))
     }
 
     #[test]
-    fn verifies_parent_number_hash_and_caller_binding() {
+    fn verifies_parent_number_and_hash() {
         let parsed = config(&snapshots()).unwrap();
         let snapshot = &parsed.bootstrap_states[&parse_address(POOL).unwrap()];
         assert!(snapshot
@@ -216,11 +199,9 @@ mod tests {
             .validate_parent(Some(&[0; 32]))
             .is_err());
         assert!(snapshot.validate_parent(None).is_err());
-        for (field, invalid) in [
-            ("block_number", serde_json::json!(10)),
-            ("quote_caller", serde_json::json!(POOL)),
-            ("block_hash", serde_json::json!("0x1234")),
-        ] {
+        for (field, invalid) in
+            [("block_number", serde_json::json!(10)), ("block_hash", serde_json::json!("0x1234"))]
+        {
             let mut snapshots = snapshots();
             snapshots[POOL][field] = invalid;
             assert!(config(&snapshots).is_err(), "accepted invalid {field}");
@@ -243,7 +224,6 @@ mod tests {
             (attrs::FEE_ASK_X24, "0x01000000".to_owned()),
             (attrs::RESERVE_X, format!("0x0001{}", "00".repeat(14))),
             (attrs::PAUSED, "0x02".to_owned()),
-            (attrs::BLACKLIST_FEE_MULTIPLIER, "0x01".to_owned()),
         ] {
             let mut invalid_snapshot = snapshots();
             invalid_snapshot[POOL]["attributes"][field] = Value::String(invalid);
@@ -255,7 +235,7 @@ mod tests {
             .unwrap()
             .remove(POOL)
             .unwrap();
-        unknown_pool[CALLER] = value;
+        unknown_pool[OTHER_POOL] = value;
         assert!(config(&unknown_pool).is_err());
     }
 

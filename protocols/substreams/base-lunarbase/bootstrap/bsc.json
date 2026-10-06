@@ -17,7 +17,6 @@
   "snapshot": {
     "block_number": 121835898,
     "block_hash": "0x723d5311d9e312cf0040da3dca6b056a80814889cc6abc23b3c27f68b734d461",
-    "quote_caller": "0x7f3d12bbafb8955e51b3ab9588b34c8ad95bda4e",
     "attributes": {
       "anchor_price_x96": "0x000000000000001adfd9283ac14b000000000000",
       "fee_ask_x24": "0x00000c14",
@@ -27,9 +26,7 @@
       "reserve_y": "0x00000000000007f049c166c75d3b7fd7",
       "max_punishment_x24": "0x0001e848",
       "block_delay": "0x0000000000000019",
-      "paused": "0x00",
-      "blacklist_fee_multiplier": "0x0000000000000000000000000000000000000000000000000000000000000001",
-      "quote_caller_whitelisted": "0x00"
+      "paused": "0x00"
     }
   },
   "observed_quotes": [
@@ -87,5 +84,9 @@
         "409009703776182"
       ]
     }
-  ]
+  ],
+  "observed_caller_policy": {
+    "blacklist_fee_multiplier": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "quote_caller_whitelisted": "0x00"
+  }
 }

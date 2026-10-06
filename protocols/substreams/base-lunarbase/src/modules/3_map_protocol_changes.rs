@@ -40,12 +40,7 @@ pub fn map_protocol_changes(
             let Some(pool) = pool_by_component_id(&config, &component.id) else {
                 continue;
             };
-            let component = lunarbase::protocol_component(
-                pool.pool,
-                pool.token_x,
-                pool.token_y,
-                config.quote_caller,
-            );
+            let component = lunarbase::protocol_component(pool.pool, pool.token_x, pool.token_y);
             known_components.insert(component.id.clone());
             builder.add_protocol_component(&component);
             let initial_state = match config.bootstrap_states.get(&pool.pool) {
@@ -80,7 +75,7 @@ pub fn map_protocol_changes(
                 continue;
             }
 
-            let event = match lunarbase::events::decode_lunarbase_state_log(log, &config.quote_caller) {
+            let event = match lunarbase::events::decode_lunarbase_state_log(log) {
                 Ok(Some(event)) => event,
                 Ok(None) => continue,
                 Err(err) => return Err(anyhow::anyhow!(

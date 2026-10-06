@@ -24,7 +24,7 @@ const DEFAULT_GAS: u64 = 180_000;
 
 /// Native simulation of the linear anchor and immediate punishment mechanism.
 ///
-/// Quotes use the fee policy of the extractor's configured `quote_caller`.
+/// Integrated partners, including Tycho, are assumed to be whitelisted (multiplier one).
 /// Active-reserve transitions assume standard token transfers and fully credited
 /// fees with sufficient fee-bucket capacity; caller-specific fee accounting and
 /// unsynced donations are not indexed.
@@ -40,8 +40,6 @@ pub struct LunarBaseState {
     pub reserve_x: u128,
     pub reserve_y: u128,
     pub max_punishment_x24: u32,
-    pub blacklist_fee_multiplier: U256,
-    pub quote_caller_whitelisted: bool,
     pub block_delay: u64,
     pub paused: bool,
     pub head_block: u64,
@@ -63,14 +61,6 @@ impl LunarBaseState {
         self.head_block <
             self.latest_update_block
                 .saturating_add(self.block_delay)
-    }
-
-    pub fn fee_multiplier(&self) -> U256 {
-        if self.quote_caller_whitelisted || self.blacklist_fee_multiplier.is_zero() {
-            U256::from(1u64)
-        } else {
-            self.blacklist_fee_multiplier
-        }
     }
 
     fn quote_exact_in(
@@ -102,7 +92,7 @@ impl LunarBaseState {
             &self.pool_params(),
             amount_in,
             direction,
-            self.fee_multiplier(),
+            U256::from(1u64),
         )
         .map_err(QuoteError::Math)?;
         match simulation.status {
@@ -143,7 +133,6 @@ impl ProtocolSim for LunarBaseState {
             return Ok(apply_fee_discount(
                 anchor_price(self.anchor_price_x96, base, quote),
                 self.fee_bid_x24,
-                self.fee_multiplier(),
             ));
         }
         if token_in == self.token_y && token_out == self.token_x {
@@ -153,7 +142,6 @@ impl ProtocolSim for LunarBaseState {
             return Ok(apply_fee_discount(
                 1.0 / anchor_price(self.anchor_price_x96, quote, base),
                 self.fee_ask_x24,
-                self.fee_multiplier(),
             ));
         }
         Err(SimulationError::InvalidInput("invalid LunarBase token pair".to_owned(), None))
@@ -263,17 +251,11 @@ fn anchor_price(anchor_price_x96: U256, token_in: &Token, token_out: &Token) -> 
     sqrt_price_x96_to_price(anchor_price_x96) * decimals_adjustment
 }
 
-fn apply_fee_discount(price: f64, fee_x24: u32, multiplier: U256) -> f64 {
+fn apply_fee_discount(price: f64, fee_x24: u32) -> f64 {
     if fee_x24 == MAX_U24 {
         return 0.0;
     }
-    let Some(scaled_fee) = U256::from(fee_x24).checked_mul(multiplier) else {
-        return 0.0;
-    };
-    if scaled_fee >= U256::from(1u32 << 24) {
-        return 0.0;
-    }
-    price * (1.0 - scaled_fee.to::<u32>() as f64 / (1u64 << 24) as f64)
+    price * (1.0 - fee_x24 as f64 / (1u64 << 24) as f64)
 }
 
 // This soft bound mirrors Tycho's CPMM `get_limits` convention:
@@ -300,18 +282,18 @@ fn initial_quote_limit(state: &LunarBaseState, direction: Direction) -> BigUint 
         return BigUint::ZERO;
     }
 
-    // A linear pool can accept input into an empty reserve. Value its output
-    // inventory in input units, then let quote_limit check rounding and fees.
+    // Invert each floor in the gross quote to find the largest input that fits
+    // the output reserve: floor(x * d / n) <= r iff x <= ((r + 1) * n - 1) / d.
+    // Rounding down a simple inverse price can instead produce a zero-output probe.
     let anchor = u256_to_biguint(state.anchor_price_x96);
     let q96 = BigUint::from(1u64) << 96;
     let (numerator, denominator) = match direction {
         Direction::XToY => (q96, anchor),
         Direction::YToX => (anchor, q96),
     };
-    let probe = (BigUint::from(reserve_out) * &numerator / &denominator) * numerator / denominator;
-    probe
-        .max(BigUint::from(1u64))
-        .min(BigUint::from(MAX_U112))
+    let intermediate = ((BigUint::from(reserve_out) + 1u32) * &numerator - 1u32) / &denominator;
+    let probe = ((intermediate + 1u32) * numerator - 1u32) / denominator;
+    probe.min(BigUint::from(MAX_U112))
 }
 
 fn quote_limit(
@@ -400,8 +382,6 @@ mod tests {
             reserve_x: 1_000_000,
             reserve_y: 1_000_000,
             max_punishment_x24: 0,
-            blacklist_fee_multiplier: U256::from(1u64),
-            quote_caller_whitelisted: false,
             block_delay: 2,
             paused: false,
             head_block: 100,
@@ -764,8 +744,79 @@ mod tests {
         let (input, output) = state
             .get_limits(Bytes::from(state.token_y), Bytes::from(state.token_x))
             .unwrap();
-        assert_eq!(input, BigUint::from(4_000_000u64));
+        // The last three input units still round down to the same gross output.
+        assert_eq!(input, BigUint::from(4_000_003u64));
         assert_eq!(output, BigUint::from(999_000u64));
+    }
+
+    #[test]
+    fn empty_input_reserve_limit_inverts_both_rounding_steps() {
+        for x_to_y in [true, false] {
+            let mut state = state();
+            let (sell, buy) = if x_to_y {
+                state.anchor_price_x96 = (U256::from(3u64) << 96usize) / U256::from(4u64);
+                state.reserve_x = 0;
+                state.reserve_y = 1;
+                (state.token_x, state.token_y)
+            } else {
+                state.anchor_price_x96 = (U256::from(3u64) << 96usize) / U256::from(2u64);
+                state.reserve_x = 1;
+                state.reserve_y = 0;
+                (state.token_y, state.token_x)
+            };
+            assert_eq!(
+                state
+                    .quote_exact_in(sell, buy, U256::from(3u64))
+                    .unwrap()
+                    .0,
+                U256::from(1u64)
+            );
+            let (input, output) = state
+                .get_limits(Bytes::from(sell), Bytes::from(buy))
+                .unwrap();
+            assert_eq!(input, BigUint::from(if x_to_y { 3u64 } else { 4u64 }));
+            assert_eq!(output, BigUint::from(1u64));
+            assert_eq!(
+                state.quote_exact_in(sell, buy, biguint_to_u256(&(input + 1u32)).unwrap()),
+                Err(QuoteError::Rejected)
+            );
+        }
+    }
+
+    #[test]
+    fn empty_input_reserve_limits_match_exhaustive_small_quotes() {
+        for anchor_quarters in 1..=16u64 {
+            for reserve_out in 1..=8u128 {
+                for x_to_y in [true, false] {
+                    let mut state = state();
+                    state.anchor_price_x96 = U256::from(anchor_quarters) << 94usize;
+                    let (sell, buy) = if x_to_y {
+                        state.reserve_x = 0;
+                        state.reserve_y = reserve_out;
+                        (state.token_x, state.token_y)
+                    } else {
+                        state.reserve_x = reserve_out;
+                        state.reserve_y = 0;
+                        (state.token_y, state.token_x)
+                    };
+                    // These prices/reserves exhaust output liquidity below 256 input units.
+                    let expected = (1..=256u64)
+                        .rev()
+                        .find_map(|input| {
+                            state
+                                .quote_exact_in(sell, buy, U256::from(input))
+                                .ok()
+                                .map(|(output, _)| (BigUint::from(input), u256_to_biguint(output)))
+                        })
+                        .unwrap_or((BigUint::ZERO, BigUint::ZERO));
+                    assert_eq!(
+                        state.get_limits(Bytes::from(sell), Bytes::from(buy)).unwrap(),
+                        expected,
+                        "anchor_quarters={anchor_quarters}, reserve_out={reserve_out}, x_to_y={x_to_y}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -782,79 +833,44 @@ mod tests {
     }
 
     #[test]
-    fn caller_fee_policy_changes_quotes_without_multiplying_stored_punishment() {
+    fn legacy_caller_policy_does_not_change_whitelisted_quotes() {
         let mut state = state();
         state.max_punishment_x24 = 16_778;
-        state.blacklist_fee_multiplier = U256::from(100u64);
+        state.fee_bid_x24 = (1 << 24) / 4;
+        let x = token(state.token_x, "X", 18);
+        let y = token(state.token_y, "Y", 18);
         let amount = U256::from(100_000u64);
-        let (out, next) = state
+        let expected = state
             .quote_exact_in(state.token_x, state.token_y, amount)
             .unwrap();
-        assert_eq!(out, U256::from(99_500u64));
-        assert_eq!(next.fee_bid_x24, 839);
-        assert_eq!(next.reserve_y, 900_000);
-
-        apply_delta(
-            &mut state,
-            HashMap::from([("quote_caller_whitelisted".to_owned(), Bytes::from([1u8]))]),
-        )
-        .unwrap();
-        let (out, _) = state
-            .quote_exact_in(state.token_x, state.token_y, amount)
-            .unwrap();
-        assert_eq!(out, U256::from(99_995u64));
+        assert_eq!(expected.0, U256::from(74_995u64));
+        assert_eq!(state.spot_price(&x, &y).unwrap(), 0.75);
 
         apply_delta(
             &mut state,
             HashMap::from([
                 ("quote_caller_whitelisted".to_owned(), Bytes::from([0u8])),
-                (
-                    "blacklist_fee_multiplier".to_owned(),
-                    Bytes::from(U256::from(2u64).to_be_bytes::<32>()),
-                ),
+                ("blacklist_fee_multiplier".to_owned(), Bytes::from(U256::MAX.to_be_bytes::<32>())),
             ]),
         )
         .unwrap();
-        let (out, _) = state
-            .quote_exact_in(state.token_y, state.token_x, amount)
-            .unwrap();
-        assert_eq!(out, U256::from(99_990u64));
-        assert_eq!(state.latest_update_block, 100);
-
-        state.blacklist_fee_multiplier = U256::ZERO;
-        assert_eq!(state.fee_multiplier(), U256::from(1u64));
-    }
-
-    #[test]
-    fn spot_price_applies_caller_multiplier_and_clamps_full_consumption() {
-        let mut state = state();
-        state.fee_bid_x24 = (1 << 24) / 4;
-        state.fee_ask_x24 = (1 << 24) / 8;
-        state.blacklist_fee_multiplier = U256::from(2u64);
-        let x = token(state.token_x, "X", 18);
-        let y = token(state.token_y, "Y", 18);
-        assert_eq!(state.spot_price(&x, &y).unwrap(), 0.5);
-        assert_eq!(state.spot_price(&y, &x).unwrap(), 0.75);
-
-        state.quote_caller_whitelisted = true;
-        assert_eq!(state.spot_price(&x, &y).unwrap(), 0.75);
-        state.quote_caller_whitelisted = false;
-        state.blacklist_fee_multiplier = U256::MAX;
-        assert_eq!(state.spot_price(&x, &y).unwrap(), 0.0);
         assert_eq!(
-            state.quote_exact_in(state.token_x, state.token_y, U256::from(100u64)),
-            Err(QuoteError::Rejected)
+            state
+                .quote_exact_in(state.token_x, state.token_y, amount)
+                .unwrap(),
+            expected
         );
-        state.fee_bid_x24 = 0;
-        assert_eq!(state.spot_price(&x, &y).unwrap(), 1.0);
+        assert_eq!(state.spot_price(&x, &y).unwrap(), 0.75);
     }
 
     #[test]
-    fn matches_base_router_quotes_observed_at_block_51297469() {
+    fn derives_whitelisted_quotes_from_base_capture_at_block_51297469() {
         // Recorded eth_call results at Base block 51,297,469, pool
         // 0x0000efc4ec03a7c47d3a38a9be7ff1d52dd01b99, with `from` set to
         // TychoRouter 0xAbA5B53b03eAfaD1C5fc8BD5Fc765fC85Bb3de67.
         // The router was unwhitelisted and paid multiplier 100 at this block.
+        // Normalize the recorded fee (floor(gross * fee_x24 / Q24) * 100) to
+        // multiplier one. This checks whitelist math, not historical caller parity.
         let mut state = state();
         state.pool =
             address_from_bytes(&hex::decode("0000efc4ec03a7c47d3a38a9be7ff1d52dd01b99").unwrap())
@@ -872,7 +888,6 @@ mod tests {
         state.block_delay = 3;
         state.reserve_x = 9_683_337_552_179_635_497;
         state.reserve_y = 23_231_346_797;
-        state.blacklist_fee_multiplier = U256::from(100u64);
 
         // Direction, input, observed net output, observed output-token fee.
         let quotes = [
@@ -883,7 +898,10 @@ mod tests {
             (false, 100_000_000, 39_291_060_402_299_481, 515_338_772_582_000),
             (false, 1_000_000_000, 385_726_231_079_417_225, 12_337_760_669_557_200),
         ];
-        for (x_to_y, input, expected_out, expected_fee) in quotes {
+        for (x_to_y, input, observed_out, observed_fee) in quotes {
+            assert_eq!(observed_fee % 100, 0);
+            let expected_fee = observed_fee / 100;
+            let expected_out = observed_out + observed_fee - expected_fee;
             let (token_in, token_out) = if x_to_y {
                 (state.token_x, state.token_y)
             } else {

@@ -8,6 +8,8 @@ module_name: "map_protocol_changes"
 # on-chain token balances intentionally do not always equal reserves.
 skip_balance_check: true
 tests:
+  # This historical range predates router whitelisting. Execution comparison
+  # requires a whitelisted router; recapture a later range for on-chain parity.
   - name: test_base_v04_snapshot_replay
     start_block: 51297755
     stop_block: 51297765
