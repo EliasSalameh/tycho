@@ -669,18 +669,12 @@ mod tests {
     fn first_frame_emits_new_pair_with_both_directions() {
         let clock = Clock::new();
         let mut tracker = tracker();
-        let Update {
-            block_number_or_timestamp,
-            is_partial,
-            sync_states,
-            states,
-            new_pairs,
-            removed_pairs,
-        } = tracker
-            .on_frame(message(100, wbtc_usdc_pairs()), clock.at(0))
-            .expect("update expected");
+        let Update { block_number, is_partial, sync_states, states, new_pairs, removed_pairs } =
+            tracker
+                .on_frame(message(100, wbtc_usdc_pairs()), clock.at(0))
+                .expect("update expected");
 
-        assert_eq!(block_number_or_timestamp, 100);
+        assert_eq!(block_number, 100);
         assert!(is_partial);
         assert!(sync_states.is_empty());
         assert!(removed_pairs.is_empty());
@@ -1031,7 +1025,7 @@ mod tests {
         assert!(update
             .removed_pairs
             .contains_key(&expected_id()));
-        assert_eq!(update.block_number_or_timestamp, 100);
+        assert_eq!(update.block_number, 100);
         assert!(update.is_partial);
         assert!(tracker.stale_deadline().is_none());
     }
@@ -1223,13 +1217,13 @@ mod tests {
             .on_stale_deadline(clock.at(24).monotonic)
             .expect("removal expected");
         assert_eq!(removal.removed_pairs.len(), 1);
-        assert_eq!(removal.block_number_or_timestamp, u64::MAX / 2);
+        assert_eq!(removal.block_number, u64::MAX / 2);
         // The next plausible frame is accepted as a first frame again, and nothing from the
         // implausible frame survives: the pair comes back as new.
         let update = tracker
             .on_frame(message_at(100, 25, wbtc_usdc_pairs()), clock.at(25))
             .expect("update expected");
-        assert_eq!(update.block_number_or_timestamp, 100);
+        assert_eq!(update.block_number, 100);
         assert!(update
             .new_pairs
             .contains_key(&expected_id()));
@@ -1253,7 +1247,7 @@ mod tests {
         let update = tracker
             .on_frame(message_at(100, 1, wbtc_usdc_pairs()), clock.at(1))
             .expect("update expected");
-        assert_eq!(update.block_number_or_timestamp, 100);
+        assert_eq!(update.block_number, 100);
         assert!(update
             .new_pairs
             .contains_key(&expected_id()));

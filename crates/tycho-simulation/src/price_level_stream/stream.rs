@@ -517,7 +517,7 @@ mod tests {
             .expect("removal");
 
         assert_removal_only(&removal, 1);
-        assert_eq!(removal.block_number_or_timestamp, 100);
+        assert_eq!(removal.block_number, 100);
         assert!(fake.connections.load(Ordering::SeqCst) >= 2, "no reconnect on idle timeout");
     }
 
@@ -620,7 +620,7 @@ mod tests {
         assert_removal_only(&removal, 1);
         assert_eq!(re_added.new_pairs.len(), 1);
         assert!(re_added.removed_pairs.is_empty());
-        assert_eq!(re_added.block_number_or_timestamp, 101);
+        assert_eq!(re_added.block_number, 101);
     }
 
     #[tokio::test]
