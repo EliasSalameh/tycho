@@ -1,10 +1,8 @@
 # base-pancakeswap-infinity-cl
 
-Substreams package for PancakeSwap Infinity concentrated-liquidity pools. Emits protocol system
-`pancakeswap_infinity_cl` with component type `pancakeswap_infinity_cl_pool`.
+Substreams package for PancakeSwap Infinity concentrated-liquidity pools. Emits protocol system `pancakeswap_infinity_cl` with component type `pancakeswap_infinity_cl_pool`.
 
-Three manifests share one wasm binary. Base and BNB use the same CREATE3 addresses; Robinhood is a
-separate deployment, so the addresses are manifest params:
+Three manifests share one wasm binary. Base and BNB use the same CREATE3 addresses; Robinhood is a separate deployment, so the addresses are manifest params:
 
 | Manifest | Chain | `CLPoolManager` | `Vault` | First block |
 | --- | --- | --- | --- | --- |
@@ -12,15 +10,13 @@ separate deployment, so the addresses are manifest params:
 | `bsc-pancakeswap-infinity-cl.yaml` | BNB | `0xa0FfB9c1CE1Fe56963B0321B32E7A0302114058b` | `0x238a358808379702088667322f80aC48bAd5e6c4` | 47214308 |
 | `robinhood-pancakeswap-infinity-cl.yaml` | Robinhood | `0xeE04c68742e6Bf434bE8039580D2e89BBE55bc6f` | `0x4F922d5B15e6691e0469663E4F5C4177f23c5FaF` | 56743018 |
 
-Infinity CL is a Uniswap v4 fork, so this package is a port of `../ethereum-uniswap-v4`
-(`shared/` + `no-hooks/`) and emits the same attribute schema; `UniswapV4State` simulates the
-components unchanged. The protocol differences and where they land are described in `src/lib.rs`.
+Infinity CL is a Uniswap v4 fork, so this package is a port of `../ethereum-uniswap-v4` (`shared/` + `no-hooks/`) and emits the same attribute schema; `UniswapV4State` simulates the components unchanged. The protocol differences and where they land are described in `src/lib.rs`.
 
 ## Scope
 
-Included: pools with a static LP fee and either no hook or a hook without swap permissions (bits
-6, 7, 10, 11 of `PoolKey.parameters`).
-Excluded: swap-hook pools, dynamic-fee pools. `Donate` is ignored for balances, as in v4.
+Included: pools with a static LP fee and either no hook or a hook without swap permissions (bits 6, 7, 10, 11 of `PoolKey.parameters`). Excluded: swap-hook pools, dynamic-fee pools. `Donate` is ignored for balances, as in v4.
+
+Not tracked: pausing. The owner can [pause](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/Owner.sol#L10-L19) `CLPoolManager`: [`swap`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L162-L165) and [`donate`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L215-L218) then revert with `EnforcedPause`, and [`modifyLiquidity`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L131-L132) rejects adds but still allows removals. [`Paused`/`Unpaused`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/base/Pausable.sol#L20-L25) fire once on the pool manager, not per pool. Marking every component paused on each event means iterating the whole pool store, which this package does not do. Simulation keeps quoting through a pause and execution reverts.
 
 ## Build
 
