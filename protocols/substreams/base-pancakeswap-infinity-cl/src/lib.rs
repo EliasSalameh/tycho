@@ -16,7 +16,8 @@
 //! (<https://github.com/pancakeswap/infinity-core/tree/d0e879334da8ea789a895d864dbe34259ea9fb65>).
 //!
 //! Attribute names match v4 so `UniswapV4State` decodes the components. Static: `key_lp_fee`,
-//! `tick_spacing`, `pool_id`, `parameters`, `pool_manager`, optional `hook_address`. State:
+//! `tick_spacing`, `pool_id`, `parameters`, `pool_manager`, `hooks` (always zero, see
+//! `pool_created`), optional `hook_address` (the real hook). State:
 //! `balance_owner`, `liquidity`, `sqrt_price_x96`, `tick`, `protocol_fees/zero2one`,
 //! `protocol_fees/one2zero`, `ticks/{i}/net-liquidity`.
 

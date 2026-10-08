@@ -101,6 +101,9 @@ fn pool_created(
         attribute("key_lp_fee", event.fee.to_signed_bytes_be()),
         attribute("parameters", event.parameters.to_vec()),
         attribute("pool_manager", pool_manager.to_vec()),
+        // Always zero: swap-hook pools are filtered above, so `UniswapV4State` treats every pool
+        // as hookless and accepts an empty tick set. The real hook, if any, is `hook_address`.
+        attribute("hooks", vec![0u8; 20]),
     ];
     if event
         .hooks
@@ -368,10 +371,7 @@ mod tests {
         assert_attr(statics, "parameters", pool_key_parameters(0, 60));
         assert_attr(statics, "pool_manager", hex::decode(POOL_MANAGER).unwrap());
         assert_attr(statics, "pool_id", POOL_ID.to_vec());
-        assert!(
-            attribute(statics, "hooks").is_none(),
-            "a `hooks` attribute makes UniswapV4State attach a hook handler"
-        );
+        assert_attr(statics, "hooks", vec![0u8; 20]);
         assert!(
             attribute(statics, "hook_address").is_none(),
             "a hookless pool must not carry a hook address"
@@ -399,10 +399,7 @@ mod tests {
         assert_eq!(pools.len(), 1);
         let statics = &pools[0].component_changes[0].static_att;
         assert_attr(statics, "hook_address", vec![0x77u8; 20]);
-        assert!(
-            attribute(statics, "hooks").is_none(),
-            "a `hooks` attribute makes UniswapV4State attach a hook handler"
-        );
+        assert_attr(statics, "hooks", vec![0u8; 20]);
     }
 
     /// Any of the four swap callbacks puts the pool out of scope.

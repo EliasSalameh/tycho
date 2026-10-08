@@ -26,8 +26,8 @@ use crate::encoding::{
 ///
 /// Two rules whose breach misorders the pool key, so the swap reverts `PoolNotInitialized`
 /// instead of swapping something else. Both covered by tests:
-/// - Read `hook_address`, never `hooks`. The substreams package avoids that name because the v4
-///   state decoder attaches a VM hook handler to it.
+/// - Read `hook_address`, never `hooks`: the substreams package always emits `hooks` as zero so
+///   `UniswapV4State` decodes every pool hookless.
 /// - `zeroForOne` compares PROTOCOL-NATIVE addresses (native ETH is `Address::ZERO`) BEFORE
 ///   `convert_to_router_token`. CANONICAL definition lives in the executor contract.
 #[derive(Clone)]
