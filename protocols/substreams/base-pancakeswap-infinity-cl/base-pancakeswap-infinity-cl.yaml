@@ -49,6 +49,7 @@ modules:
     kind: map
     initialBlock: 30544106
     inputs:
+      - params: string
       - source: sf.ethereum.type.v2.Block
       - store: store_pools
     output:
@@ -143,3 +144,4 @@ params:
   # CLPoolManager and Vault on Base (same addresses on BNB), without 0x prefix like the v4
   # manifests.
   map_pools_created: "pool_manager=a0FfB9c1CE1Fe56963B0321B32E7A0302114058b&vault=238a358808379702088667322f80aC48bAd5e6c4"
+  map_events: "a0FfB9c1CE1Fe56963B0321B32E7A0302114058b"

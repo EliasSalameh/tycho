@@ -51,6 +51,7 @@ modules:
     kind: map
     initialBlock: 56743018
     inputs:
+      - params: string
       - source: sf.ethereum.type.v2.Block
       - store: store_pools
     output:
@@ -145,3 +146,4 @@ params:
   # CLPoolManager and Vault on Robinhood, without 0x prefix like the v4 manifests.
   # https://developer.pancakeswap.finance/contracts/infinity/resources/addresses
   map_pools_created: "pool_manager=eE04c68742e6Bf434bE8039580D2e89BBE55bc6f&vault=4F922d5B15e6691e0469663E4F5C4177f23c5FaF"
+  map_events: "eE04c68742e6Bf434bE8039580D2e89BBE55bc6f"
