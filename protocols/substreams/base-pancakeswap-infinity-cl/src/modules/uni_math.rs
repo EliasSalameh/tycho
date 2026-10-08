@@ -3,7 +3,7 @@
 //! Ported unchanged from `ethereum-uniswap-v4/shared/src/modules/uni_math.rs`. Infinity's
 //! `TickMath` and `SqrtPriceMath` are Uniswap v4's under the v3 function names, so the constants
 //! are the same:
-//! [TickMath](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/TickMath.sol#L16-L31).
+//! [TickMath](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/TickMath.sol#L16-L31).
 
 use num_bigint::BigInt;
 use std::ops::Shr;
@@ -11,7 +11,7 @@ use std::ops::Shr;
 /// Calculates the amounts of token0 and token1 for a given position
 ///
 /// Identical to Uniswap v4's `Pool.modifyLiquidity`:
-/// [CLPool.modifyLiquidity](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/CLPool.sol#L100-L146).
+/// [CLPool.modifyLiquidity](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/CLPool.sol#L97-L139).
 ///
 /// # Arguments
 /// * `current_sqrt_price` - Current square root price

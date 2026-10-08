@@ -47,7 +47,7 @@ fn event_to_ticks_deltas(event: PoolEvent) -> Vec<TickDelta> {
             let pool_address = hex::decode(event.pool_id.trim_start_matches("0x")).unwrap();
             // Net liquidity is what crossing the tick left to right adds, so the upper tick takes
             // the opposite sign:
-            // https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/Tick.sol#L168
+            // https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/Tick.sol#L168
             [
                 (modify.tick_lower, delta.to_signed_bytes_be()),
                 (modify.tick_upper, delta.neg().to_signed_bytes_be()),

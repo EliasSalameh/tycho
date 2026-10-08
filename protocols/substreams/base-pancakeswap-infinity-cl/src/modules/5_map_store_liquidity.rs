@@ -14,7 +14,7 @@ use substreams::{
 
 /// In-range liquidity: `ModifyLiquidity` counts only when `tick_lower <= current_tick <
 /// tick_upper` (delta), `Swap` sets the absolute value from the event.
-/// [modifyLiquidity](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/CLPool.sol#L117-L134).
+/// [modifyLiquidity](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/CLPool.sol#L114-L128).
 ///
 /// Ported unchanged from `ethereum-uniswap-v4/shared/src/modules/5_map_store_liquidity.rs`.
 #[substreams::handlers::map]

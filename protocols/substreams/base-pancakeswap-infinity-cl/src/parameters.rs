@@ -1,8 +1,8 @@
 //! Decoding of `PoolKey.parameters` and storage-slot arithmetic for PancakeSwap Infinity.
 //!
 //! Layout, bit offsets from the least significant bit of the bytes32:
-//! [ParametersHelper](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/libraries/math/ParametersHelper.sol#L12-L29),
-//! [CLPoolParametersHelper](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/CLPoolParametersHelper.sol#L19-L32).
+//! [ParametersHelper](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/libraries/math/ParametersHelper.sol#L12-L29),
+//! [CLPoolParametersHelper](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/CLPoolParametersHelper.sol#L19-L32).
 //!
 //! ```text
 //! [0, 16)   hooks registration bitmap (bit index = the ICLHooks offsets below)
@@ -13,21 +13,21 @@
 use tiny_keccak::{Hasher, Keccak};
 
 /// Hook permission bit offsets, not v4's address bits where `beforeSwap` is 7 and `afterSwap` 6.
-/// [ICLHooks](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/interfaces/ICLHooks.sol#L11-L24).
+/// [ICLHooks](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/interfaces/ICLHooks.sol#L11-L24).
 pub const HOOKS_BEFORE_SWAP_OFFSET: u8 = 6;
 pub const HOOKS_AFTER_SWAP_OFFSET: u8 = 7;
 pub const HOOKS_BEFORE_SWAP_RETURNS_DELTA_OFFSET: u8 = 10;
 pub const HOOKS_AFTER_SWAP_RETURNS_DELTA_OFFSET: u8 = 11;
 
 /// `DYNAMIC_FEE_FLAG`: the pool's LP fee comes from its hook.
-/// [LPFeeLibrary](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/libraries/LPFeeLibrary.sol#L19).
+/// [LPFeeLibrary](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/libraries/LPFeeLibrary.sol#L19).
 pub const DYNAMIC_FEE_FLAG: u32 = 0x800000;
 
 /// Storage slot of `CLPoolManager.pools`; slots 0-3 are Ownable/Pausable/ProtocolFees.
 ///
 /// A wrong slot returns plausible numbers rather than an error, so the value is pinned to a live
 /// read in the tests below, not to this comment.
-/// [CLPoolManager](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/CLPoolManager.sol#L39).
+/// [CLPoolManager](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/CLPoolManager.sol#L39).
 pub const CL_POOLS_MAPPING_SLOT: u64 = 4;
 
 /// Low 16 bits of `parameters`.
@@ -46,7 +46,7 @@ pub fn has_swap_hooks(parameters: &[u8; 32]) -> bool {
 }
 
 /// `int24` tick spacing from bits [16, 40). Chain enforces `1..=i16::MAX`, so the sign extension
-/// is for completeness. [TickMath](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/TickMath.sol#L22-L24).
+/// is for completeness. [TickMath](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/TickMath.sol#L22-L24).
 pub fn tick_spacing(parameters: &[u8; 32]) -> i32 {
     i32::from_be_bytes([parameters[27], parameters[28], parameters[29], 0]) >> 8
 }
@@ -57,7 +57,7 @@ pub fn is_dynamic_fee(fee: u32) -> bool {
 
 /// `keccak256(pool_id ++ uint256(mapping_slot))`: the slot of `pools[pool_id].slot0`, packed as
 /// `[0,160) sqrtPriceX96 | [160,184) tick | [184,208) protocolFee | [208,232) lpFee`.
-/// [CLSlot0](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/types/CLSlot0.sol#L8-L9).
+/// [CLSlot0](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/types/CLSlot0.sol#L8-L9).
 pub fn pool_state_base_slot(pool_id: &[u8; 32], mapping_slot: u64) -> [u8; 32] {
     let mut hasher = Keccak::v256();
     hasher.update(pool_id);
@@ -70,7 +70,7 @@ pub fn pool_state_base_slot(pool_id: &[u8; 32], mapping_slot: u64) -> [u8; 32] {
 }
 
 /// `(zero_for_one, one_for_zero)` from a packed uint24
-/// [ProtocolFeeLibrary](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/libraries/ProtocolFeeLibrary.sol#L22-L31).
+/// [ProtocolFeeLibrary](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/libraries/ProtocolFeeLibrary.sol#L22-L31).
 pub fn split_protocol_fee(protocol_fee: u32) -> (u32, u32) {
     (protocol_fee & 0xfff, (protocol_fee >> 12) & 0xfff)
 }

@@ -162,7 +162,7 @@ mod tests {
     /// Exact-in 2_000_000 at a 500 pip swap fee. `computeSwapStep` swaps
     /// `2_000_000 * (1e6 - 500) / 1e6 = 1_999_000` and keeps the remaining 1_000 as the fee, and
     /// the output side leaves the pool in full:
-    /// [SwapMath](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/SwapMath.sol#L63-L83).
+    /// [SwapMath](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/SwapMath.sol#L63-L83).
     #[rstest]
     #[case::zero_for_one("-2000000", "1998000", 1_999_000, -1_998_000)]
     #[case::one_for_zero("1998000", "-2000000", -1_998_000, 1_999_000)]

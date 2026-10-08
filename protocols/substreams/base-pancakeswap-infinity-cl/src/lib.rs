@@ -12,8 +12,8 @@
 //! 3. The protocol fee is set at `initialize` without an event; it is read from the pool's slot0
 //!    storage write in the creating transaction.
 //!
-//! Solidity references are paths in `pancakeswap/infinity-core` at commit `d0e87933`
-//! (<https://github.com/pancakeswap/infinity-core/tree/d0e879334da8ea789a895d864dbe34259ea9fb65>).
+//! Solidity references are paths in `pancakeswap/infinity-core` at commit `7c04695f`
+//! (<https://github.com/pancakeswap/infinity-core/tree/7c04695f>).
 //!
 //! Attribute names match v4 so `UniswapV4State` decodes the components. Static: `key_lp_fee`,
 //! `tick_spacing`, `pool_id`, `parameters`, `pool_manager`, `hooks` (always zero, see

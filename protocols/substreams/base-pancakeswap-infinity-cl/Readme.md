@@ -16,13 +16,14 @@ Infinity CL is a Uniswap v4 fork, so this package is a port of `../ethereum-unis
 
 Included: pools with a static LP fee and either no hook or a hook without swap permissions (bits 6, 7, 10, 11 of `PoolKey.parameters`). Excluded: swap-hook pools, dynamic-fee pools. `Donate` is ignored for balances, as in v4.
 
-Not tracked: pausing. The owner can [pause](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/Owner.sol#L10-L19) `CLPoolManager`: [`swap`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L162-L165) and [`donate`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L215-L218) then revert with `EnforcedPause`, and [`modifyLiquidity`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/pool-cl/CLPoolManager.sol#L131-L132) rejects adds but still allows removals. [`Paused`/`Unpaused`](https://github.com/pancakeswap/infinity-core/blob/d0e87933/src/base/Pausable.sol#L20-L25) fire once on the pool manager, not per pool. Marking every component paused on each event means iterating the whole pool store, which this package does not do. Simulation keeps quoting through a pause and execution reverts.
+Not tracked: pausing. The owner can [pause](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/Owner.sol#L10-L19) `CLPoolManager`: [`swap`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/CLPoolManager.sol#L162-L165) and [`donate`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/CLPoolManager.sol#L215-L218) then revert with `EnforcedPause`, and [`modifyLiquidity`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/CLPoolManager.sol#L131-L132) rejects adds but still allows removals. [`Paused`/`Unpaused`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/base/Pausable.sol#L20-L25) fire once on the pool manager, not per pool. Marking every component paused on each event means iterating the whole pool store, which this package does not do. Simulation keeps quoting through a pause and execution reverts.
 
 ## Build
 
 ```bash
 cd protocols/substreams
-substreams protogen base-pancakeswap-infinity-cl/base-pancakeswap-infinity-cl.yaml --exclude-paths="google"
+# From the package dir, so protogen uses its buf.gen.yaml instead of writing one here.
+(cd base-pancakeswap-infinity-cl && substreams protogen base-pancakeswap-infinity-cl.yaml --exclude-paths="sf,google,tycho")
 cargo build --package base-pancakeswap-infinity-cl --target wasm32-unknown-unknown --release
 cargo test --package base-pancakeswap-infinity-cl
 cd base-pancakeswap-infinity-cl

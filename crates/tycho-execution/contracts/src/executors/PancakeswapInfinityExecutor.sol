@@ -107,7 +107,7 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
         // Native pays by value in the callback, no snapshot needed. ERC20 must sync before
         // lock: settle credits balanceNow - reservesBefore, and the token only lands once the
         // callback is running.
-        // https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/Vault.sol#L238-L253
+        // https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/Vault.sol#L209-L224
         if (tokenIn != ETH_ADDRESS) {
             vault.sync(tokenIn);
         }

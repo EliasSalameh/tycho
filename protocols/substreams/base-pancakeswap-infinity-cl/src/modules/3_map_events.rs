@@ -20,8 +20,8 @@ use substreams_helper::hex::Hexable;
 /// Ported from `ethereum-uniswap-v4/shared/src/modules/3_map_events.rs`. `Swap.fee` is the
 /// combined swap fee, protocol share included, so it is kept for `map_balance_changes` to net out
 /// and `Swap.protocolFee` is dropped:
-/// [SwapState](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/CLPool.sol#L162-L163),
-/// [swap](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/libraries/CLPool.sol#L236).
+/// [SwapState](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/CLPool.sol#L155-L156),
+/// [swap](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/libraries/CLPool.sol#L231).
 /// `DynamicLPFeeUpdated` is ignored because dynamic-fee pools are filtered at creation, and
 /// `Donate` because it moves fee growth, not price or liquidity.
 #[substreams::handlers::map]

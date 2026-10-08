@@ -164,8 +164,8 @@ fn pool_created(
 /// Protocol fee halves from the slot0 write `initialize` makes just before emitting the log, since
 /// `Initialize` does not carry them. The last non-reverted write below the log's ordinal is the
 /// pool's initial state.
-/// [`_fetchProtocolFee`](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/ProtocolFees.sol#L46-L78),
-/// [`initialize`](https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/CLPoolManager.sol#L113-L120).
+/// [`_fetchProtocolFee`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/ProtocolFees.sol#L46-L78),
+/// [`initialize`](https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/CLPoolManager.sol#L113-L120).
 fn initial_protocol_fees(
     event: &Initialize,
     tx: &eth::TransactionTrace,

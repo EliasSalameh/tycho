@@ -3,22 +3,22 @@ pragma solidity ^0.8.26;
 
 /**
  * @dev Minimal, ABI-compatible declarations of the PancakeSwap Infinity contracts the executor
- * calls. Hand-written from pancakeswap/infinity-core (commit d0e87933) instead of vendoring the
+ * calls. Hand-written from pancakeswap/infinity-core (commit 7c04695f) instead of vendoring the
  * repo as a submodule, following the precedent of IFluidV1Dex.sol and IPropAMM.sol.
  *
  * Sources:
  * - PoolKey, six 32-byte words. `poolManager` is part of the key and of the PoolId.
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/types/PoolKey.sol#L12-L25
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/types/PoolKey.sol#L12-L25
  * - Vault. `lock` calls back `ILockCallback.lockAcquired(bytes)` on msg.sender. `sync` is not
  *   lock-gated; `settle` and `take` are.
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/interfaces/IVault.sol#L56
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/Vault.sol#L74-L86
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/interfaces/IVault.sol#L52
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/Vault.sol#L63-L73
  * - CLPoolManager.swap.
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-cl/interfaces/ICLPoolManager.sol#L150-L166
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-cl/interfaces/ICLPoolManager.sol#L150-L166
  * - BinPoolManager.swap.
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/pool-bin/interfaces/IBinPoolManager.sol#L191-L193
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/pool-bin/interfaces/IBinPoolManager.sol#L191-L193
  * - BalanceDelta, an int256 packing amount0 in the upper 128 bits and amount1 in the lower.
- *   https://github.com/pancakeswap/infinity-core/blob/d0e879334da8ea789a895d864dbe34259ea9fb65/src/types/BalanceDelta.sol#L6-L18
+ *   https://github.com/pancakeswap/infinity-core/blob/7c04695f/src/types/BalanceDelta.sol#L6-L18
  */
 struct InfinityPoolKey {
     address currency0;
