@@ -58,6 +58,24 @@ impl LiquoriceState {
             .values()
             .filter(|price| !price.levels.is_empty())
     }
+
+    /// The maker paying the most for `amount_in` whole base tokens, and what it pays. The quote
+    /// goes to this maker, so the swap is signed by the one whose ladder priced it.
+    fn best_fill(&self, amount_in: f64) -> Option<(&str, Fill)> {
+        self.prices_by_mm
+            .iter()
+            .filter_map(|(maker, price)| {
+                if price.levels.is_empty() {
+                    return None;
+                }
+                Some((maker.as_str(), price.levels.fill(amount_in)))
+            })
+            .max_by(|(_, a), (_, b)| {
+                a.amount_out
+                    .partial_cmp(&b.amount_out)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
 }
 
 impl PairState for LiquoriceState {
@@ -98,16 +116,9 @@ impl ProtocolSim for LiquoriceState {
 
         self.valid_direction_guard(&token_in.address, &token_out.address)?;
         let amount_in = sim::to_human(&amount_in, token_in.decimals);
-        // The market maker paying the most for amount_in fills the swap.
         let fill = self
-            .populated_books()
-            .map(|price| price.levels.fill(amount_in))
-            .max_by(|a, b| {
-                a.amount_out
-                    .partial_cmp(&b.amount_out)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap_or(Fill { amount_out: 0.0, remaining_in: amount_in });
+            .best_fill(amount_in)
+            .map_or(Fill { amount_out: 0.0, remaining_in: amount_in }, |(_, fill)| fill);
         sim::fill_result(fill, amount_in, token_out.decimals, LIQUORICE_SWAP_GAS, self)
     }
 
@@ -175,9 +186,14 @@ impl IndicativelyPriced for LiquoriceState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
+        // Liquorice prices base into quote only, so the amount is always in base units.
+        let amount_in = sim::to_human(&params.amount_in, self.base_token.decimals);
+        let (market_maker, _) = self
+            .best_fill(amount_in)
+            .ok_or(SimulationError::RecoverableError("No liquidity".into()))?;
         Ok(self
             .client
-            .request_binding_quote(&params)
+            .request_binding_quote(&params, market_maker)
             .await?)
     }
 }

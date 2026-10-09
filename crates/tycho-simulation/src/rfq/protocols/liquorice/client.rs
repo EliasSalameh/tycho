@@ -117,9 +117,12 @@ impl LiquoriceClient {
         skip_all,
         fields(token_in = %params.token_in, token_out = %params.token_out, amount_in = %params.amount_in)
     )]
+    /// Requests a signed quote from `market_maker` alone, the maker whose ladder the state
+    /// priced the swap against, so the quote commits to the trade that was simulated.
     pub async fn request_binding_quote(
         &self,
         params: &GetAmountOutParams,
+        market_maker: &str,
     ) -> Result<SignedQuote, RFQError> {
         let expiry = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -240,7 +243,7 @@ impl LiquoriceClient {
                 }
             };
 
-            return Self::process_quote_response(quote_response, params);
+            return Self::process_quote_response(quote_response, params, market_maker);
         }
 
         Err(last_error.unwrap_or_else(|| {
@@ -291,6 +294,7 @@ impl LiquoriceClient {
     fn process_quote_response(
         quote_response: LiquoriceQuoteResponse,
         params: &GetAmountOutParams,
+        market_maker: &str,
     ) -> Result<SignedQuote, RFQError> {
         if !quote_response.liquidity_available {
             debug!(?quote_response, "quote response indicates no liquidity");
@@ -302,21 +306,22 @@ impl LiquoriceClient {
 
         debug!(levels = quote_response.levels.len(), "received quote response");
 
-        // Find the valid level with the largest quote_token_amount
+        // The best valid level the maker that priced the swap offers.
         let best_level = quote_response
             .levels
             .iter()
-            .filter(|level| level.validate(params).is_ok())
             .filter_map(|level| {
-                BigUint::from_str(&level.quote_token_amount)
-                    .ok()
-                    .map(|amount| (level, amount))
+                if level.maker != market_maker || level.validate(params).is_err() {
+                    return None;
+                }
+                let amount = BigUint::from_str(&level.quote_token_amount).ok()?;
+                Some((level, amount))
             })
-            .max_by(|(_, a), (_, b)| a.cmp(b));
+            .max_by_key(|(_, amount)| amount.clone());
 
         let (quote_level, _) = best_level.ok_or_else(|| {
             RFQError::QuoteNotFound(format!(
-                "No valid Liquorice quote levels for {} {} ->{}",
+                "No valid Liquorice quote levels from {market_maker} for {} {} ->{}",
                 params.amount_in, params.token_in, params.token_out,
             ))
         })?;
@@ -572,7 +577,7 @@ mod tests {
             "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
             1_000_000_000_000_000_000,
         );
-        let result = LiquoriceClient::process_quote_response(response, &params);
+        let result = LiquoriceClient::process_quote_response(response, &params, "test-maker");
         assert!(
             matches!(result, Err(RFQError::QuoteNotFound(_))),
             "expected QuoteNotFound, got {:?}",
@@ -607,7 +612,8 @@ mod tests {
         };
         let params = make_params(token_in, token_out, amount_in);
 
-        let quote = LiquoriceClient::process_quote_response(response, &params).unwrap();
+        let quote =
+            LiquoriceClient::process_quote_response(response, &params, "test-maker").unwrap();
 
         // partial_fill_offset: 4-byte big-endian encoding of 68
         let offset_bytes = quote.quote_attributes["partial_fill_offset"].clone();
@@ -619,6 +625,45 @@ mod tests {
         let expected_min = BigUint::from(500_000_000_000_000_000u64);
         let actual_min = BigUint::from_bytes_be(min_amount_bytes.as_ref());
         assert_eq!(actual_min, expected_min);
+    }
+
+    /// The quote is the level of the maker whose ladder priced the swap, which is the trade the
+    /// route was built on, even where another maker's level in the same response pays more.
+    #[test]
+    fn a_level_from_another_maker_is_not_the_quote() {
+        use crate::rfq::protocols::liquorice::models::LiquoriceQuoteResponse;
+
+        let token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+        let token_out = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599";
+        let amount_in = 1_000_000_000_000_000_000u64;
+        let ours = make_quote_level(token_in, token_out, &amount_in.to_string(), "3000000", None);
+        let mut theirs =
+            make_quote_level(token_in, token_out, &amount_in.to_string(), "3500000", None);
+        theirs.maker = "other-maker".to_string();
+        let params = make_params(token_in, token_out, amount_in);
+
+        let quote = LiquoriceClient::process_quote_response(
+            LiquoriceQuoteResponse {
+                rfq_id: "r1".to_string(),
+                liquidity_available: true,
+                levels: vec![ours, theirs.clone()],
+            },
+            &params,
+            "test-maker",
+        )
+        .unwrap();
+        assert_eq!(quote.amount_out, BigUint::from(3_000_000u64));
+
+        let only_theirs = LiquoriceClient::process_quote_response(
+            LiquoriceQuoteResponse {
+                rfq_id: "r1".to_string(),
+                liquidity_available: true,
+                levels: vec![theirs],
+            },
+            &params,
+            "test-maker",
+        );
+        assert!(matches!(only_theirs, Err(RFQError::QuoteNotFound(_))), "{only_theirs:?}");
     }
 
     #[test]
@@ -645,7 +690,8 @@ mod tests {
         };
         let params = make_params(token_in, token_out, amount_in);
 
-        let quote = LiquoriceClient::process_quote_response(response, &params).unwrap();
+        let quote =
+            LiquoriceClient::process_quote_response(response, &params, "test-maker").unwrap();
         assert_eq!(quote.amount_out, BigUint::from(3_500_000u64));
     }
 
@@ -659,7 +705,7 @@ mod tests {
         let client = create_test_client(format!("{}/quote", server.url()), Duration::from_secs(1));
 
         let error = client
-            .request_binding_quote(&create_test_quote_params())
+            .request_binding_quote(&create_test_quote_params(), "test-maker")
             .await
             .unwrap_err();
 
@@ -693,7 +739,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result = client_short_timeout
-            .request_binding_quote(&params)
+            .request_binding_quote(&params, "test-maker")
             .await;
         let elapsed = start.elapsed();
 
@@ -717,7 +763,7 @@ mod tests {
         );
 
         let result = client_long_timeout
-            .request_binding_quote(&params)
+            .request_binding_quote(&params, "test-maker")
             .await;
         assert!(result.is_ok(), "Expected success, got: {:?}", result);
     }
@@ -782,7 +828,7 @@ mod tests {
         );
         let params = create_test_quote_params();
         let result = client
-            .request_binding_quote(&params)
+            .request_binding_quote(&params, "test-maker")
             .await;
 
         assert!(result.is_ok(), "Expected success after retries, got: {:?}", result);
