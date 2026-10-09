@@ -206,6 +206,21 @@ impl<S> AllPairs<S> {
             .min()
     }
 
+    /// The books that price `token_in` into `token_out`, spent or not.
+    pub fn pricing(
+        &self,
+        token_in: &Bytes,
+        token_out: &Bytes,
+    ) -> impl Iterator<Item = &VenueBook<S>> {
+        self.books
+            .by_direction
+            .get(token_in)
+            .and_then(|bought| bought.get(token_out))
+            .into_iter()
+            .flatten()
+            .map(|index| &self.books.books[*index])
+    }
+
     /// The books that price `token_in` into `token_out` and may still quote.
     ///
     /// The error says which of the two it is: a direction the venue does not price is the same
@@ -216,20 +231,16 @@ impl<S> AllPairs<S> {
         token_in: &Bytes,
         token_out: &Bytes,
     ) -> Result<impl Iterator<Item = &VenueBook<S>>, SimulationError> {
-        let books = self
-            .books
-            .by_direction
-            .get(token_in)
-            .and_then(|bought| bought.get(token_out))
-            .ok_or_else(|| {
-                SimulationError::InvalidInput(
-                    format!("Venue prices no book from {token_in} into {token_out}"),
-                    None,
-                )
-            })?;
-        let mut quotable = books
-            .iter()
-            .map(|index| &self.books.books[*index])
+        let mut pricing = self
+            .pricing(token_in, token_out)
+            .peekable();
+        if pricing.peek().is_none() {
+            return Err(SimulationError::InvalidInput(
+                format!("Venue prices no book from {token_in} into {token_out}"),
+                None,
+            ));
+        }
+        let mut quotable = pricing
             .filter(|book| {
                 self.rule
                     .allows(&self.used, book.maker.as_deref())

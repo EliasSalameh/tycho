@@ -12,8 +12,8 @@ use tycho_common::{
 use tycho_execution::encoding::evm::get_router_address;
 use tycho_simulation::{
     book::{
-        quote_tokens::usd_stablecoins_for_chain, BookFeedConfig, BookFeedEvent, BookFeedOutcome,
-        BookFeedStreams, BookSnapshot,
+        all_pairs::ComponentLayout, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
+        BookFeedEvent, BookFeedOutcome, BookFeedStreams, BookSnapshot,
     },
     pamm::protocols::metric::{self, feed::MetricFeedBuilder},
     rfq::protocols::{
@@ -57,6 +57,8 @@ pub struct BookStreamProcessor {
     pamm_feeds: bool,
     /// The protocol's stream will skip messages for this duration after processing a message
     skip_messages_duration: Duration,
+    /// Whether each venue publishes one component per pair or one for all of them.
+    component_layout: ComponentLayout,
 }
 
 impl BookStreamProcessor {
@@ -67,6 +69,7 @@ impl BookStreamProcessor {
         skip_messages_duration: Duration,
         rfq_feeds: bool,
         pamm_feeds: bool,
+        component_layout: ComponentLayout,
     ) -> miette::Result<Self> {
         let mut credentials = HashMap::new();
         if rfq_feeds {
@@ -116,6 +119,7 @@ impl BookStreamProcessor {
             sample_size,
             pamm_feeds,
             skip_messages_duration,
+            component_layout,
         })
     }
 
@@ -185,7 +189,8 @@ impl BookStreamProcessor {
                             .into_diagnostic()
                             .wrap_err("Invalid test user address")?,
                     )
-                    .origin_source("tycho-integration-test".to_string());
+                    .origin_source("tycho-integration-test".to_string())
+                    .component_layout(self.component_layout);
 
                     if let Ok(router_address) = get_router_address(&self.chain) {
                         bebop_builder = bebop_builder.origin_target(router_address.clone());
@@ -212,6 +217,7 @@ impl BookStreamProcessor {
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..HashflowFeedBuilder::default_feed_config()
                     })
+                    .component_layout(self.component_layout)
                     .build()
                     .into_diagnostic()
                     .wrap_err("Failed to create Hashflow feed")?;
@@ -232,6 +238,7 @@ impl BookStreamProcessor {
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..LiquoriceFeedBuilder::default_feed_config()
                     })
+                    .component_layout(self.component_layout)
                     .build()
                     .into_diagnostic()
                     .wrap_err("Failed to create Liquorice feed")?;
@@ -253,6 +260,7 @@ impl BookStreamProcessor {
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..NativeFeedBuilder::default_feed_config()
                     })
+                    .component_layout(self.component_layout)
                     .build()
                     {
                         Ok(native_feed) => {

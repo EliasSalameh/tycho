@@ -24,7 +24,7 @@ use itertools::Itertools;
 use miette::{miette, IntoDiagnostic, NarratableReportHandler, WrapErr};
 use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
-use rand::prelude::IndexedRandom;
+use rand::{prelude::IndexedRandom, seq::SliceRandom};
 use tokio::{signal, sync::Semaphore};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -35,13 +35,17 @@ use tycho_execution::encoding::evm::{
     utils::bytes_to_address, FALLBACK_PREFIX, PRICE_LEVEL_STREAM_PREFIX,
 };
 use tycho_simulation::{
+    book::all_pairs::{decode_swap_directions, ComponentLayout, SWAP_DIRECTIONS_ATTRIBUTE},
     evm::protocol::cowamm::constants::PROTOCOL_SYSTEM as COWAMM_PROTOCOL_SYSTEM,
     protocol::models::ProtocolComponent,
     rfq::protocols::{
-        hashflow::{self, state::HashflowState},
+        hashflow::{
+            self,
+            state::{HashflowAllPairsState, HashflowState},
+        },
         liquorice,
     },
-    tycho_common::models::{chain_config::TvlThresholdTier, Chain},
+    tycho_common::models::{chain_config::TvlThresholdTier, token::Token, Chain},
     utils::load_all_tokens,
 };
 use tycho_test::{
@@ -107,6 +111,12 @@ struct Cli {
     /// Disable the pAMM book feeds (Metric)
     #[arg(long, default_value_t = false)]
     disable_pamm_feeds: bool,
+
+    /// Publish each RFQ venue as one component for every pair it prices, which a route may
+    /// take one quote from, rather than one component per pair. The number of directions
+    /// simulated per venue and update is --max-simulations.
+    #[arg(long, default_value_t = false)]
+    book_all_pairs: bool,
 
     /// Disable the Titan pAMM price level stream (only active on Ethereum)
     #[arg(long, default_value_t = false)]
@@ -265,6 +275,55 @@ const TOKEN_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60)
 /// and gas estimates. Capping the input to a realistic value (~10k USD at recent ETH prices) keeps
 /// simulation and the dashboard gas estimates representative.
 const MAX_INPUT_VALUE_ETH: f64 = 5.0;
+
+/// The directions a component advertises, as the pairs of tokens it carries.
+fn book_swap_directions(
+    attribute: &Bytes,
+    tokens: &[Token],
+) -> Result<Vec<(Token, Token)>, String> {
+    let tokens: HashMap<&Bytes, &Token> = tokens
+        .iter()
+        .map(|token| (&token.address, token))
+        .collect();
+    let mut directions = Vec::new();
+    for (token_in, token_out) in decode_swap_directions(attribute)? {
+        let (Some(token_in), Some(token_out)) = (tokens.get(&token_in), tokens.get(&token_out))
+        else {
+            return Err(format!(
+                "Swap direction {token_in} -> {token_out} names a token the component does not carry"
+            ));
+        };
+        directions.push(((*token_in).clone(), (*token_out).clone()));
+    }
+    Ok(directions)
+}
+
+/// A random sample of at most `most` of them. A venue-wide component carries hundreds of
+/// directions, and each one simulated is a swap.
+fn sample_swap_directions(mut directions: Vec<(Token, Token)>, most: usize) -> Vec<(Token, Token)> {
+    directions.shuffle(&mut rand::rng());
+    directions.truncate(most);
+    directions
+}
+
+/// The smallest input a Hashflow market maker on this direction accepts, in atomic units. A
+/// maker declines an amount below its first level. `None` for every other state.
+fn hashflow_min_amount_in(
+    state: &dyn ProtocolSim,
+    token_in: &Token,
+    token_out: &Token,
+) -> Option<BigUint> {
+    if let Some(state) = state
+        .as_any()
+        .downcast_ref::<HashflowState>()
+    {
+        return Some(state.min_amount_in());
+    }
+    state
+        .as_any()
+        .downcast_ref::<HashflowAllPairsState>()?
+        .min_amount_in(&token_in.address, &token_out.address)
+}
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -445,6 +504,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
             Duration::from_secs(cli.skip_messages_duration),
             !cli.disable_rfq_feeds,
             !cli.disable_pamm_feeds,
+            if cli.book_all_pairs { ComponentLayout::AllPairs } else { ComponentLayout::PerPair },
         )
         .unwrap_or_else(|e| panic!("Failed to create book stream processor: {e}"));
         rfq_handle = Some(
@@ -1328,6 +1388,7 @@ async fn process_update(
 
     // Process all components (updated and stale) in parallel
     let semaphore = Arc::new(Semaphore::new(cli.parallel_simulations as usize));
+    let max_swap_directions = cli.max_simulations as usize;
     let mut tasks = Vec::new();
 
     for (id, component, state) in components_to_process {
@@ -1352,6 +1413,7 @@ async fn process_update(
                 state,
                 statistics,
                 token_prices,
+                max_swap_directions,
             )
             .await;
             drop(permit);
@@ -1654,6 +1716,8 @@ fn select_components_to_process(
         block_number = %block.header.number,
     )
 )]
+/// Simulates a swap in each of the component's directions, at most `max_swap_directions` of
+/// them where the component advertises a set of its own.
 #[allow(clippy::too_many_arguments)]
 async fn process_state(
     simulation_id: &str,
@@ -1664,34 +1728,34 @@ async fn process_state(
     state: Box<dyn ProtocolSim>,
     statistics: Option<Arc<RwLock<TestStatistics>>>,
     token_prices: Arc<HashMap<Bytes, f64>>,
+    max_swap_directions: usize,
 ) -> HashMap<String, TychoExecutionInput> {
     let tokens_len = component.tokens.len();
     if tokens_len < 2 {
         error!("Component has less than 2 tokens, skipping...");
         return HashMap::new();
     }
-    let mut min_amount = BigUint::ZERO;
     // Get all the possible swap directions
-    let swap_directions = match component.protocol_system.as_str() {
-        hashflow::PROTOCOL_SYSTEM => {
-            // Hashflow prices one direction, which a book's component carries as the order of
-            // its two tokens.
-            let Some(state) = state
-                .as_any()
-                .downcast_ref::<HashflowState>()
-            else {
-                warn!("Failed to downcast state to HashflowState");
+    let swap_directions = match component
+        .static_attributes
+        .get(SWAP_DIRECTIONS_ATTRIBUTE)
+    {
+        // A venue-wide component prices a set of pairs its token list cannot be read as.
+        Some(attribute) => match book_swap_directions(attribute, &component.tokens) {
+            Ok(directions) => sample_swap_directions(directions, max_swap_directions),
+            Err(e) => {
+                error!("Invalid swap directions attribute, skipping: {e}");
                 return HashMap::new();
-            };
-            // Hashflow rejects quote requests below the first level's quantity; the amount in is
-            // raised to this value.
-            min_amount = state.min_amount_in();
+            }
+        },
+        // Hashflow and Liquorice price one direction, which a book's component carries as the
+        // order of its two tokens.
+        None if [hashflow::PROTOCOL_SYSTEM, liquorice::PROTOCOL_SYSTEM]
+            .contains(&component.protocol_system.as_str()) =>
+        {
             vec![(component.tokens[0].clone(), component.tokens[1].clone())]
         }
-        liquorice::PROTOCOL_SYSTEM => {
-            vec![(component.tokens[0].clone(), component.tokens[1].clone())]
-        }
-        _ => component
+        None => component
             .tokens
             .iter()
             .permutations(2)
@@ -1764,7 +1828,10 @@ async fn process_state(
             debug!("Calculated amount_in is zero, skipping...");
             continue;
         }
-        amount_in = amount_in.max(min_amount.clone());
+        // Hashflow rejects quote requests below the first level's quantity.
+        if let Some(min_amount_in) = hashflow_min_amount_in(state.as_ref(), token_in, token_out) {
+            amount_in = amount_in.max(min_amount_in);
+        }
 
         // Safety bound for tokens missing from the price snapshot, whose limit is left uncapped:
         // avoids the "amount exceeds 96 bits" error seen on Uniswap V3/V4 with very high limits.
@@ -2235,11 +2302,16 @@ fn format_error_chain(e: &miette::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use clap::Parser;
     use rstest::rstest;
+    use tycho_common::{models::token::Token, Bytes};
+    use tycho_simulation::tycho_common::models::Chain;
 
     use super::{
-        is_oracle_stale_revert, pamm_venue, should_fetch_block_by_number, Cli, TychoState,
+        book_swap_directions, is_oracle_stale_revert, pamm_venue, sample_swap_directions,
+        should_fetch_block_by_number, Cli, TychoState,
     };
 
     #[rstest]
@@ -2324,5 +2396,36 @@ mod tests {
         ])
         .expect("--test-every-n-blocks must stay accepted as an alias");
         assert_eq!(cli.test_every_n_updates, 10);
+    }
+
+    /// A venue-wide component says which pairs it prices; the run reads them rather than
+    /// pairing up its token list.
+    #[test]
+    fn the_advertised_directions_name_the_components_tokens() {
+        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        let token = |address: &Bytes, symbol: &str| {
+            Token::new(address, symbol, 18, 0, &[], Chain::Ethereum, 100)
+        };
+        let tokens = vec![token(&weth, "WETH"), token(&usdc, "USDC")];
+        let attribute: Bytes = [weth.to_vec(), usdc.to_vec(), usdc.to_vec(), weth.to_vec()]
+            .concat()
+            .into();
+
+        let directions = book_swap_directions(&attribute, &tokens).unwrap();
+
+        assert_eq!(
+            directions
+                .iter()
+                .map(|(token_in, token_out)| (token_in.symbol.as_str(), token_out.symbol.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("WETH", "USDC"), ("USDC", "WETH")]
+        );
+        assert_eq!(sample_swap_directions(directions, 1).len(), 1);
+
+        let unknown: Bytes = [weth.to_vec(), vec![0x11; 20]]
+            .concat()
+            .into();
+        assert!(book_swap_directions(&unknown, &tokens).is_err());
     }
 }

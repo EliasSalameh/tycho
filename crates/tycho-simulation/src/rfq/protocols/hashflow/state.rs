@@ -199,6 +199,18 @@ impl HashflowAllPairsState {
     }
 }
 
+impl HashflowAllPairsState {
+    /// The smallest input the cheapest market maker on this direction accepts, in atomic units,
+    /// or `None` where the venue prices nothing in it. A swap goes to one maker, and a maker
+    /// declines an amount below its first level.
+    pub fn min_amount_in(&self, token_in: &Bytes, token_out: &Bytes) -> Option<BigUint> {
+        self.0
+            .pricing(token_in, token_out)
+            .map(|book| book.state.min_amount_in())
+            .min()
+    }
+}
+
 impl AllPairsState for HashflowAllPairsState {
     type Pair = HashflowState;
 
