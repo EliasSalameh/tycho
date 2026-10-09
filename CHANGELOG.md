@@ -1,3 +1,84 @@
+## [0.452.1](https://github.com/propeller-heads/tycho/compare/0.452.0...0.452.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* reject negative pages and empty page sizes ([bf1cd53](https://github.com/propeller-heads/tycho/commit/bf1cd53163c1329d4e02e8fc3bb5a4317dea257c))
+* reject negative pages and empty page sizes ([#1578](https://github.com/propeller-heads/tycho/issues/1578)) ([db41340](https://github.com/propeller-heads/tycho/commit/db41340c20b457c7eeccb9df4c3baea2e0f5f18e))
+
+## [0.452.0](https://github.com/propeller-heads/tycho/compare/0.451.0...0.452.0) (2026-10-09)
+
+
+### Features
+
+* **simulation:** RFQ venues as one component for all pairs with quote reuse rules ([#1501](https://github.com/propeller-heads/tycho/issues/1501)) ([339273e](https://github.com/propeller-heads/tycho/commit/339273edad00610bebbebb9b532bbf4d04563074))
+* **simulation:** RFQ venues as one component per chain, opt-in ([cdac0ec](https://github.com/propeller-heads/tycho/commit/cdac0ecc434c4384ddaf22fb61b5ffe2300799be))
+
+
+### Bug Fixes
+
+* **simulation:** name the quote rule in all-pairs used-quote errors ([cbbfd59](https://github.com/propeller-heads/tycho/commit/cbbfd5972556e8f2192f931ab5a8c6365fc7dcb1))
+* **simulation:** return instead of panic in all-pairs fee and delta_transition ([fbea4bf](https://github.com/propeller-heads/tycho/commit/fbea4bfd4c7b3f38d2b24fe125dbb07f4c7048a3))
+
+## [0.451.0](https://github.com/propeller-heads/tycho/compare/0.450.0...0.451.0) (2026-10-09)
+
+
+### Features
+
+* **simulation:** keep the two ETH/stETH curve pools in curve_filter ([ca73927](https://github.com/propeller-heads/tycho/commit/ca739275ded79ce11a7ce8c8a167b3d1c68c5a89))
+* **simulation:** keep the two ETH/stETH curve pools in curve_filter ([#1573](https://github.com/propeller-heads/tycho/issues/1573)) ([b90552e](https://github.com/propeller-heads/tycho/commit/b90552e92937d26123fde3f7cba05137505921e3))
+
+## [0.450.0](https://github.com/propeller-heads/tycho/compare/0.449.0...0.450.0) (2026-10-09)
+
+
+### Features
+
+* add Ring Swap v2 support on BSC ([02e5b56](https://github.com/propeller-heads/tycho/commit/02e5b56c075578ac29399eef38e60d77630fd184))
+* add Ring Swap v2 support on BSC ([#1263](https://github.com/propeller-heads/tycho/issues/1263)) ([a24756b](https://github.com/propeller-heads/tycho/commit/a24756b1c6ad9e8d0d1bd45d39177ae0daed7384))
+
+## [0.449.0](https://github.com/propeller-heads/tycho/compare/0.448.1...0.449.0) (2026-10-08)
+
+
+### Features
+
+* **simulation:** add price level stream metrics facade ([5cabfa3](https://github.com/propeller-heads/tycho/commit/5cabfa3ad09ede3e9b9224fd3c43ae86dc70e9d3))
+* **simulation:** bound, retry, and refresh the PropAMMRouter whitelist read ([45483e2](https://github.com/propeller-heads/tycho/commit/45483e27f7a2745c39e82add6923c685b80d663c))
+* **simulation:** expire price level components per component ([9da7e37](https://github.com/propeller-heads/tycho/commit/9da7e37d67bbc766094dd2e47ca3687829a9441e))
+* **simulation:** expire stale price level components on a deadline timer ([130dfc4](https://github.com/propeller-heads/tycho/commit/130dfc497ff268ba5cec5c873992b73168a5ef4a))
+* **simulation:** fail closed on stale Titan price levels ([#1428](https://github.com/propeller-heads/tycho/issues/1428)) ([47f32a3](https://github.com/propeller-heads/tycho/commit/47f32a3f7cc2237e165a1a721ea4de6861b542fc))
+* **simulation:** move pAMM components between families on whitelist change ([3f90301](https://github.com/propeller-heads/tycho/commit/3f90301fcc58499875b533ea56be2e2f7a36598c))
+* **simulation:** parse the Titan price level frame timestamp ([da13658](https://github.com/propeller-heads/tycho/commit/da136585c78d6854aa4cb1938b2d87aea80e4750))
+* **simulation:** refuse price level quotes older than one block ([871f9bb](https://github.com/propeller-heads/tycho/commit/871f9bb50b80303a27b32b705eae679c97472999))
+* **simulation:** validate price level frames by timestamp and block ([81314d3](https://github.com/propeller-heads/tycho/commit/81314d3219231c3d80908ba9fce9cfae73736268))
+
+
+### Bug Fixes
+
+* **simulation:** close the whole-branch review findings ([041bbe8](https://github.com/propeller-heads/tycho/commit/041bbe89e8ee4849e47b058912c6ad9fad0b303c))
+* **simulation:** count only parsed Titan frames as liveness ([42d8194](https://github.com/propeller-heads/tycho/commit/42d819461429cdccb09cf250805a88afd6c7d5fb))
+* **simulation:** count only socket waits toward the Titan idle timeout ([916bf78](https://github.com/propeller-heads/tycho/commit/916bf7849492a070a1aec71c17d1bc819c25c8e4))
+* **simulation:** justify the temporary dead_code allow on timestamp ([7e29462](https://github.com/propeller-heads/tycho/commit/7e29462c72ae5367f7259de001e91b533fa17854))
+* **simulation:** reset the block frontier whenever nothing is served ([b509646](https://github.com/propeller-heads/tycho/commit/b5096462b8dc73a8adb1ff27b6ede319b97cc825))
+
+## [0.448.1](https://github.com/propeller-heads/tycho/compare/0.448.0...0.448.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **indexer:** build and serialize state responses off the request workers ([05481d2](https://github.com/propeller-heads/tycho/commit/05481d2719f1dfa41a459608b105257c8a7777b6))
+* **indexer:** build and serialize state responses off the request workers ([#1549](https://github.com/propeller-heads/tycho/issues/1549)) ([7ccdaeb](https://github.com/propeller-heads/tycho/commit/7ccdaeb182ef98e950007713f451a42a00107f1f))
+* **indexer:** gate off-worker serialization on estimated JSON size ([8c6d37d](https://github.com/propeller-heads/tycho/commit/8c6d37df7c6fda0beadc0d157a1a6c9f9b2a3346))
+* **indexer:** give each state endpoint its own off-worker pools ([acec463](https://github.com/propeller-heads/tycho/commit/acec463efe854c6cb3f59205f9e5e8ec3a4f39ca))
+* **indexer:** split off-worker pools, keep small responses on workers ([e35c81c](https://github.com/propeller-heads/tycho/commit/e35c81c97d6cc23dbbb91214972d0db32facdc45))
+
+## [0.448.0](https://github.com/propeller-heads/tycho/compare/0.447.1...0.448.0) (2026-10-08)
+
+
+### Features
+
+* **indexer:** add DeltaWindow block count and tip gauges ([b6195cb](https://github.com/propeller-heads/tycho/commit/b6195cba2c4a5cfd314f38c9afaf3cbc6f03b841))
+* **indexer:** report DeltaWindow gauges after every insert and restart clear ([3725f25](https://github.com/propeller-heads/tycho/commit/3725f25240cc7bf256976810e81beaa6eb4ce98d))
+
 ## [0.447.1](https://github.com/propeller-heads/tycho/compare/0.447.0...0.447.1) (2026-10-08)
 
 

@@ -143,6 +143,21 @@ If you price on demand rather than reacting to every update, read the feed as a 
 
 Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is the feed's receipt time (`ReceivedAt`) and each `Book` carries the provider's `updated_at` where the provider reports one (Bebop, Liquorice, Metric). Every snapshot is the provider's full current state, so a pair missing from the current snapshot is one the provider has stopped serving. Because a watch channel only keeps the latest value, a consumer that falls behind skips straight to the freshest prices instead of working through a backlog. To track additions and removals, compare the snapshot's book ids against your previous view.
 
+### Venue components
+
+By default, Hashflow, Liquorice, Bebop and Native stream one component per token pair, and a swap leaves the state unchanged. `.component_layout(ComponentLayout::AllPairs)` on the client builder makes the client stream one component for all token pairs instead. Register an all-pairs client with `HashflowAllPairsState`, `LiquoriceAllPairsState`, `BebopAllPairsState` or `NativeAllPairsState` under the name `<venue>_all_pairs`, for example `.add_client::<HashflowAllPairsState>("hashflow_all_pairs", Box::new(client))`. The two layouts stream under different names, so one stream builder can carry a per-pair and an all-pairs client of the same venue. `ComponentLayout` and `QuoteRule` are in `tycho_simulation::rfq::models`.
+
+An all-pairs component has these properties. Its `tokens` are every token the venue quotes, and its `swap_directions` static attribute lists the directions it quotes, 40 bytes each: the token in, then the token out. Add graph edges from that attribute, not from every pair of `tokens`, and rebuild them when the component's `tokens` change between updates.
+
+A swap records what it used in the `new_state` it returns. How often one route may quote a venue is its quote rule, carried as the `quote_rule` static attribute:
+
+* Hashflow and Liquorice name their market makers. By default every maker quotes once per route (`once_per_maker`). `.quote_rule(QuoteRule::OncePerVenue)` on the client builder limits the venue to one quote per route.
+* Bebop and Native name no maker and quote once per route (`once_per_venue`).
+
+The rule takes effect wherever your algorithm threads `new_state` between two uses of the component. A swap the rule refuses returns a recoverable `No liquidity` error.
+
+Request the firm quote on the state the swap was simulated on, with the simulated amount. For Hashflow and Liquorice, that state picks the market maker the firm quote asks. On the `new_state` the swap returned, that maker is already used.
+
 ### Simulation
 
 You can simulate a swap against a book state using:
@@ -277,7 +292,7 @@ Because the RFQ will only let you swap up to the amount of tokens specified in t
 
 Besides the book feeds above, Tycho Simulation consumes <a href="https://docs.titanbuilder.xyz/propamms/takers#pamm-price-level" target="_blank" rel="noopener noreferrer">Titan Builder's pAMM price level stream</a>: a WebSocket of complete per-pair quote snapshots for a subset of the pAMMs Titan serves. It only serves Ethereum Mainnet.
 
-`PriceLevelStreamBuilder` turns those snapshots into the same `Update` messages the protocol stream emits, so you consume it like any other stream:
+`PriceLevelStreamBuilder` turns those frames into the same `Update` messages the protocol stream emits, so you consume it like any other stream:
 
 ```rust
 use tycho_simulation::price_level_stream::stream::PriceLevelStreamBuilder;
@@ -289,7 +304,9 @@ let price_level_stream = PriceLevelStreamBuilder::new()
     .build();
 ```
 
-Quotes target the block currently being built, so the stream marks every update partial and supersedes the previous one for the pairs it contains. The stream never terminates — run it in its own task alongside your protocol stream.
+Quotes target the block currently being built, so the stream marks every update partial and supersedes the previous one for the pairs it contains. Each update carries the block its frame targets; that number only decreases after every component has been removed, when the stream re-anchors on the next frame. The stream never terminates — run it in its own task alongside your protocol stream.
+
+Frames are best effort, not complete snapshots: a venue or a pair can be absent from one frame and present in the next, so the stream never removes a component because a frame omits it. Instead it serves a component for `stale_after` (default 24 s) after the last frame that carried it, then lists the component in `removed_pairs`; the next frame that carries it adds it back in `new_pairs`. Every state also refuses to quote once its frame is 12 s old, so you cannot quote a ladder past the block it targeted even before the removal arrives. Treat a removal like any other: stop routing through the component until it reappears in `new_pairs`. If you quote states more than 12 s after they arrive by design (a batch simulator, a validation harness), `without_quote_guard()` emits states that never refuse; the 24 s removal still applies, and a quote from such a state may no longer be fillable.
 
 `with_known_pamms()` serves these venues: Bebop, FermiSwap, Kipseli, Metric, TaurusFi and Tempest. Titan does not stream every venue at all times, so the live set can be smaller.
 

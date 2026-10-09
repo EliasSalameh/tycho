@@ -33,6 +33,7 @@ use crate::{
         middleware::{
             PlanRestrictions, PlansConfig, RequestPaginationValidation, ValidateRestrictions,
         },
+        off_worker::OffWorker,
         state::{
             service::{EntityCacheSetup, FallbackReason, StateService, StateServiceError},
             shadow::{self, Endpoint, SampledRequest, Shadow},
@@ -57,6 +58,9 @@ pub enum RpcError {
     #[error("Page size must be less than or equal to {0}.")]
     Pagination(usize),
 
+    #[error("Page must be at least 0 and page size at least 1, got page {page} and page size {page_size}.")]
+    InvalidPagination { page: i64, page_size: i64 },
+
     #[error("Unknown error: {0}")]
     Unknown(String),
 
@@ -78,6 +82,7 @@ impl ResponseError for RpcError {
             RpcError::Connection(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RpcError::DeltasError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RpcError::Pagination(_) => StatusCode::BAD_REQUEST,
+            RpcError::InvalidPagination { .. } => StatusCode::BAD_REQUEST,
             RpcError::Unknown(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RpcError::PlanRestrictionViolation(_) => StatusCode::BAD_REQUEST,
         }
@@ -91,6 +96,7 @@ impl ResponseError for RpcError {
             RpcError::DeltasError(e) => HttpResponse::InternalServerError().body(e.to_string()),
             RpcError::Pagination(e) => HttpResponse::BadRequest()
                 .body(format!("Page size must be less than or equal to {e}.")),
+            RpcError::InvalidPagination { .. } => HttpResponse::BadRequest().body(self.to_string()),
             RpcError::Unknown(e) => HttpResponse::InternalServerError().body(e.to_string()),
             RpcError::PlanRestrictionViolation(e) => HttpResponse::BadRequest().body(e.to_owned()),
         }
@@ -119,6 +125,8 @@ pub struct RpcHandler<G, T> {
     protocol_systems: Vec<String>,
     /// Which path answers state requests. `Off` without extractors.
     state_service: EntityCacheSetup<Arc<StateService>, Shadow>,
+    /// Builds and serializes large state responses off the request workers.
+    off_worker: OffWorker,
 }
 
 impl<G, T> RpcHandler<G, T>
@@ -173,6 +181,7 @@ where
             dci_protocols,
             protocol_systems,
             state_service: EntityCacheSetup::Off,
+            off_worker: OffWorker::new(),
         }
     }
 
@@ -189,9 +198,9 @@ where
     }
 
     /// The state service, when it answers requests itself: `serve` mode only.
-    fn serving_state_service(&self) -> Option<&StateService> {
+    fn serving_state_service(&self) -> Option<Arc<StateService>> {
         match &self.state_service {
-            EntityCacheSetup::Serve(service) => Some(service),
+            EntityCacheSetup::Serve(service) => Some(Arc::clone(service)),
             EntityCacheSetup::Shadow(_) | EntityCacheSetup::Off => None,
         }
     }
@@ -297,7 +306,12 @@ where
         request: dto::StateRequestBody,
     ) -> Result<dto::StateRequestResponse, RpcError> {
         if let Some(service) = self.serving_state_service() {
-            match service.contract_state(&request) {
+            let cache_request = request.clone();
+            let answer = self
+                .off_worker
+                .build(Endpoint::ContractState, move || service.contract_state(&cache_request))
+                .await?;
+            match answer {
                 Ok(response) => return Ok(response),
                 Err(StateServiceError::Fallback(reason)) => {
                     count_db_path(Endpoint::ContractState, reason)
@@ -568,7 +582,12 @@ where
         request: dto::ProtocolStateRequestBody,
     ) -> Result<dto::ProtocolStateRequestResponse, RpcError> {
         if let Some(service) = self.serving_state_service() {
-            match service.protocol_state(&request) {
+            let cache_request = request.clone();
+            let answer = self
+                .off_worker
+                .build(Endpoint::ProtocolState, move || service.protocol_state(&cache_request))
+                .await?;
+            match answer {
                 Ok(response) => return Ok(response),
                 Err(StateServiceError::Fallback(reason)) => {
                     count_db_path(Endpoint::ProtocolState, reason)
@@ -1281,13 +1300,16 @@ pub async fn contract_state<G: Gateway, T: EntryPointTracer>(
     }
 
     // Call the handler to get the state
-    let response = handler
-        .into_inner()
-        .get_contract_state(&body)
-        .await;
+    let handler = handler.into_inner();
+    let response = handler.get_contract_state(&body).await;
 
     match response {
-        Ok(state) => Ok(HttpResponse::Ok().json(state)),
+        Ok(state) => {
+            handler
+                .off_worker
+                .json(Endpoint::ContractState, state)
+                .await
+        }
         Err(err) => {
             error!(error = %err, ?body, "Error while getting contract state.");
             Err(err)
@@ -1420,13 +1442,16 @@ pub async fn protocol_state<G: Gateway, T: EntryPointTracer>(
     }
 
     // Call the handler to get protocol states
-    let response = handler
-        .into_inner()
-        .get_protocol_state(&body)
-        .await;
+    let handler = handler.into_inner();
+    let response = handler.get_protocol_state(&body).await;
 
     match response {
-        Ok(state) => Ok(HttpResponse::Ok().json(state)),
+        Ok(state) => {
+            handler
+                .off_worker
+                .json(Endpoint::ProtocolState, state)
+                .await
+        }
         Err(err) => {
             error!(error = %err, ?body, "Error while getting protocol states.");
             Err(err)
