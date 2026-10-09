@@ -75,11 +75,18 @@ for any protocol indexed by Tycho.
   minimum book TVL in USD) is what every book feed needs whatever transport it runs on, and is the
   first argument of every feed builder; `BookFeedStreams`/`BookFeedEvent` are `SnapshotFeedStreams`/`SnapshotFeedEvent`
   with the book types filled in
-  - **`book::{levels,sim,component,tvl}`**: what level-based venues share — `Levels`, the
-    validated ladder every venue decodes its wire format into at ingestion (`fill`, `invert`,
+  - **`book::{levels,sim,component,tvl,all_pairs}`**: what level-based venues share — `Levels`,
+    the validated ladder every venue decodes its wire format into at ingestion (`fill`, `invert`,
     `notional`, `average_price`), the direction/scaling/limit pieces every such `ProtocolSim`
     impl needs, the pair component id and builder, and pricing a book's notional in USD through
-    the other pairs the same response carried
+    the other pairs the same response carried. `all_pairs` is the opt-in layout
+    (`component_layout(ComponentLayout::AllPairs)` on the four RFQ builders) that publishes a
+    venue as one component for every pair it prices: `AllPairs<S>` holds the per-pair states the
+    other layout would publish, picks the best book still allowed to quote under the component's
+    `QuoteRule` (`once_per_maker`, `once_per_venue`), and records it as spent in the state the
+    swap returns. A venue's `<Venue>AllPairsState` is a wrapper implementing `AllPairsState`,
+    because `#[typetag::serde]` registers concrete types; the component advertises its
+    directions as the `swap_directions` static attribute, since its token list is not the pairs
   - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the

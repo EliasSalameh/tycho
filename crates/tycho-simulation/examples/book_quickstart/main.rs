@@ -42,8 +42,8 @@ use tycho_execution::encoding::{
 };
 use tycho_simulation::{
     book::{
-        quote_tokens::usd_stablecoins_for_chain, BookFeedConfig, BookFeedEvent, BookFeedOutcome,
-        BookFeedStreams, BookSnapshot,
+        all_pairs::ComponentLayout, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
+        BookFeedEvent, BookFeedOutcome, BookFeedStreams, BookSnapshot,
     },
     pamm::protocols::metric::{self, feed::MetricFeedBuilder},
     protocol::models::ProtocolComponent,
@@ -81,6 +81,10 @@ struct Cli {
     /// Disable the pAMM book feeds (Metric), keeping the RFQ venues
     #[arg(long, default_value_t = false)]
     disable_pamm_feeds: bool,
+    /// Publish each RFQ venue as one component for every pair it prices, which a route may take
+    /// one quote from, rather than one component per pair
+    #[arg(long, default_value_t = false)]
+    all_pairs: bool,
 }
 
 impl Cli {
@@ -232,11 +236,16 @@ async fn main() {
     // latest complete book. A consumer that falls behind — as this one does while the
     // interactive prompt below is open — skips straight to the freshest book.
     let mut feeds = BookFeedStreams::new();
+    // A venue published as one component holds a route to the quotes it will sign for it; its
+    // books are the same ones either way, so the loop below reads it unchanged.
+    let component_layout =
+        if cli.all_pairs { ComponentLayout::AllPairs } else { ComponentLayout::PerPair };
 
     if let (Some(key), Some(usd_quote_tokens)) = (bebop_key, &usd_quote_tokens) {
         println!("Setting up Bebop feed...\n");
         let bebop_feed =
             BebopFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key)
+                .component_layout(component_layout)
                 .build()
                 .expect("Failed to create Bebop feed");
         feeds
@@ -250,6 +259,7 @@ async fn main() {
         println!("Setting up Hashflow feed...\n");
         let hashflow_feed =
             HashflowFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key)
+                .component_layout(component_layout)
                 .build()
                 .expect("Failed to create Hashflow feed");
         feeds
@@ -263,6 +273,7 @@ async fn main() {
         println!("Setting up Liquorice feed...\n");
         let liquorice_feed =
             LiquoriceFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key)
+                .component_layout(component_layout)
                 .build()
                 .expect("Failed to create Liquorice feed");
         feeds
@@ -272,7 +283,9 @@ async fn main() {
 
     if let (Some(key), Some(usd_quote_tokens)) = (native_key, &usd_quote_tokens) {
         println!("Setting up Native feed...\n");
-        match NativeFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key).build()
+        match NativeFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key)
+            .component_layout(component_layout)
+            .build()
         {
             Ok(native_feed) => {
                 feeds

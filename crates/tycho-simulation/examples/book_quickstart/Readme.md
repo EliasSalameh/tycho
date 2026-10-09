@@ -44,6 +44,13 @@ so the example works with no RFQ credentials at all. Pass `--disable-pamm-feeds`
 cargo run --release --example book_quickstart -- --disable-pamm-feeds
 ```
 
+`--all-pairs` builds the four RFQ venues as one component per venue instead of one per pair, which
+is the layout a router uses to hold a route to the quotes a venue will sign for it:
+
+```bash
+cargo run --release --example book_quickstart -- --all-pairs
+```
+
 By default, the example will request price levels for 10 USDC -> WETH on Ethereum Mainnet.
 If we choose a different chain, by default, price levels for USDC -> WETH will be requested on that chain.
 If you want a different trade and chain, you can use the following command, replacing the values with the token and

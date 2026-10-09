@@ -145,18 +145,25 @@ Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is 
 
 ### Venue components
 
-By default, Hashflow, Liquorice, Bebop and Native stream one component per token pair, and a swap leaves the state unchanged. `.component_layout(ComponentLayout::AllPairs)` on the client builder makes the client stream one component for all token pairs instead. Register an all-pairs client with `HashflowAllPairsState`, `LiquoriceAllPairsState`, `BebopAllPairsState` or `NativeAllPairsState` under the name `<venue>_all_pairs`, for example `.add_client::<HashflowAllPairsState>("hashflow_all_pairs", Box::new(client))`. The two layouts stream under different names, so one stream builder can carry a per-pair and an all-pairs client of the same venue. `ComponentLayout` and `QuoteRule` are in `tycho_simulation::rfq::models`.
+By default every feed publishes one component per token pair, and a swap against it leaves the state unchanged. `.component_layout(ComponentLayout::AllPairs)` on the Bebop, Hashflow, Liquorice and Native builders publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. `ComponentLayout` and `QuoteRule` live in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
 
-An all-pairs component has these properties. Its `tokens` are every token the venue quotes, and its `swap_directions` static attribute lists the directions it quotes, 40 bytes each: the token in, then the token out. Add graph edges from that attribute, not from every pair of `tokens`, and rebuild them when the component's `tokens` change between updates.
+```rust
+let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key)
+    .component_layout(ComponentLayout::AllPairs)
+    .build()
+    .expect("Failed to create Hashflow feed");
+```
 
-A swap records what it used in the `new_state` it returns. How often one route may quote a venue is its quote rule, carried as the `quote_rule` static attribute:
+Such a component carries every token the venue quotes, and the pairs it prices are not every pair of those tokens: the directions it quotes are its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. Add graph edges from that attribute, and rebuild them when the component's tokens change between snapshots. Its state prices and quotes exactly as the per-pair states do — the books behind it are the same ones.
 
-* Hashflow and Liquorice name their market makers. By default every maker quotes once per route (`once_per_maker`). `.quote_rule(QuoteRule::OncePerVenue)` on the client builder limits the venue to one quote per route.
-* Bebop and Native name no maker and quote once per route (`once_per_venue`).
+A swap records the book it used in the `new_state` it returns, and how often one route may quote the venue is its quote rule, carried as the `quote_rule` static attribute:
 
-The rule takes effect wherever your algorithm threads `new_state` between two uses of the component. A swap the rule refuses returns a recoverable `No liquidity` error.
+* Hashflow and Liquorice name their market makers. Every maker quotes once per route (`once_per_maker`), since a maker's second quote prices as if the first had not happened. `.quote_rule(QuoteRule::OncePerVenue)` holds the whole venue to one quote instead.
+* Bebop and Native pick the makers behind a quote themselves and sign once per route (`once_per_venue`).
 
-Request the firm quote on the state the swap was simulated on, with the simulated amount. For Hashflow and Liquorice, that state picks the market maker the firm quote asks. On the `new_state` the swap returned, that maker is already used.
+The rule takes effect wherever your algorithm threads `new_state` from one use of the component to the next; a swap it refuses returns a recoverable error saying every book pricing it has already quoted in this route.
+
+Request the firm quote on the state the swap was simulated on, with the simulated amount: that state picks the same book the swap went to, and asks the market maker behind it. On the `new_state` the swap returned, that book's turn is spent.
 
 ### Simulation
 
