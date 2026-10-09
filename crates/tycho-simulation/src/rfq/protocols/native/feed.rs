@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{all_pairs::ComponentLayout, BookFeedConfig, BookSnapshot, ReceivedAt},
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::native::{
@@ -32,6 +32,7 @@ pub struct NativeFeed {
 /// Builds a [`NativeFeed`] from the shared [`BookFeedConfig`] and Native's API key.
 pub struct NativeFeedBuilder {
     book_config: BookFeedConfig,
+    component_layout: ComponentLayout,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     api_key: String,
     feed_config: HttpFeedConfig,
@@ -50,6 +51,7 @@ impl NativeFeedBuilder {
             api_key,
             feed_config: Self::default_feed_config(),
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
+            component_layout: ComponentLayout::default(),
         }
     }
 
@@ -76,6 +78,13 @@ impl NativeFeedBuilder {
         self
     }
 
+    /// Which components the feed publishes for Native: one per pair it prices, or one for the
+    /// venue as a whole, which a route may take a single quote from. Per pair by default.
+    pub fn component_layout(mut self, layout: ComponentLayout) -> Self {
+        self.component_layout = layout;
+        self
+    }
+
     /// Deadline for binding quote requests. Default: 5 s.
     pub fn quote_timeout(mut self, timeout: Duration) -> Self {
         self.quote_timeout = timeout;
@@ -89,6 +98,7 @@ impl NativeFeedBuilder {
         Ok(NativeFeed {
             feed_config: self.feed_config,
             source: NativeBookSource {
+                component_layout: self.component_layout,
                 client: Arc::new(NativeClient::new(
                     chain,
                     NATIVE_API_URL.to_string(),

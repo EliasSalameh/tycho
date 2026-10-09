@@ -8,13 +8,14 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
+        all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
         component::{pair_book, pair_component_id},
         BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },
     rfq::protocols::native::{
         client::NativeClient,
         models::{NativeBookSide, NativeOrderbookEntry, NativeOrderbookSide, NativePriceData},
-        state::NativeState,
+        state::{NativeAllPairsState, NativeState},
         PROTOCOL_SYSTEM, PROTOCOL_TYPE,
     },
     snapshot_feed::{errors::FeedError, http::HttpSource},
@@ -30,6 +31,8 @@ pub struct NativeBookSource {
     /// Requests binding quotes; shared with every state this source emits. Its key also
     /// authenticates the orderbook poll.
     pub client: Arc<NativeClient>,
+    /// Whether the venue's pairs are published as one component or one each.
+    pub component_layout: ComponentLayout,
 }
 
 impl NativeBookSource {
@@ -189,6 +192,7 @@ impl HttpSource for NativeBookSource {
             .collect();
 
         let mut books = Books::new();
+        let mut venue_books = Vec::new();
         for (component_id, book) in grouped {
             // Only requested markets become components.
             let Some((base_token, quote_token)) = self
@@ -218,13 +222,33 @@ impl HttpSource for NativeBookSource {
                 client: Arc::clone(&self.client),
             };
             // Native's orderbook carries no per-book timestamp.
-            books.insert(pair_book(
+            match self.component_layout {
+                ComponentLayout::PerPair => books.insert(pair_book(
+                    PROTOCOL_SYSTEM,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    component_id,
+                    state,
+                    None,
+                )),
+                ComponentLayout::AllPairs => {
+                    // A Native book holds both sides, so it prices both directions of its pair.
+                    let (base, quote) = (base_token.address.clone(), quote_token.address.clone());
+                    venue_books.push(VenueBook {
+                        maker: None,
+                        directions: vec![(base.clone(), quote.clone()), (quote, base)],
+                        updated_at: None,
+                        state,
+                    })
+                }
+            }
+        }
+        if !venue_books.is_empty() {
+            books.insert(all_pairs_book(
                 PROTOCOL_SYSTEM,
                 PROTOCOL_TYPE,
                 self.book_config.chain,
-                component_id,
-                state,
-                None,
+                NativeAllPairsState::new(venue_books),
             ));
         }
         Ok(BookSnapshot::received_now(books))
@@ -242,6 +266,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
+            all_pairs::decode_swap_directions,
             levels::{Levels, PriceLevel},
             test_token_map,
         },
@@ -260,6 +285,7 @@ mod tests {
             .map(|address| (*address, "T", 18))
             .collect();
         NativeBookSource {
+            component_layout: ComponentLayout::PerPair,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
                 tokens: Arc::new(test_token_map(&entries)),
@@ -744,5 +770,41 @@ mod tests {
         } else {
             assert!(books.is_empty());
         }
+    }
+
+    /// Published as one component, Native's pairs are one book advertising both directions of
+    /// each of them.
+    #[tokio::test]
+    async fn fetch_publishes_every_pair_under_one_component() {
+        let weth = Bytes::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+        let usdt = Bytes::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7").unwrap();
+        let body = serde_json::to_string(&vec![serde_json::json!({
+            "base_address": weth.to_string(),
+            "quote_address": usdt.to_string(),
+            "minimum_in_base": 0.0,
+            "side": "bid",
+            "levels": [[2.0, 100.0]]
+        })])
+        .unwrap();
+        let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
+        let source = NativeBookSource {
+            component_layout: ComponentLayout::AllPairs,
+            ..test_source(server.url(), &[&weth, &usdt], HashSet::from([usdt.clone()]), 0.0)
+        };
+
+        let books = source.fetch().await.unwrap().books;
+
+        assert_eq!(books.len(), 1);
+        let book = books.values().next().unwrap();
+        // The venue's protocol system in ASCII, which is the whole id.
+        assert_eq!(book.component.id.to_string(), "0x7266713a6e6174697665");
+        assert_eq!(
+            decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
+            vec![(weth.clone(), usdt.clone()), (usdt.clone(), weth.clone())]
+        );
+        assert_eq!(
+            book.component.static_attributes["quote_rule"],
+            Bytes::from("once_per_venue".as_bytes())
+        );
     }
 }

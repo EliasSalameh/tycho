@@ -9,11 +9,14 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
+        all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
         component::{pair_book, pair_component_id},
         tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },
     rfq::protocols::liquorice::{
-        client::LiquoriceClient, models::LiquoriceTokenPairPrice, state::LiquoriceState,
+        client::LiquoriceClient,
+        models::LiquoriceTokenPairPrice,
+        state::{LiquoriceAllPairsState, LiquoriceState},
         PROTOCOL_SYSTEM, PROTOCOL_TYPE,
     },
     snapshot_feed::{errors::FeedError, http::HttpSource},
@@ -29,6 +32,8 @@ pub struct LiquoriceBookSource {
     pub usd_quote_tokens: Arc<HashSet<Bytes>>,
     /// Requests binding quotes; shared with every state this source emits.
     pub client: Arc<LiquoriceClient>,
+    /// Whether the venue's pairs are published as one component or one each.
+    pub component_layout: ComponentLayout,
 }
 
 impl LiquoriceBookSource {
@@ -100,6 +105,7 @@ impl HttpSource for LiquoriceBookSource {
         }
 
         let mut books = Books::new();
+        let mut venue_books = Vec::new();
         for ((base_bytes, quote_bytes), mm_prices) in pair_mm_prices {
             let Some((base_token, quote_token)) = self
                 .book_config
@@ -117,19 +123,52 @@ impl HttpSource for LiquoriceBookSource {
                 .filter_map(|price| price.updated_at)
                 .max()
                 .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
-            let state = LiquoriceState {
-                base_token: base_token.clone(),
-                quote_token: quote_token.clone(),
-                prices_by_mm: mm_prices,
-                client: Arc::clone(&self.client),
-            };
-            books.insert(pair_book(
+            match self.component_layout {
+                ComponentLayout::PerPair => {
+                    let state = LiquoriceState {
+                        base_token: base_token.clone(),
+                        quote_token: quote_token.clone(),
+                        prices_by_mm: mm_prices,
+                        client: Arc::clone(&self.client),
+                    };
+                    books.insert(pair_book(
+                        PROTOCOL_SYSTEM,
+                        PROTOCOL_TYPE,
+                        self.book_config.chain,
+                        component_id,
+                        state,
+                        updated_at,
+                    ));
+                }
+                // One book per maker, which is what a quote is asked of and what the venue's
+                // rule is counted in.
+                ComponentLayout::AllPairs => {
+                    for (maker, price) in mm_prices {
+                        let updated_at = price
+                            .updated_at
+                            .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
+                        let state = LiquoriceState {
+                            base_token: base_token.clone(),
+                            quote_token: quote_token.clone(),
+                            prices_by_mm: HashMap::from([(maker.clone(), price)]),
+                            client: Arc::clone(&self.client),
+                        };
+                        venue_books.push(VenueBook {
+                            maker: Some(maker),
+                            directions: vec![(base_bytes.clone(), quote_bytes.clone())],
+                            updated_at,
+                            state,
+                        });
+                    }
+                }
+            }
+        }
+        if !venue_books.is_empty() {
+            books.insert(all_pairs_book(
                 PROTOCOL_SYSTEM,
                 PROTOCOL_TYPE,
                 self.book_config.chain,
-                component_id,
-                state,
-                updated_at,
+                LiquoriceAllPairsState::new(venue_books),
             ));
         }
         Ok(BookSnapshot::received_now(books))
@@ -146,6 +185,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
+            all_pairs::decode_swap_directions,
             levels::{Levels, PriceLevel},
             test_token_map,
         },
@@ -172,6 +212,7 @@ mod tests {
             .map(|address| (*address, "T", 18))
             .collect();
         LiquoriceBookSource {
+            component_layout: ComponentLayout::PerPair,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
                 tokens: Arc::new(test_token_map(&entries)),
@@ -273,5 +314,51 @@ mod tests {
             client: Arc::clone(&source.client),
         };
         assert!(book.state.eq(&expected), "state must hold exactly fresh_mm and old_mm");
+    }
+
+    /// Published as one component, each market maker pricing a pair becomes its own book: a
+    /// route takes one quote per maker, so two makers on one pair serve two swaps and a third
+    /// finds none left.
+    #[tokio::test]
+    async fn fetch_splits_the_makers_of_a_pair_under_one_component() {
+        let weth = Bytes::from_str(WETH).unwrap();
+        let usdc = Bytes::from_str(USDC).unwrap();
+        // Both makers hold 3000 USD of WETH/USDC, fresh_mm a dollar better.
+        let body = format!(
+            r#"{{"prices":{{
+                "fresh_mm":[{{"baseToken":"{WETH}","quoteToken":"{USDC}","levels":[["3000","1"]]}}],
+                "old_mm":[{{"baseToken":"{WETH}","quoteToken":"{USDC}","levels":[["2999","1"]]}}]
+            }}}}"#
+        );
+        let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
+        let source = LiquoriceBookSource {
+            component_layout: ComponentLayout::AllPairs,
+            ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
+        };
+
+        let books = source.fetch().await.unwrap().books;
+
+        assert_eq!(books.len(), 1, "one component: {:?}", books.keys());
+        let book = books.values().next().unwrap();
+        // The venue's protocol system in ASCII, which is the whole id.
+        assert_eq!(book.component.id.to_string(), "0x7266713a6c6971756f72696365");
+        assert_eq!(
+            decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
+            vec![(weth.clone(), usdc.clone())],
+            "Liquorice's levels price one direction"
+        );
+
+        let tokens = &source.book_config.tokens;
+        let swap = |state: &dyn tycho_common::simulation::protocol_sim::ProtocolSim| {
+            state.get_amount_out(
+                num_bigint::BigUint::from(10u64).pow(17),
+                &tokens[&weth],
+                &tokens[&usdc],
+            )
+        };
+        let best = swap(book.state.as_ref()).unwrap();
+        let second = swap(best.new_state.as_ref()).unwrap();
+        assert!(best.amount > second.amount, "the better maker quotes first");
+        assert!(swap(second.new_state.as_ref()).is_err(), "two makers quote two swaps and no more");
     }
 }

@@ -7,9 +7,15 @@ use tracing::debug;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{component::pair_book, tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt},
+    book::{
+        all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
+        component::pair_book,
+        tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
+    },
     rfq::protocols::hashflow::{
-        client::HashflowClient, models::HashflowMarketMakerLevels, state::HashflowState,
+        client::HashflowClient,
+        models::HashflowMarketMakerLevels,
+        state::{HashflowAllPairsState, HashflowState},
         PROTOCOL_TYPE,
     },
     snapshot_feed::{errors::FeedError, http::HttpSource},
@@ -28,6 +34,8 @@ pub struct HashflowBookSource {
     pub usd_quote_tokens: Arc<HashSet<Bytes>>,
     /// Requests binding quotes; shared with every state this source emits.
     pub client: Arc<HashflowClient>,
+    /// Whether the venue's pairs are published as one component or one each.
+    pub component_layout: ComponentLayout,
 }
 
 impl HashflowBookSource {
@@ -82,6 +90,7 @@ impl HttpSource for HashflowBookSource {
         debug!(market_makers = levels_by_mm.len(), "fetched price levels");
 
         let mut books = Books::new();
+        let mut venue_books = Vec::new();
         for (mm_name, mm_levels) in levels_by_mm.iter() {
             for mm_level in mm_levels {
                 let base_bytes = &mm_level.pair.base_token;
@@ -122,15 +131,31 @@ impl HttpSource for HashflowBookSource {
                     market_maker: mm_name.clone(),
                     client: Arc::clone(&self.client),
                 };
-                books.insert(pair_book(
-                    self.protocol_system,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    component_id,
-                    state,
-                    None,
-                ));
+                match self.component_layout {
+                    ComponentLayout::PerPair => books.insert(pair_book(
+                        self.protocol_system,
+                        PROTOCOL_TYPE,
+                        self.book_config.chain,
+                        component_id,
+                        state,
+                        None,
+                    )),
+                    ComponentLayout::AllPairs => venue_books.push(VenueBook {
+                        maker: Some(mm_name.clone()),
+                        directions: vec![(base_bytes.clone(), quote_bytes.clone())],
+                        updated_at: None,
+                        state,
+                    }),
+                }
             }
+        }
+        if !venue_books.is_empty() {
+            books.insert(all_pairs_book(
+                self.protocol_system,
+                PROTOCOL_TYPE,
+                self.book_config.chain,
+                HashflowAllPairsState::new(venue_books),
+            ));
         }
         Ok(BookSnapshot::received_now(books))
     }
@@ -146,6 +171,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
+            all_pairs::decode_swap_directions,
             component::PairState,
             levels::{Levels, PriceLevel},
             test_token_map,
@@ -171,6 +197,7 @@ mod tests {
             .map(|address| (*address, "T", 18))
             .collect();
         HashflowBookSource {
+            component_layout: ComponentLayout::PerPair,
             protocol_system: PROTOCOL_SYSTEM,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
@@ -378,5 +405,63 @@ mod tests {
             (FeedError::Parsing(_), FeedError::Parsing(_)) => {}
             _ => panic!("expected {expected:?}, got {error:?}"),
         }
+    }
+
+    /// Published as one component, every market maker's levels stay their own book: a route
+    /// takes one quote per maker, so two makers serve two swaps and a third finds none left.
+    #[tokio::test]
+    async fn fetch_publishes_every_maker_under_one_component() {
+        let weth = Bytes::from_str(WETH).unwrap();
+        let usdc = Bytes::from_str(USDC).unwrap();
+        let market_makers = r#"{"marketMakers":["mm1","mm2"]}"#.to_string();
+        // Both makers quote one WETH of WETH/USDC depth, mm1 a dollar better.
+        let price_levels = format!(
+            r#"{{"status":"success","levels":{{
+                "mm1":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"3000"}}]}}],
+                "mm2":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"2999"}}]}}]
+            }}}}"#
+        );
+        let server = spawn_http_server(move |target| {
+            if target.starts_with("/market-makers") {
+                Some(("200 OK", market_makers.clone()))
+            } else {
+                Some(("200 OK", price_levels.clone()))
+            }
+        })
+        .await;
+        let source = HashflowBookSource {
+            component_layout: ComponentLayout::AllPairs,
+            ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
+        };
+
+        let books = source.fetch().await.unwrap().books;
+
+        assert_eq!(books.len(), 1, "one component: {:?}", books.keys());
+        let book = books.values().next().unwrap();
+        // The venue's protocol system in ASCII, which is the whole id.
+        assert_eq!(book.component.id.to_string(), "0x7266713a68617368666c6f77");
+        assert_eq!(
+            decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
+            vec![(weth.clone(), usdc.clone())],
+            "Hashflow's levels price one direction"
+        );
+        assert_eq!(
+            book.component.static_attributes["quote_rule"],
+            Bytes::from("once_per_maker".as_bytes())
+        );
+
+        let tokens = &source.book_config.tokens;
+        // Hashflow's first level is the minimum tradable size, so the swap is one whole WETH.
+        let swap = |state: &dyn tycho_common::simulation::protocol_sim::ProtocolSim| {
+            state.get_amount_out(
+                num_bigint::BigUint::from(10u64).pow(18),
+                &tokens[&weth],
+                &tokens[&usdc],
+            )
+        };
+        let best = swap(book.state.as_ref()).unwrap();
+        let second = swap(best.new_state.as_ref()).unwrap();
+        assert!(best.amount > second.amount, "the better maker quotes first");
+        assert!(swap(second.new_state.as_ref()).is_err(), "two makers quote two swaps and no more");
     }
 }

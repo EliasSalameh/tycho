@@ -9,6 +9,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
+        all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
         component::{pair_book, pair_component_id},
         wire::EntryReader,
         BookFeedConfig, BookSnapshot, Books, ReceivedAt,
@@ -16,7 +17,7 @@ use crate::{
     rfq::protocols::bebop::{
         client::BebopClient,
         models::{BebopBook, BebopPricingUpdate},
-        state::BebopState,
+        state::{BebopAllPairsState, BebopState},
         PROTOCOL_TYPE,
     },
     snapshot_feed::{
@@ -39,6 +40,8 @@ pub struct BebopBookSource {
     // Requests binding quotes; shared with every state this source emits. Its key also
     // authenticates the pricing WebSocket.
     pub client: Arc<BebopClient>,
+    /// Whether the venue's pairs are published as one component or one each.
+    pub component_layout: ComponentLayout,
 }
 
 impl BebopBookSource {
@@ -117,6 +120,7 @@ impl BebopBookSource {
             .collect_vec();
 
         let mut books = Books::new();
+        let mut venue_books = Vec::new();
         for (book, (base_token, quote_token, tvl, usd_per_quote_token)) in pairs
             .into_iter()
             .zip(measured)
@@ -139,13 +143,32 @@ impl BebopBookSource {
                 usd_per_quote_token,
                 client: Arc::clone(&self.client),
             };
-            books.insert(pair_book(
+            match self.component_layout {
+                ComponentLayout::PerPair => books.insert(pair_book(
+                    self.protocol_system,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    component_id,
+                    state,
+                    updated_at,
+                )),
+                ComponentLayout::AllPairs => {
+                    // A Bebop book quotes both ways round, so it prices both directions of the
+                    // pair it was published as.
+                    let directions = vec![
+                        (base_token.address.clone(), quote_token.address.clone()),
+                        (quote_token.address.clone(), base_token.address.clone()),
+                    ];
+                    venue_books.push(VenueBook { maker: None, directions, updated_at, state });
+                }
+            }
+        }
+        if self.component_layout == ComponentLayout::AllPairs && !venue_books.is_empty() {
+            books.insert(all_pairs_book(
                 self.protocol_system,
                 PROTOCOL_TYPE,
                 self.book_config.chain,
-                component_id,
-                state,
-                updated_at,
+                BebopAllPairsState::new(venue_books),
             ));
         }
         Ok(books)
@@ -192,7 +215,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::test_token_map,
+        book::{all_pairs::decode_swap_directions, test_token_map},
         rfq::protocols::bebop::{
             models::{BebopPriceData, BebopSupportedChain},
             PROTOCOL_SYSTEM,
@@ -220,6 +243,7 @@ mod tests {
             .unwrap();
         let tokens = crate::book::test_token_map(&[(&weth, "WETH", 18), (&usdc, "USDC", 6)]);
         BebopBookSource {
+            component_layout: ComponentLayout::PerPair,
             protocol_system: PROTOCOL_SYSTEM,
             book_config: BookFeedConfig {
                 chain: tycho_common::models::Chain::Ethereum,
@@ -352,6 +376,7 @@ mod tests {
         let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
         let tokens = test_token_map(&[(&weth, "WETH", 18), (&wbtc, "WBTC", 8)]);
         let source = BebopBookSource {
+            component_layout: ComponentLayout::PerPair,
             protocol_system: PROTOCOL_SYSTEM,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
@@ -400,5 +425,50 @@ mod tests {
             .build_books(update)
             .unwrap()
             .is_empty());
+    }
+
+    /// Published as one component, Bebop's pairs are one book advertising both directions of
+    /// each of them, and the venue signs one quote for the route.
+    #[test]
+    fn build_books_publishes_every_pair_under_one_component() {
+        let source =
+            BebopBookSource { component_layout: ComponentLayout::AllPairs, ..test_source(0.0) };
+        let update = BebopPricingUpdate { pairs: vec![weth_usdc_price_data(3000.0)] };
+
+        let books = source.build_books(update).unwrap();
+
+        assert_eq!(books.len(), 1);
+        let book = books.values().next().unwrap();
+        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        // The venue's protocol system in ASCII, which is the whole id.
+        assert_eq!(book.component.id.to_string(), "0x7266713a6265626f70");
+        assert_eq!(
+            decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
+            vec![(usdc.clone(), weth.clone()), (weth.clone(), usdc.clone())]
+        );
+
+        let tokens = &source.book_config.tokens;
+        // A tenth of a WETH, well inside the published ladder.
+        let swap = book
+            .state
+            .get_amount_out(
+                num_bigint::BigUint::from(10u64).pow(17),
+                &tokens[&weth],
+                &tokens[&usdc],
+            )
+            .unwrap();
+        let second = swap.new_state.get_amount_out(
+            num_bigint::BigUint::from(10u64).pow(17),
+            &tokens[&weth],
+            &tokens[&usdc],
+        );
+        assert!(
+            matches!(
+                second,
+                Err(tycho_common::simulation::errors::SimulationError::RecoverableError(_))
+            ),
+            "Bebop signs once per route, got {second:?}"
+        );
     }
 }

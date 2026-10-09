@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{all_pairs::ComponentLayout, BookFeedConfig, BookSnapshot, ReceivedAt},
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::bebop::{
@@ -43,6 +43,7 @@ pub struct BebopFeedBuilder {
     origin_target: Option<Bytes>,
     origin_source: Option<String>,
     feed_config: WsFeedConfig,
+    component_layout: ComponentLayout,
 }
 
 impl BebopFeedBuilder {
@@ -61,7 +62,18 @@ impl BebopFeedBuilder {
             origin_source: None,
             feed_config: Self::default_feed_config(),
             protocol_system: PROTOCOL_SYSTEM,
+            component_layout: ComponentLayout::default(),
         }
+    }
+
+    /// Which components the feed publishes for Bebop: one per pair it prices, or one for the
+    /// venue as a whole, which a route may take a single quote from. Per pair by default.
+    ///
+    /// Bebop picks the makers behind a firm quote itself and signs once, so a route that filled
+    /// against two of its pairs would be quoted for one of them.
+    pub fn component_layout(mut self, layout: ComponentLayout) -> Self {
+        self.component_layout = layout;
+        self
     }
 
     /// Deadline for binding quote requests. Default: 5 s.
@@ -140,6 +152,7 @@ impl BebopFeedBuilder {
                     self.origin_target,
                     self.origin_source,
                 )),
+                component_layout: self.component_layout,
             },
         })
     }

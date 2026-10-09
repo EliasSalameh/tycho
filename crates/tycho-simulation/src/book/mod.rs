@@ -22,6 +22,7 @@ use crate::{
     },
 };
 
+pub mod all_pairs;
 pub(crate) mod component;
 pub(crate) mod levels;
 pub mod quote_tokens;

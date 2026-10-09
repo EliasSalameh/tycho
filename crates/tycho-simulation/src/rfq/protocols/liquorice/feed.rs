@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{all_pairs::ComponentLayout, BookFeedConfig, BookSnapshot, ReceivedAt},
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::liquorice::{client::LiquoriceClient, source::LiquoriceBookSource},
@@ -28,6 +28,7 @@ pub struct LiquoriceFeed {
 /// credentials.
 pub struct LiquoriceFeedBuilder {
     book_config: BookFeedConfig,
+    component_layout: ComponentLayout,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     auth_solver: String,
     auth_key: String,
@@ -50,6 +51,7 @@ impl LiquoriceFeedBuilder {
             auth_key,
             feed_config: Self::default_feed_config(),
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
+            component_layout: ComponentLayout::default(),
             quote_expiry_secs: 300,
         }
     }
@@ -77,6 +79,14 @@ impl LiquoriceFeedBuilder {
         self
     }
 
+    /// Which components the feed publishes for Liquorice: one per pair each of its market makers
+    /// prices, or one for the venue as a whole, which a route may take one quote per maker from.
+    /// Per pair by default.
+    pub fn component_layout(mut self, layout: ComponentLayout) -> Self {
+        self.component_layout = layout;
+        self
+    }
+
     /// Deadline for binding quote requests. Default: 5 s.
     pub fn quote_timeout(mut self, timeout: Duration) -> Self {
         self.quote_timeout = timeout;
@@ -97,6 +107,7 @@ impl LiquoriceFeedBuilder {
         Ok(LiquoriceFeed {
             feed_config: self.feed_config,
             source: LiquoriceBookSource {
+                component_layout: self.component_layout,
                 client: Arc::new(LiquoriceClient::new(
                     chain_id,
                     "https://api.liquorice.tech/v1/solver/rfq".to_string(),
