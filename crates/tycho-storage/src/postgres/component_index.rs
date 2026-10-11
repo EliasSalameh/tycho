@@ -29,9 +29,9 @@
 //! The database is the source of truth. The index converges to it through three mechanisms:
 //!
 //! 1. **New-component poll** — every refresh reads the components with an id above the highest id
-//!    the index has seen. The index sees a new component only once its transaction commits. Until
-//!    the next poll, the RPC still serves it from the pending-deltas buffer, which keeps a block
-//!    until the extractor reports its commit.
+//!    the index has seen. The index sees a new component only once its transaction commits, so from
+//!    that commit until the next poll, queries do not return the component. A full reload pauses
+//!    the polls while it runs, which makes this window longer.
 //! 2. **TVL poll** — every refresh reads the `component_tvl` rows whose `modified_ts` is newer than
 //!    the newest one read so far. The update trigger and the column default set `modified_ts` on
 //!    every write. When more than [`TVL_POLL_MAX_ROWS`] rows changed since the last poll, such as
@@ -74,7 +74,8 @@
 //! refresh and full reload, so a stopped refresh task shows as a timestamp that stops moving.
 //! `component_index_refreshes_total{outcome}` counts refreshes by outcome, failures included, and
 //! `component_index_components` holds the number of indexed components. Every failed refresh logs
-//! an error, and the task backs off linearly, up to 5 minutes, until a refresh succeeds again.
+//! an error, and the task backs off linearly, up to [`MAX_REFRESH_BACKOFF`], until a refresh
+//! succeeds again.
 //!
 //! # Cost
 //!
@@ -118,6 +119,10 @@ const TVL_POLL_MAX_ROWS: usize = 10_000;
 /// Longest a refresh may run before the task abandons it and its connection. Reads already stop
 /// after the snapshot statement timeout; this also covers a connection that stopped answering.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+/// Longest wait after a failed refresh. The wait grows by one refresh period per consecutive
+/// failure, so a failing full reload does not rerun every period.
+const MAX_REFRESH_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 /// One page of a query: the database ids on the page, in ascending order, and the number of
 /// components matching the filters on all pages.
@@ -571,9 +576,7 @@ impl ComponentIndex {
                         counter!("component_index_refreshes_total", "outcome" => "error")
                             .increment(1);
                         error!(%err, failures, "Component index refresh failed; the index is getting stale");
-                        // Back off linearly, up to 5 minutes, so a failing full reload does not
-                        // rerun every tick.
-                        tokio::time::sleep(period * failures.min(60)).await;
+                        tokio::time::sleep((period * failures).min(MAX_REFRESH_BACKOFF)).await;
                     }
                 }
             }

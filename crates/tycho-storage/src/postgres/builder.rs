@@ -21,7 +21,7 @@ pub struct GatewayBuilder {
 const TOKEN_CACHE_REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How often the component index polls for new components and changed TVL.
-const COMPONENT_INDEX_REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
+const COMPONENT_INDEX_REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How often the component index reads all components and TVL again, to correct what the polls
 /// cannot see (see the `component_index` module docs).
@@ -58,7 +58,7 @@ impl GatewayBuilder {
 
     /// Counts and pages `get_protocol_components` requests by protocol system from an in-memory
     /// index instead of SQL; Postgres only loads the components on the requested page. Costs a
-    /// full component load at startup, two queries on Postgres indexes every 5 s, a read of the
+    /// full component load at startup, two queries on Postgres indexes every second, a read of the
     /// TVL rows that changed, and a full reload every hour.
     pub fn set_component_index(mut self, enabled: bool) -> Self {
         self.component_index = enabled;
