@@ -1,3 +1,96 @@
+## [0.453.1](https://github.com/propeller-heads/tycho/compare/0.453.0...0.453.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* clamp chunk_size to the server max page size in tycho-client ([7b46176](https://github.com/propeller-heads/tycho/commit/7b461766a9711cbbaa8c2fc0e5f5d5be6a56adca))
+* request every id chunk as page 0 in tycho-client ([f5c4945](https://github.com/propeller-heads/tycho/commit/f5c4945aca4f7c9ab594f94e41070290a4d0450d))
+* request every id chunk as page 0 in tycho-client ([#1579](https://github.com/propeller-heads/tycho/issues/1579)) ([64dd6e2](https://github.com/propeller-heads/tycho/commit/64dd6e2cb088f5ab0f2d6d061a531e8707eea26b))
+
+## [0.453.0](https://github.com/propeller-heads/tycho/compare/0.452.2...0.453.0) (2026-10-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **execution:** send a per-request origin with Bebop binding quotes (#1576)
+
+### Features
+
+* **common:** add per-request origin to GetAmountOutParams ([727ee84](https://github.com/propeller-heads/tycho/commit/727ee84f97fb81060d6b3ad93617d9568d3b78db))
+* **execution:** pass the end user origin from Solution to Bebop quotes ([343aa96](https://github.com/propeller-heads/tycho/commit/343aa96a0906d81bcfcdcf867680f1101f5b3e13))
+* **execution:** send a per-request origin with Bebop binding quotes ([#1576](https://github.com/propeller-heads/tycho/issues/1576)) ([dd8787b](https://github.com/propeller-heads/tycho/commit/dd8787b9905400caaf6ce165af4adeeb6a459534))
+* **simulation:** send per-request origin in Bebop binding quotes ([97e9d35](https://github.com/propeller-heads/tycho/commit/97e9d355c5584a319072978cdc2072001cbfa7d2))
+
+## [0.452.2](https://github.com/propeller-heads/tycho/compare/0.452.1...0.452.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **indexer:** give extractors their own database connection pool ([d7934d7](https://github.com/propeller-heads/tycho/commit/d7934d7761a79cdbae93342a2ec58ce1384ea4eb))
+* **indexer:** give extractors their own database connection pool ([#1571](https://github.com/propeller-heads/tycho/issues/1571)) ([d0788ae](https://github.com/propeller-heads/tycho/commit/d0788ae80369a045a2fe4b56c45ad2b727d4b3c5))
+
+## [0.452.1](https://github.com/propeller-heads/tycho/compare/0.452.0...0.452.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* reject negative pages and empty page sizes ([bf1cd53](https://github.com/propeller-heads/tycho/commit/bf1cd53163c1329d4e02e8fc3bb5a4317dea257c))
+* reject negative pages and empty page sizes ([#1578](https://github.com/propeller-heads/tycho/issues/1578)) ([db41340](https://github.com/propeller-heads/tycho/commit/db41340c20b457c7eeccb9df4c3baea2e0f5f18e))
+
+## [0.452.0](https://github.com/propeller-heads/tycho/compare/0.451.0...0.452.0) (2026-10-09)
+
+
+### Features
+
+* **simulation:** RFQ venues as one component for all pairs with quote reuse rules ([#1501](https://github.com/propeller-heads/tycho/issues/1501)) ([339273e](https://github.com/propeller-heads/tycho/commit/339273edad00610bebbebb9b532bbf4d04563074))
+* **simulation:** RFQ venues as one component per chain, opt-in ([cdac0ec](https://github.com/propeller-heads/tycho/commit/cdac0ecc434c4384ddaf22fb61b5ffe2300799be))
+
+
+### Bug Fixes
+
+* **simulation:** name the quote rule in all-pairs used-quote errors ([cbbfd59](https://github.com/propeller-heads/tycho/commit/cbbfd5972556e8f2192f931ab5a8c6365fc7dcb1))
+* **simulation:** return instead of panic in all-pairs fee and delta_transition ([fbea4bf](https://github.com/propeller-heads/tycho/commit/fbea4bfd4c7b3f38d2b24fe125dbb07f4c7048a3))
+
+## [0.451.0](https://github.com/propeller-heads/tycho/compare/0.450.0...0.451.0) (2026-10-09)
+
+
+### Features
+
+* **simulation:** keep the two ETH/stETH curve pools in curve_filter ([ca73927](https://github.com/propeller-heads/tycho/commit/ca739275ded79ce11a7ce8c8a167b3d1c68c5a89))
+* **simulation:** keep the two ETH/stETH curve pools in curve_filter ([#1573](https://github.com/propeller-heads/tycho/issues/1573)) ([b90552e](https://github.com/propeller-heads/tycho/commit/b90552e92937d26123fde3f7cba05137505921e3))
+
+## [0.450.0](https://github.com/propeller-heads/tycho/compare/0.449.0...0.450.0) (2026-10-09)
+
+
+### Features
+
+* add Ring Swap v2 support on BSC ([02e5b56](https://github.com/propeller-heads/tycho/commit/02e5b56c075578ac29399eef38e60d77630fd184))
+* add Ring Swap v2 support on BSC ([#1263](https://github.com/propeller-heads/tycho/issues/1263)) ([a24756b](https://github.com/propeller-heads/tycho/commit/a24756b1c6ad9e8d0d1bd45d39177ae0daed7384))
+
+## [0.449.0](https://github.com/propeller-heads/tycho/compare/0.448.1...0.449.0) (2026-10-08)
+
+
+### Features
+
+* **simulation:** add price level stream metrics facade ([5cabfa3](https://github.com/propeller-heads/tycho/commit/5cabfa3ad09ede3e9b9224fd3c43ae86dc70e9d3))
+* **simulation:** bound, retry, and refresh the PropAMMRouter whitelist read ([45483e2](https://github.com/propeller-heads/tycho/commit/45483e27f7a2745c39e82add6923c685b80d663c))
+* **simulation:** expire price level components per component ([9da7e37](https://github.com/propeller-heads/tycho/commit/9da7e37d67bbc766094dd2e47ca3687829a9441e))
+* **simulation:** expire stale price level components on a deadline timer ([130dfc4](https://github.com/propeller-heads/tycho/commit/130dfc497ff268ba5cec5c873992b73168a5ef4a))
+* **simulation:** fail closed on stale Titan price levels ([#1428](https://github.com/propeller-heads/tycho/issues/1428)) ([47f32a3](https://github.com/propeller-heads/tycho/commit/47f32a3f7cc2237e165a1a721ea4de6861b542fc))
+* **simulation:** move pAMM components between families on whitelist change ([3f90301](https://github.com/propeller-heads/tycho/commit/3f90301fcc58499875b533ea56be2e2f7a36598c))
+* **simulation:** parse the Titan price level frame timestamp ([da13658](https://github.com/propeller-heads/tycho/commit/da136585c78d6854aa4cb1938b2d87aea80e4750))
+* **simulation:** refuse price level quotes older than one block ([871f9bb](https://github.com/propeller-heads/tycho/commit/871f9bb50b80303a27b32b705eae679c97472999))
+* **simulation:** validate price level frames by timestamp and block ([81314d3](https://github.com/propeller-heads/tycho/commit/81314d3219231c3d80908ba9fce9cfae73736268))
+
+
+### Bug Fixes
+
+* **simulation:** close the whole-branch review findings ([041bbe8](https://github.com/propeller-heads/tycho/commit/041bbe89e8ee4849e47b058912c6ad9fad0b303c))
+* **simulation:** count only parsed Titan frames as liveness ([42d8194](https://github.com/propeller-heads/tycho/commit/42d819461429cdccb09cf250805a88afd6c7d5fb))
+* **simulation:** count only socket waits toward the Titan idle timeout ([916bf78](https://github.com/propeller-heads/tycho/commit/916bf7849492a070a1aec71c17d1bc819c25c8e4))
+* **simulation:** justify the temporary dead_code allow on timestamp ([7e29462](https://github.com/propeller-heads/tycho/commit/7e29462c72ae5367f7259de001e91b533fa17854))
+* **simulation:** reset the block frontier whenever nothing is served ([b509646](https://github.com/propeller-heads/tycho/commit/b5096462b8dc73a8adb1ff27b6ede319b97cc825))
+
 ## [0.448.1](https://github.com/propeller-heads/tycho/compare/0.448.0...0.448.1) (2026-10-08)
 
 
