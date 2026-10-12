@@ -291,7 +291,7 @@ impl HashflowClient {
             price_levels.push((maker_levels, tvl));
         }
         maker_price_levels::all_pairs_component(
-            Self::PROTOCOL_SYSTEM,
+            &self.protocol_system,
             "hashflow_pool",
             self.chain,
             price_levels,

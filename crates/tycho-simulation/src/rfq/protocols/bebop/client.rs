@@ -300,7 +300,7 @@ impl BebopClient {
             }
         }
         let component = component::all_pairs_component(
-            Self::PROTOCOL_SYSTEM,
+            &self.protocol_system,
             "bebop_pool",
             self.chain,
             &swap_directions,
