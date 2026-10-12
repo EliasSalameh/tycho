@@ -46,8 +46,7 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for LiquoriceAllPairs
             InvalidSnapshotError::MissingAttribute(format!("Couldn't create LiquoriceClient: {e}"))
         })?;
 
-        LiquoriceAllPairsState::new(price_levels, tokens, client)
-            .map_err(|e| InvalidSnapshotError::ValueError(e.to_string()))
+        Ok(LiquoriceAllPairsState::new(price_levels, tokens, client))
     }
 }
 

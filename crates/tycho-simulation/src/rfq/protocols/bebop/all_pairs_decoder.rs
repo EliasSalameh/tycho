@@ -59,8 +59,7 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for BebopAllPairsStat
             InvalidSnapshotError::ValueError(format!("Couldn't create BebopClient: {e}"))
         })?;
 
-        BebopAllPairsState::new(books, tokens, client)
-            .map_err(|e| InvalidSnapshotError::ValueError(e.to_string()))
+        Ok(BebopAllPairsState::new(books, tokens, client))
     }
 }
 
