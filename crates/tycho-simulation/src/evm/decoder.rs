@@ -1740,6 +1740,53 @@ mod tests {
         assert_eq!(res1.states.len(), 0);
     }
 
+    #[rstest]
+    #[case::unknown_token(false)]
+    #[case::undecodable_address(true)]
+    #[tokio::test]
+    async fn test_dropping_decoder_keeps_component(#[case] bad_address: bool) {
+        let weth = Bytes::from("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").lpad(20, 0);
+        // The unknown token is not in the decoder. The bad address is, but 21 bytes are no address.
+        let other = match bad_address {
+            true => Bytes::from([1u8; 21].to_vec()),
+            false => Bytes::from("0xdac17f958d2ee523a2206206994597c13d831ec7").lpad(20, 0),
+        };
+        let mut decoder = TychoStreamDecoder::new(Chain::Ethereum);
+        decoder.register_decoder_dropping_unknown_tokens::<UniswapV2State>("uniswap_v2");
+        let token = |address: &Bytes, symbol| {
+            let token =
+                Token::new(address, symbol, 18, 100, &[Some(100_000)], Chain::Ethereum, 100);
+            (address.clone(), token)
+        };
+        let mut known = HashMap::from([token(&weth, "WETH")]);
+        if bad_address {
+            known.extend([token(&other, "OTHER")]);
+        }
+        decoder.set_tokens(known).await;
+        let mut msg = load_test_msg("uniswap_v2_snapshot");
+        let (id, snapshot) = msg
+            .state_msgs
+            .get_mut("uniswap_v2")
+            .unwrap()
+            .snapshots
+            .states
+            .iter_mut()
+            .next()
+            .unwrap();
+        snapshot.component.tokens = vec![weth, other];
+        let id = id.clone();
+
+        let update = decoder.decode(&msg).await.unwrap();
+
+        let symbols: Vec<_> = update.new_pairs[&id]
+            .tokens
+            .iter()
+            .map(|token| token.symbol.as_str())
+            .collect();
+        assert_eq!(symbols, ["WETH"]);
+        assert_eq!(update.states.len(), 1);
+    }
+
     #[tokio::test]
     async fn test_decode_component_bad_id() {
         let decoder = setup_decoder(true).await;
