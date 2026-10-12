@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use futures::{stream::select_all, StreamExt};
 use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage};
@@ -12,11 +12,14 @@ use crate::{
     evm::decoder::TychoStreamDecoder,
     protocol::{
         errors::InvalidSnapshotError,
-        models::{TryFromWithBlock, Update},
+        models::{ProtocolComponent, TryFromWithBlock, Update},
     },
     rfq::{
         client::RFQClient,
         models::{ComponentLayout, TimestampHeader},
+        protocols::component::{
+            decode_swap_directions, encode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE,
+        },
     },
 };
 
@@ -89,7 +92,7 @@ impl RFQStreamBuilder {
         while let Some(next) = merged.next().await {
             match next {
                 Ok((provider, msg)) => {
-                    let update = self
+                    let mut update = self
                         .decoder
                         .decode(&FeedMessage {
                             state_msgs: HashMap::from([(provider.clone(), msg)]),
@@ -99,6 +102,11 @@ impl RFQStreamBuilder {
                         .map_err(|e| {
                             SimulationError::RecoverableError(format!("Decoding error: {e}"))
                         })?;
+                    for component in update.new_pairs.values_mut() {
+                        retain_carried_directions(component).map_err(|e| {
+                            SimulationError::RecoverableError(format!("Decoding error: {e}"))
+                        })?;
+                    }
                     tx.send(update).await.map_err(|e| {
                         SimulationError::RecoverableError(format!(
                             "Failed to send update through channel: {e}"
@@ -124,6 +132,33 @@ impl RFQStreamBuilder {
         self.decoder.set_tokens(tokens).await;
         self
     }
+}
+
+/// Keeps the `swap_directions` of a component to the directions whose two tokens it carries, as
+/// the decoder drops the tokens it does not know.
+fn retain_carried_directions(component: &mut ProtocolComponent) -> Result<(), String> {
+    let Some(attribute) = component
+        .static_attributes
+        .get(SWAP_DIRECTIONS_ATTRIBUTE)
+    else {
+        return Ok(());
+    };
+    let carried: HashSet<&Bytes> = component
+        .tokens
+        .iter()
+        .map(|token| &token.address)
+        .collect();
+    let mut directions = BTreeSet::new();
+    for (token_in, token_out) in decode_swap_directions(attribute)? {
+        if carried.contains(&token_in) && carried.contains(&token_out) {
+            directions.insert((token_in, token_out));
+        }
+    }
+    let attribute = encode_swap_directions(&directions);
+    component
+        .static_attributes
+        .insert(SWAP_DIRECTIONS_ATTRIBUTE.to_string(), attribute);
+    Ok(())
 }
 
 #[cfg(test)]
