@@ -1,3 +1,17 @@
+## [0.453.0](https://github.com/propeller-heads/tycho/compare/0.452.2...0.453.0) (2026-10-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **execution:** send a per-request origin with Bebop binding quotes (#1576)
+
+### Features
+
+* **common:** add per-request origin to GetAmountOutParams ([727ee84](https://github.com/propeller-heads/tycho/commit/727ee84f97fb81060d6b3ad93617d9568d3b78db))
+* **execution:** pass the end user origin from Solution to Bebop quotes ([343aa96](https://github.com/propeller-heads/tycho/commit/343aa96a0906d81bcfcdcf867680f1101f5b3e13))
+* **execution:** send a per-request origin with Bebop binding quotes ([#1576](https://github.com/propeller-heads/tycho/issues/1576)) ([dd8787b](https://github.com/propeller-heads/tycho/commit/dd8787b9905400caaf6ce165af4adeeb6a459534))
+* **simulation:** send per-request origin in Bebop binding quotes ([97e9d35](https://github.com/propeller-heads/tycho/commit/97e9d355c5584a319072978cdc2072001cbfa7d2))
+
 ## [0.452.2](https://github.com/propeller-heads/tycho/compare/0.452.1...0.452.2) (2026-10-09)
 
 
