@@ -34,15 +34,14 @@ use crate::{
 /// Static attribute: the directions the venue quotes, 40 bytes each, the token sold first.
 pub const SWAP_DIRECTIONS_ATTRIBUTE: &str = "swap_directions";
 
-/// Which components a feed publishes for its venue.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ComponentLayout {
+/// Which components a feed publishes for its venue, as its builder settled it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComponentLayout {
     /// One component per pair the venue prices, each priced by that pair's own book.
-    #[default]
     PerPair,
     /// One component for every pair the venue prices, priced by all of its books at once and
-    /// holding a route to the venue's [`QuoteRule`].
-    AllPairs,
+    /// holding a route to this rule.
+    AllPairs(QuoteRule),
 }
 
 /// How often one route may take a quote from a venue published as [`ComponentLayout::AllPairs`].

@@ -80,7 +80,8 @@ for any protocol indexed by Tycho.
     `notional`, `average_price`), the direction/scaling/limit pieces every such `ProtocolSim`
     impl needs, the pair component id and builder, and pricing a book's notional in USD through
     the other pairs the same response carried. `all_pairs` is the opt-in layout
-    (`component_layout(ComponentLayout::AllPairs)` on the four RFQ builders) that publishes a
+    (`all_pairs()` on the four RFQ builders, taking the `QuoteRule` on the two that name their
+    makers) that publishes a
     venue as one component for every pair it prices: `AllPairs<S>` holds the per-pair states the
     other layout would publish, picks the best book still allowed to quote under the component's
     `QuoteRule` (`once_per_maker`, `once_per_venue`), and records it as spent in the state the

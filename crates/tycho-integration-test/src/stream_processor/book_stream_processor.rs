@@ -12,7 +12,7 @@ use tycho_common::{
 use tycho_execution::encoding::evm::get_router_address;
 use tycho_simulation::{
     book::{
-        all_pairs::ComponentLayout, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
+        all_pairs::QuoteRule, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
         BookFeedEvent, BookFeedOutcome, BookFeedStreams, BookSnapshot,
     },
     pamm::protocols::metric::{self, feed::MetricFeedBuilder},
@@ -57,8 +57,8 @@ pub struct BookStreamProcessor {
     pamm_feeds: bool,
     /// The protocol's stream will skip messages for this duration after processing a message
     skip_messages_duration: Duration,
-    /// Whether each venue publishes one component per pair or one for all of them.
-    component_layout: ComponentLayout,
+    /// Whether each venue publishes one component for all of its pairs rather than one each.
+    all_pairs: bool,
 }
 
 impl BookStreamProcessor {
@@ -69,7 +69,7 @@ impl BookStreamProcessor {
         skip_messages_duration: Duration,
         rfq_feeds: bool,
         pamm_feeds: bool,
-        component_layout: ComponentLayout,
+        all_pairs: bool,
     ) -> miette::Result<Self> {
         let mut credentials = HashMap::new();
         if rfq_feeds {
@@ -119,7 +119,7 @@ impl BookStreamProcessor {
             sample_size,
             pamm_feeds,
             skip_messages_duration,
-            component_layout,
+            all_pairs,
         })
     }
 
@@ -189,8 +189,10 @@ impl BookStreamProcessor {
                             .into_diagnostic()
                             .wrap_err("Invalid test user address")?,
                     )
-                    .origin_source("tycho-integration-test".to_string())
-                    .component_layout(self.component_layout);
+                    .origin_source("tycho-integration-test".to_string());
+                    if self.all_pairs {
+                        bebop_builder = bebop_builder.all_pairs();
+                    }
 
                     if let Ok(router_address) = get_router_address(&self.chain) {
                         bebop_builder = bebop_builder.origin_target(router_address.clone());
@@ -206,7 +208,7 @@ impl BookStreamProcessor {
                         .expect("each provider is added once");
                 }
                 RfqVenue::Hashflow => {
-                    let hashflow_feed = HashflowFeedBuilder::new(
+                    let mut builder = HashflowFeedBuilder::new(
                         book_config.clone(),
                         Arc::clone(usd_quote_tokens),
                         user.clone(),
@@ -216,18 +218,21 @@ impl BookStreamProcessor {
                         poll_interval: Duration::from_secs(30),
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..HashflowFeedBuilder::default_feed_config()
-                    })
-                    .component_layout(self.component_layout)
-                    .build()
-                    .into_diagnostic()
-                    .wrap_err("Failed to create Hashflow feed")?;
+                    });
+                    if self.all_pairs {
+                        builder = builder.all_pairs(QuoteRule::OncePerMaker);
+                    }
+                    let hashflow_feed = builder
+                        .build()
+                        .into_diagnostic()
+                        .wrap_err("Failed to create Hashflow feed")?;
 
                     feeds
                         .add(hashflow::PROTOCOL_SYSTEM, hashflow_feed)
                         .expect("each provider is added once");
                 }
                 RfqVenue::Liquorice => {
-                    let liquorice_feed = LiquoriceFeedBuilder::new(
+                    let mut builder = LiquoriceFeedBuilder::new(
                         book_config.clone(),
                         Arc::clone(usd_quote_tokens),
                         user.clone(),
@@ -237,11 +242,14 @@ impl BookStreamProcessor {
                         poll_interval: Duration::from_secs(30),
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..LiquoriceFeedBuilder::default_feed_config()
-                    })
-                    .component_layout(self.component_layout)
-                    .build()
-                    .into_diagnostic()
-                    .wrap_err("Failed to create Liquorice feed")?;
+                    });
+                    if self.all_pairs {
+                        builder = builder.all_pairs(QuoteRule::OncePerMaker);
+                    }
+                    let liquorice_feed = builder
+                        .build()
+                        .into_diagnostic()
+                        .wrap_err("Failed to create Liquorice feed")?;
 
                     feeds
                         .add(liquorice::PROTOCOL_SYSTEM, liquorice_feed)
@@ -250,7 +258,7 @@ impl BookStreamProcessor {
                 RfqVenue::Native => {
                     // Native serves a fixed set of chains; on any other chain the feed is
                     // skipped rather than failing the whole processor.
-                    match NativeFeedBuilder::new(
+                    let mut builder = NativeFeedBuilder::new(
                         book_config.clone(),
                         Arc::clone(usd_quote_tokens),
                         key.clone(),
@@ -259,10 +267,11 @@ impl BookStreamProcessor {
                         poll_interval: Duration::from_secs(30),
                         max_snapshot_age: Some(Duration::from_secs(90)),
                         ..NativeFeedBuilder::default_feed_config()
-                    })
-                    .component_layout(self.component_layout)
-                    .build()
-                    {
+                    });
+                    if self.all_pairs {
+                        builder = builder.all_pairs();
+                    }
+                    match builder.build() {
                         Ok(native_feed) => {
                             feeds
                                 .add(native::PROTOCOL_SYSTEM, native_feed)

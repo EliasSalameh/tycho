@@ -42,7 +42,7 @@ use tycho_execution::encoding::{
 };
 use tycho_simulation::{
     book::{
-        all_pairs::ComponentLayout, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
+        all_pairs::QuoteRule, quote_tokens::usd_stablecoins_for_chain, BookFeedConfig,
         BookFeedEvent, BookFeedOutcome, BookFeedStreams, BookSnapshot,
     },
     pamm::protocols::metric::{self, feed::MetricFeedBuilder},
@@ -238,16 +238,18 @@ async fn main() {
     let mut feeds = BookFeedStreams::new();
     // A venue published as one component holds a route to the quotes it will sign for it; its
     // books are the same ones either way, so the loop below reads it unchanged.
-    let component_layout =
-        if cli.all_pairs { ComponentLayout::AllPairs } else { ComponentLayout::PerPair };
+    let all_pairs = cli.all_pairs;
 
     if let (Some(key), Some(usd_quote_tokens)) = (bebop_key, &usd_quote_tokens) {
         println!("Setting up Bebop feed...\n");
-        let bebop_feed =
-            BebopFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key)
-                .component_layout(component_layout)
-                .build()
-                .expect("Failed to create Bebop feed");
+        let mut builder =
+            BebopFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key);
+        if all_pairs {
+            builder = builder.all_pairs();
+        }
+        let bebop_feed = builder
+            .build()
+            .expect("Failed to create Bebop feed");
         feeds
             .add(bebop::PROTOCOL_SYSTEM, bebop_feed)
             .expect("each provider is added once");
@@ -257,11 +259,14 @@ async fn main() {
         (hashflow_user, hashflow_key, &usd_quote_tokens)
     {
         println!("Setting up Hashflow feed...\n");
-        let hashflow_feed =
-            HashflowFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key)
-                .component_layout(component_layout)
-                .build()
-                .expect("Failed to create Hashflow feed");
+        let mut builder =
+            HashflowFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key);
+        if all_pairs {
+            builder = builder.all_pairs(QuoteRule::OncePerMaker);
+        }
+        let hashflow_feed = builder
+            .build()
+            .expect("Failed to create Hashflow feed");
         feeds
             .add(hashflow::PROTOCOL_SYSTEM, hashflow_feed)
             .expect("each provider is added once");
@@ -271,11 +276,14 @@ async fn main() {
         (liquorice_user, liquorice_key, &usd_quote_tokens)
     {
         println!("Setting up Liquorice feed...\n");
-        let liquorice_feed =
-            LiquoriceFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key)
-                .component_layout(component_layout)
-                .build()
-                .expect("Failed to create Liquorice feed");
+        let mut builder =
+            LiquoriceFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), user, key);
+        if all_pairs {
+            builder = builder.all_pairs(QuoteRule::OncePerMaker);
+        }
+        let liquorice_feed = builder
+            .build()
+            .expect("Failed to create Liquorice feed");
         feeds
             .add(liquorice::PROTOCOL_SYSTEM, liquorice_feed)
             .expect("each provider is added once");
@@ -283,10 +291,12 @@ async fn main() {
 
     if let (Some(key), Some(usd_quote_tokens)) = (native_key, &usd_quote_tokens) {
         println!("Setting up Native feed...\n");
-        match NativeFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key)
-            .component_layout(component_layout)
-            .build()
-        {
+        let mut builder =
+            NativeFeedBuilder::new(book_config.clone(), Arc::clone(usd_quote_tokens), key);
+        if all_pairs {
+            builder = builder.all_pairs();
+        }
+        match builder.build() {
             Ok(native_feed) => {
                 feeds
                     .add(native::PROTOCOL_SYSTEM, native_feed)

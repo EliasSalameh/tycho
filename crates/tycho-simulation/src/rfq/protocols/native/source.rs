@@ -231,7 +231,7 @@ impl HttpSource for NativeBookSource {
                     state,
                     None,
                 )),
-                ComponentLayout::AllPairs => {
+                ComponentLayout::AllPairs(_) => {
                     // A Native book holds both sides, so it prices both directions of its pair.
                     let (base, quote) = (base_token.address.clone(), quote_token.address.clone());
                     venue_books.push(VenueBook {
@@ -243,13 +243,15 @@ impl HttpSource for NativeBookSource {
                 }
             }
         }
-        if !venue_books.is_empty() {
-            books.insert(all_pairs_book(
-                PROTOCOL_SYSTEM,
-                PROTOCOL_TYPE,
-                self.book_config.chain,
-                NativeAllPairsState::new(venue_books),
-            ));
+        if let ComponentLayout::AllPairs(rule) = self.component_layout {
+            if !venue_books.is_empty() {
+                books.insert(all_pairs_book(
+                    PROTOCOL_SYSTEM,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    NativeAllPairsState::new(venue_books, rule),
+                ));
+            }
         }
         Ok(BookSnapshot::received_now(books))
     }
@@ -266,7 +268,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::decode_swap_directions,
+            all_pairs::{decode_swap_directions, QuoteRule},
             levels::{Levels, PriceLevel},
             test_token_map,
         },
@@ -788,7 +790,7 @@ mod tests {
         .unwrap();
         let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
         let source = NativeBookSource {
-            component_layout: ComponentLayout::AllPairs,
+            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerVenue),
             ..test_source(server.url(), &[&weth, &usdt], HashSet::from([usdt.clone()]), 0.0)
         };
 

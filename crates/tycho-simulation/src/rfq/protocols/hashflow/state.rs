@@ -194,8 +194,8 @@ impl IndicativelyPriced for HashflowState {
 pub struct HashflowAllPairsState(AllPairs<HashflowState>);
 
 impl HashflowAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<HashflowState>>) -> Self {
-        HashflowAllPairsState(AllPairs::new(books, QuoteRule::OncePerMaker))
+    pub(super) fn new(books: Vec<VenueBook<HashflowState>>, rule: QuoteRule) -> Self {
+        HashflowAllPairsState(AllPairs::new(books, rule))
     }
 }
 

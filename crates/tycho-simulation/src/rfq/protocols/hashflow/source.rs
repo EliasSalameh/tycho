@@ -140,7 +140,7 @@ impl HttpSource for HashflowBookSource {
                         state,
                         None,
                     )),
-                    ComponentLayout::AllPairs => venue_books.push(VenueBook {
+                    ComponentLayout::AllPairs(_) => venue_books.push(VenueBook {
                         maker: Some(mm_name.clone()),
                         directions: vec![(base_bytes.clone(), quote_bytes.clone())],
                         updated_at: None,
@@ -149,13 +149,15 @@ impl HttpSource for HashflowBookSource {
                 }
             }
         }
-        if !venue_books.is_empty() {
-            books.insert(all_pairs_book(
-                self.protocol_system,
-                PROTOCOL_TYPE,
-                self.book_config.chain,
-                HashflowAllPairsState::new(venue_books),
-            ));
+        if let ComponentLayout::AllPairs(rule) = self.component_layout {
+            if !venue_books.is_empty() {
+                books.insert(all_pairs_book(
+                    self.protocol_system,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    HashflowAllPairsState::new(venue_books, rule),
+                ));
+            }
         }
         Ok(BookSnapshot::received_now(books))
     }
@@ -171,7 +173,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::decode_swap_directions,
+            all_pairs::{decode_swap_directions, QuoteRule},
             component::PairState,
             levels::{Levels, PriceLevel},
             test_token_map,
@@ -407,10 +409,18 @@ mod tests {
         }
     }
 
-    /// Published as one component, every market maker's levels stay their own book: a route
-    /// takes one quote per maker, so two makers serve two swaps and a third finds none left.
+    /// Published as one component, every market maker's levels stay their own book, and the
+    /// venue's rule says how many of them one route may quote: every maker once, or the venue
+    /// once whichever maker answers.
+    #[rstest]
+    #[case::once_per_maker(QuoteRule::OncePerMaker, "once_per_maker", 2)]
+    #[case::once_per_venue(QuoteRule::OncePerVenue, "once_per_venue", 1)]
     #[tokio::test]
-    async fn fetch_publishes_every_maker_under_one_component() {
+    async fn fetch_publishes_every_maker_under_one_component(
+        #[case] rule: QuoteRule,
+        #[case] attribute: &str,
+        #[case] quotable_swaps: usize,
+    ) {
         let weth = Bytes::from_str(WETH).unwrap();
         let usdc = Bytes::from_str(USDC).unwrap();
         let market_makers = r#"{"marketMakers":["mm1","mm2"]}"#.to_string();
@@ -430,7 +440,7 @@ mod tests {
         })
         .await;
         let source = HashflowBookSource {
-            component_layout: ComponentLayout::AllPairs,
+            component_layout: ComponentLayout::AllPairs(rule),
             ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
         };
 
@@ -447,7 +457,7 @@ mod tests {
         );
         assert_eq!(
             book.component.static_attributes["quote_rule"],
-            Bytes::from("once_per_maker".as_bytes())
+            Bytes::from(attribute.as_bytes())
         );
 
         let tokens = &source.book_config.tokens;
@@ -459,10 +469,16 @@ mod tests {
                 &tokens[&usdc],
             )
         };
-        let best = swap(book.state.as_ref()).unwrap();
-        let second = swap(best.new_state.as_ref()).unwrap();
-        assert!(best.amount > second.amount, "the better maker quotes first");
-        assert!(swap(second.new_state.as_ref()).is_err(), "two makers quote two swaps and no more");
+        let mut state = book.state.clone_box();
+        let mut amounts = Vec::new();
+        while let Ok(result) = swap(state.as_ref()) {
+            amounts.push(result.amount.clone());
+            state = result.new_state;
+        }
+        assert_eq!(amounts.len(), quotable_swaps, "swaps the rule allows: {amounts:?}");
+        if let [first, second] = amounts.as_slice() {
+            assert!(first > second, "the better maker quotes first");
+        }
     }
 
     /// A maker declines an amount below its first level, so the venue's floor under one
@@ -488,7 +504,7 @@ mod tests {
         })
         .await;
         let source = HashflowBookSource {
-            component_layout: ComponentLayout::AllPairs,
+            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerMaker),
             ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
         };
 

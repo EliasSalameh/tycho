@@ -152,7 +152,7 @@ impl BebopBookSource {
                     state,
                     updated_at,
                 )),
-                ComponentLayout::AllPairs => {
+                ComponentLayout::AllPairs(_) => {
                     // A Bebop book quotes both ways round, so it prices both directions of the
                     // pair it was published as.
                     let directions = vec![
@@ -163,13 +163,15 @@ impl BebopBookSource {
                 }
             }
         }
-        if self.component_layout == ComponentLayout::AllPairs && !venue_books.is_empty() {
-            books.insert(all_pairs_book(
-                self.protocol_system,
-                PROTOCOL_TYPE,
-                self.book_config.chain,
-                BebopAllPairsState::new(venue_books),
-            ));
+        if let ComponentLayout::AllPairs(rule) = self.component_layout {
+            if !venue_books.is_empty() {
+                books.insert(all_pairs_book(
+                    self.protocol_system,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    BebopAllPairsState::new(venue_books, rule),
+                ));
+            }
         }
         Ok(books)
     }
@@ -215,7 +217,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::{all_pairs::decode_swap_directions, test_token_map},
+        book::{
+            all_pairs::{decode_swap_directions, QuoteRule},
+            test_token_map,
+        },
         rfq::protocols::bebop::{
             models::{BebopPriceData, BebopSupportedChain},
             PROTOCOL_SYSTEM,
@@ -431,8 +436,10 @@ mod tests {
     /// each of them, and the venue signs one quote for the route.
     #[test]
     fn build_books_publishes_every_pair_under_one_component() {
-        let source =
-            BebopBookSource { component_layout: ComponentLayout::AllPairs, ..test_source(0.0) };
+        let source = BebopBookSource {
+            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerVenue),
+            ..test_source(0.0)
+        };
         let update = BebopPricingUpdate { pairs: vec![weth_usdc_price_data(3000.0)] };
 
         let books = source.build_books(update).unwrap();

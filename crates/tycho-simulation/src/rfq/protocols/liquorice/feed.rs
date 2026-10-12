@@ -4,7 +4,10 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{all_pairs::ComponentLayout, BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{
+        all_pairs::{ComponentLayout, QuoteRule},
+        BookFeedConfig, BookSnapshot, ReceivedAt,
+    },
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::liquorice::{client::LiquoriceClient, source::LiquoriceBookSource},
@@ -51,7 +54,7 @@ impl LiquoriceFeedBuilder {
             auth_key,
             feed_config: Self::default_feed_config(),
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
-            component_layout: ComponentLayout::default(),
+            component_layout: ComponentLayout::PerPair,
             quote_expiry_secs: 300,
         }
     }
@@ -79,11 +82,14 @@ impl LiquoriceFeedBuilder {
         self
     }
 
-    /// Which components the feed publishes for Liquorice: one per pair each of its market makers
-    /// prices, or one for the venue as a whole, which a route may take one quote per maker from.
-    /// Per pair by default.
-    pub fn component_layout(mut self, layout: ComponentLayout) -> Self {
-        self.component_layout = layout;
+    /// Publishes Liquorice as one component for every pair its market makers price, which a route
+    /// may quote as often as `rule` allows — once per maker, since a maker's second quote prices
+    /// as if the first had not happened, or once for the venue where that independence is not
+    /// worth relying on.
+    ///
+    /// One component per pair otherwise, holding every maker that prices it.
+    pub fn all_pairs(mut self, rule: QuoteRule) -> Self {
+        self.component_layout = ComponentLayout::AllPairs(rule);
         self
     }
 

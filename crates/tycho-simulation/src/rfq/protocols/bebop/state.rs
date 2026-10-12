@@ -219,8 +219,8 @@ impl IndicativelyPriced for BebopState {
 pub struct BebopAllPairsState(AllPairs<BebopState>);
 
 impl BebopAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<BebopState>>) -> Self {
-        BebopAllPairsState(AllPairs::new(books, QuoteRule::OncePerVenue))
+    pub(super) fn new(books: Vec<VenueBook<BebopState>>, rule: QuoteRule) -> Self {
+        BebopAllPairsState(AllPairs::new(books, rule))
     }
 }
 

@@ -145,11 +145,11 @@ Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is 
 
 ### Venue components
 
-By default every feed publishes one component per token pair, and a swap against it leaves the state unchanged. `.component_layout(ComponentLayout::AllPairs)` on the Bebop, Hashflow, Liquorice and Native builders publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. `ComponentLayout` and `QuoteRule` live in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
+By default every feed publishes one component per token pair, and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only the two venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
 
 ```rust
 let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key)
-    .component_layout(ComponentLayout::AllPairs)
+    .all_pairs(QuoteRule::OncePerMaker)
     .build()
     .expect("Failed to create Hashflow feed");
 ```
@@ -158,8 +158,8 @@ Such a component carries every token the venue quotes, and the pairs it prices a
 
 A swap records the book it used in the `new_state` it returns, and how often one route may quote the venue is its quote rule, carried as the `quote_rule` static attribute:
 
-* Hashflow and Liquorice name their market makers. Every maker quotes once per route (`once_per_maker`), since a maker's second quote prices as if the first had not happened. `.quote_rule(QuoteRule::OncePerVenue)` holds the whole venue to one quote instead.
-* Bebop and Native pick the makers behind a quote themselves and sign once per route (`once_per_venue`).
+* Hashflow and Liquorice name their market makers, so their builders take the rule: `QuoteRule::OncePerMaker` lets every maker quote once per route, since a maker's second quote prices as if the first had not happened, and `QuoteRule::OncePerVenue` holds the whole venue to one quote where that independence is not worth relying on.
+* Bebop and Native pick the makers behind a quote themselves and sign once per route (`once_per_venue`), so their builders take no rule.
 
 The rule takes effect wherever your algorithm threads `new_state` from one use of the component to the next; a swap it refuses returns a recoverable error saying every book pricing it has already quoted in this route.
 

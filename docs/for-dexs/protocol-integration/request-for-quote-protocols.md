@@ -50,7 +50,7 @@ This state must implement:
 
 Details on how to implement `ProtocolSim` can be found [here](simulation/#native-integration).
 
-A venue that signs a limited number of quotes for one route can also be published as a single component covering every pair it prices (`ComponentLayout::AllPairs` on its feed builder). What that takes is a `PairState` impl on your per-pair state — the two tokens it prices — and a `<Venue>AllPairsState` wrapper over `book::all_pairs::AllPairs<YourState>` whose `ProtocolSim` delegates to the shared methods, as the Bebop one does in about fifty lines. The books behind it are the states your source already builds, one per pair and, where your venue names its makers, per maker; `book::all_pairs` picks among them, advertises the directions and holds a route to your venue's `QuoteRule`.
+A venue that signs a limited number of quotes for one route can also be published as a single component covering every pair it prices (`all_pairs()` on its feed builder). What that takes is a `PairState` impl on your per-pair state — the two tokens it prices — and a `<Venue>AllPairsState` wrapper over `book::all_pairs::AllPairs<YourState>` whose `ProtocolSim` delegates to the shared methods, as the Bebop one does in about fifty lines. The books behind it are the states your source already builds, one per pair and, where your venue names its makers, per maker; `book::all_pairs` picks among them, advertises the directions and holds a route to your venue's `QuoteRule`.
 
 ### Encoder + Executor
 

@@ -142,7 +142,7 @@ impl HttpSource for LiquoriceBookSource {
                 }
                 // One book per maker, which is what a quote is asked of and what the venue's
                 // rule is counted in.
-                ComponentLayout::AllPairs => {
+                ComponentLayout::AllPairs(_) => {
                     for (maker, price) in mm_prices {
                         let updated_at = price
                             .updated_at
@@ -163,13 +163,15 @@ impl HttpSource for LiquoriceBookSource {
                 }
             }
         }
-        if !venue_books.is_empty() {
-            books.insert(all_pairs_book(
-                PROTOCOL_SYSTEM,
-                PROTOCOL_TYPE,
-                self.book_config.chain,
-                LiquoriceAllPairsState::new(venue_books),
-            ));
+        if let ComponentLayout::AllPairs(rule) = self.component_layout {
+            if !venue_books.is_empty() {
+                books.insert(all_pairs_book(
+                    PROTOCOL_SYSTEM,
+                    PROTOCOL_TYPE,
+                    self.book_config.chain,
+                    LiquoriceAllPairsState::new(venue_books, rule),
+                ));
+            }
         }
         Ok(BookSnapshot::received_now(books))
     }
@@ -185,7 +187,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::decode_swap_directions,
+            all_pairs::{decode_swap_directions, QuoteRule},
             levels::{Levels, PriceLevel},
             test_token_map,
         },
@@ -332,7 +334,7 @@ mod tests {
         );
         let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
         let source = LiquoriceBookSource {
-            component_layout: ComponentLayout::AllPairs,
+            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerMaker),
             ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
         };
 

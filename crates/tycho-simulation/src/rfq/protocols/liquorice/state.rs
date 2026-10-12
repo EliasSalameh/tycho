@@ -207,8 +207,8 @@ impl IndicativelyPriced for LiquoriceState {
 pub struct LiquoriceAllPairsState(AllPairs<LiquoriceState>);
 
 impl LiquoriceAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<LiquoriceState>>) -> Self {
-        LiquoriceAllPairsState(AllPairs::new(books, QuoteRule::OncePerMaker))
+    pub(super) fn new(books: Vec<VenueBook<LiquoriceState>>, rule: QuoteRule) -> Self {
+        LiquoriceAllPairsState(AllPairs::new(books, rule))
     }
 }
 

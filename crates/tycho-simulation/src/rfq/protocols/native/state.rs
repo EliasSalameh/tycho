@@ -243,8 +243,8 @@ impl IndicativelyPriced for NativeState {
 pub struct NativeAllPairsState(AllPairs<NativeState>);
 
 impl NativeAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<NativeState>>) -> Self {
-        NativeAllPairsState(AllPairs::new(books, QuoteRule::OncePerVenue))
+    pub(super) fn new(books: Vec<VenueBook<NativeState>>, rule: QuoteRule) -> Self {
+        NativeAllPairsState(AllPairs::new(books, rule))
     }
 }
 

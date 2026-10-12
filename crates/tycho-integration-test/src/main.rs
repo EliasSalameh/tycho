@@ -35,7 +35,7 @@ use tycho_execution::encoding::evm::{
     utils::bytes_to_address, FALLBACK_PREFIX, PRICE_LEVEL_STREAM_PREFIX,
 };
 use tycho_simulation::{
-    book::all_pairs::{decode_swap_directions, ComponentLayout, SWAP_DIRECTIONS_ATTRIBUTE},
+    book::all_pairs::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE},
     evm::protocol::cowamm::constants::PROTOCOL_SYSTEM as COWAMM_PROTOCOL_SYSTEM,
     protocol::models::ProtocolComponent,
     rfq::protocols::{
@@ -504,7 +504,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
             Duration::from_secs(cli.skip_messages_duration),
             !cli.disable_rfq_feeds,
             !cli.disable_pamm_feeds,
-            if cli.book_all_pairs { ComponentLayout::AllPairs } else { ComponentLayout::PerPair },
+            cli.book_all_pairs,
         )
         .unwrap_or_else(|e| panic!("Failed to create book stream processor: {e}"));
         rfq_handle = Some(

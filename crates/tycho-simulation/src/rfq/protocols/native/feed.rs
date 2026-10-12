@@ -4,7 +4,10 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{all_pairs::ComponentLayout, BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{
+        all_pairs::{ComponentLayout, QuoteRule},
+        BookFeedConfig, BookSnapshot, ReceivedAt,
+    },
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::native::{
@@ -51,7 +54,7 @@ impl NativeFeedBuilder {
             api_key,
             feed_config: Self::default_feed_config(),
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
-            component_layout: ComponentLayout::default(),
+            component_layout: ComponentLayout::PerPair,
         }
     }
 
@@ -78,10 +81,13 @@ impl NativeFeedBuilder {
         self
     }
 
-    /// Which components the feed publishes for Native: one per pair it prices, or one for the
-    /// venue as a whole, which a route may take a single quote from. Per pair by default.
-    pub fn component_layout(mut self, layout: ComponentLayout) -> Self {
-        self.component_layout = layout;
+    /// Publishes Native as one component for every pair it prices, which a route may take a
+    /// single quote from: Native picks the makers behind a firm quote itself and signs once, so
+    /// a route that filled against two of its pairs would be quoted for one of them.
+    ///
+    /// One component per pair otherwise.
+    pub fn all_pairs(mut self) -> Self {
+        self.component_layout = ComponentLayout::AllPairs(QuoteRule::OncePerVenue);
         self
     }
 
