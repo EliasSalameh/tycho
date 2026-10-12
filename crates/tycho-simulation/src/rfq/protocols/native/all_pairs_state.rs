@@ -250,7 +250,7 @@ mod tests {
         }
     }
 
-    fn state_with(books: Vec<NativePriceData>) -> Result<NativeAllPairsState, SimulationError> {
+    fn state_with(books: Vec<NativePriceData>) -> NativeAllPairsState {
         let client = NativeClient::new(
             Chain::Ethereum,
             String::new(),
@@ -270,7 +270,7 @@ mod tests {
     }
 
     fn state() -> NativeAllPairsState {
-        state_with(vec![book()]).unwrap()
+        state_with(vec![book()])
     }
 
     #[test]
@@ -311,11 +311,22 @@ mod tests {
         reverse.minimum_in_base = 0.0;
         reverse.bids = vec![NativePriceLevel { quantity: 2_000.0, price: 0.0005 }];
         reverse.asks = vec![];
-        let state = state_with(vec![forward, reverse]).unwrap();
+        let state = state_with(vec![forward, reverse]);
         let result = state
             .get_amount_out(BigUint::from(2_000_000_000u64), &usdc(), &weth())
             .unwrap();
         assert_eq!(result.amount, BigUint::from(1_000_000_000_000_000_000u64));
+    }
+
+    #[test]
+    fn skips_book_its_state_rejects() {
+        let mut invalid = book();
+        invalid.minimum_in_base = f64::NAN;
+        let state = state_with(vec![invalid]);
+        let price = state.spot_price(&weth(), &usdc());
+        assert!(
+            matches!(price, Err(SimulationError::InvalidInput(msg, None)) if msg == format!("Invalid token addresses. Got in={}, out={}", weth().address, usdc().address))
+        );
     }
 
     #[test]
@@ -351,7 +362,7 @@ mod tests {
         let mut empty = book();
         empty.bids.clear();
         empty.asks.clear();
-        let state = state_with(vec![empty]).unwrap();
+        let state = state_with(vec![empty]);
         assert!(matches!(
             state.spot_price(&other, &usdc()),
             Err(SimulationError::InvalidInput(message, None))
@@ -363,7 +374,7 @@ mod tests {
     fn reports_no_liquidity_for_empty_direction() {
         let mut book = book();
         book.bids.clear();
-        let state = state_with(vec![book]).unwrap();
+        let state = state_with(vec![book]);
         assert!(matches!(
             state.get_amount_out(BigUint::from(500_000_000_000_000_000u64), &weth(), &usdc()),
             Err(SimulationError::RecoverableError(_))

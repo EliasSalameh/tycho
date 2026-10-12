@@ -262,7 +262,6 @@ mod tests {
             ]),
             empty_bebop_client(),
         )
-        .unwrap()
     }
 
     /// WBTC/USDC and WETH/USDC books.

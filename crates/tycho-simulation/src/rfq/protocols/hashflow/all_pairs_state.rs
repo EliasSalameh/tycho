@@ -194,7 +194,6 @@ mod tests {
             ]),
             client(quote_rule, quote_endpoint),
         )
-        .unwrap()
     }
 
     #[test]
@@ -229,8 +228,7 @@ mod tests {
             ],
             HashMap::from([(weth().address, weth()), (wbtc().address, wbtc())]),
             client(QuoteRule::OncePerMaker, format!("http://127.0.0.1:{}/rfq", addr.port())),
-        )
-        .unwrap();
+        );
         state
             .request_signed_quote(quote_params())
             .await
