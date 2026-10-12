@@ -3,6 +3,7 @@ use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 use async_trait::async_trait;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 use tycho_common::{
     dto::ProtocolStateDelta,
     models::{protocol::GetAmountOutParams, token::Token},
@@ -42,29 +43,32 @@ impl fmt::Debug for NativeAllPairsState {
 }
 
 impl NativeAllPairsState {
-    /// Fails when a book names a token `tokens` does not carry, or when its per-pair state
-    /// rejects it.
+    /// Skips a book with a token missing from `tokens` (`debug!`: the decoder logged the token)
+    /// and a book its per-pair state rejects (`warn!`).
     pub fn new(
         books: Vec<NativePriceData>,
         tokens: HashMap<Bytes, Token>,
         client: NativeClient,
-    ) -> Result<Self, SimulationError> {
+    ) -> Self {
         let mut states = Vec::with_capacity(books.len());
         for book in books {
-            // The client filters books to its tokens, so an unknown token means corrupt data.
+            let (base_address, quote_address) =
+                (book.base_address.clone(), book.quote_address.clone());
             let (Some(base_token), Some(quote_token)) =
-                (tokens.get(&book.base_address), tokens.get(&book.quote_address))
+                (tokens.get(&base_address), tokens.get(&quote_address))
             else {
-                return Err(SimulationError::FatalError(
-                    "Native book token addresses do not match state tokens".to_string(),
-                ));
+                debug!(
+                    "Skipping Native book {base_address}/{quote_address}: a token is missing from \
+                     the state."
+                );
+                continue;
             };
-            states.push(NativeState::new(
-                base_token.clone(),
-                quote_token.clone(),
-                book,
-                client.clone(),
-            )?);
+            match NativeState::new(base_token.clone(), quote_token.clone(), book, client.clone()) {
+                Ok(state) => states.push(state),
+                Err(e) => warn!(
+                    "Native book {base_address}/{quote_address} is invalid: {e}. Skipping it."
+                ),
+            }
         }
         let mut directions = HashMap::new();
         for (index, state) in states.iter().enumerate() {
@@ -79,7 +83,7 @@ impl NativeAllPairsState {
         }
         let mut directions: Vec<_> = directions.into_iter().collect();
         directions.sort();
-        Ok(Self { states: Arc::new(states), directions: Arc::new(directions), used: false })
+        Self { states: Arc::new(states), directions: Arc::new(directions), used: false }
     }
 
     /// The per-pair state that trades `token_in` for `token_out`.

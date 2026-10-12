@@ -43,11 +43,11 @@ impl LiquoriceAllPairsState {
         price_levels: Vec<MakerPriceLevels>,
         tokens: HashMap<Bytes, Token>,
         client: LiquoriceClient,
-    ) -> Result<Self, SimulationError> {
+    ) -> Self {
         let rule = client.quote_rule();
         let price_levels =
-            AllMakerPriceLevels::new(price_levels, tokens, MakerPricing::Liquorice, rule)?;
-        Ok(Self { price_levels, client: Arc::new(client) })
+            AllMakerPriceLevels::new(price_levels, tokens, MakerPricing::Liquorice, rule);
+        Self { price_levels, client: Arc::new(client) }
     }
 }
 
