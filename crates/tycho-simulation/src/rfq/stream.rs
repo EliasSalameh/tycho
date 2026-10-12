@@ -187,7 +187,19 @@ mod tests {
     };
 
     use super::*;
-    use crate::{protocol::models::DecoderContext, rfq::errors::RFQError};
+    use crate::{
+        protocol::models::DecoderContext,
+        rfq::{
+            errors::RFQError,
+            models::QuoteRule,
+            protocols::{
+                component::poll_message,
+                hashflow::all_pairs_state::HashflowAllPairsState,
+                maker_price_levels,
+                test_utils::{maker_price_levels as levels, usdc, wbtc, weth},
+            },
+        },
+    };
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct DummyProtocol;
@@ -373,5 +385,66 @@ mod tests {
         // hashflow
         assert_eq!(bebop_updates.len(), 3);
         assert_eq!(hashflow_updates[2].block_number_or_timestamp, 400);
+    }
+
+    /// An all-pairs client that streams one message and stops.
+    struct AllPairsRFQClient(StateSyncMessage<TimestampHeader>);
+
+    #[async_trait]
+    impl RFQClient for AllPairsRFQClient {
+        fn component_layout(&self) -> ComponentLayout {
+            ComponentLayout::AllPairs
+        }
+
+        fn stream(
+            &self,
+        ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>>
+        {
+            Box::pin(futures::stream::iter([Ok(("hashflow".to_string(), self.0.clone()))]))
+        }
+
+        async fn request_binding_quote(
+            &self,
+            _params: &GetAmountOutParams,
+        ) -> Result<SignedQuote, RFQError> {
+            unimplemented!("Not needed for this test")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_all_pairs_component_drops_an_unknown_token_and_its_directions() {
+        std::env::set_var("HASHFLOW_USER", "test_user");
+        std::env::set_var("HASHFLOW_KEY", "test_key");
+        let component = maker_price_levels::all_pairs_component(
+            "rfq:hashflow",
+            "hashflow_pool",
+            Chain::Ethereum,
+            vec![
+                (levels("mm", &weth(), &usdc(), &[(1.0, 3000.0)]), 100.0),
+                (levels("mm", &wbtc(), &usdc(), &[(1.0, 65000.0)]), 100.0),
+            ],
+            QuoteRule::OncePerMaker,
+        )
+        .unwrap()
+        .unwrap();
+        let id = component.component.id.clone();
+        let message =
+            poll_message(&mut HashMap::new(), HashMap::from([(id.clone(), component)]), 1);
+        let (tx, mut rx) = mpsc::channel::<Update>(10);
+        let builder = RFQStreamBuilder::new()
+            .add_client::<HashflowAllPairsState>("hashflow", Box::new(AllPairsRFQClient(message)))
+            .set_tokens(HashMap::from([(weth().address, weth()), (usdc().address, usdc())]))
+            .await;
+
+        builder.build(tx).await.unwrap();
+
+        let update = rx.recv().await.unwrap();
+        let emitted = &update.new_pairs[&id];
+        assert_eq!(emitted.tokens.len(), 2);
+        assert_eq!(
+            emitted.static_attributes[SWAP_DIRECTIONS_ATTRIBUTE],
+            encode_swap_directions(&BTreeSet::from([(weth().address, usdc().address)]))
+        );
+        assert!(update.states.contains_key(&id));
     }
 }
