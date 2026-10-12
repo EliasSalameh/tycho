@@ -701,6 +701,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_all_pairs_component_via_fallback_router() {
+        let (client, weth, _, usdc) = all_pairs_test_client();
+        let via_router = client.via_fallback_router();
+        let update =
+            BebopPricingUpdate { pairs: vec![price_data(&weth, &usdc, &[3000.0, 1.0], &[])] };
+
+        let component = via_router
+            .all_pairs_component(&update)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(component.component.protocol_system, BebopClient::FALLBACK_PROTOCOL_SYSTEM);
+        assert_eq!(
+            component.component.id,
+            component::component_id(BebopClient::FALLBACK_PROTOCOL_SYSTEM, via_router.chain)
+        );
+    }
+
     #[rstest]
     #[case::per_pair(ComponentLayout::PerPair)]
     #[case::all_pairs(ComponentLayout::AllPairs)]
