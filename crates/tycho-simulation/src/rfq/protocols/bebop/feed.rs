@@ -296,6 +296,7 @@ mod tests {
             token_out: token_out.clone(),
             sender: router.clone(),
             receiver: router,
+            origin: None,
         };
         let quote = feed
             .source
@@ -369,6 +370,7 @@ mod tests {
             token_out: token_out.clone(),
             sender: router.clone(),
             receiver: router,
+            origin: None,
         };
         let quote = feed
             .source

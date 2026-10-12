@@ -126,7 +126,13 @@ impl BebopClient {
             ("is_ui", "false".into()),
         ];
 
-        if let Some(origin_address) = &self.origin_address {
+        // The request's own origin names the end user this trade is for; the builder's is the
+        // one flow behind every request a feed makes.
+        if let Some(origin_address) = params
+            .origin
+            .as_ref()
+            .or(self.origin_address.as_ref())
+        {
             query.push((
                 "origin_address",
                 bytes_to_address(origin_address)
@@ -395,6 +401,7 @@ mod tests {
             token_out: Bytes::from_str("0xfAbA6f8e4a5E8Ab82F62fe7C39859FA577269BE3").unwrap(),
             sender: Bytes::from_str("0xfd0b31d2e955fa55e3fa641fe90e08b677188d35").unwrap(),
             receiver: Bytes::from_str("0xfd0b31d2e955fa55e3fa641fe90e08b677188d35").unwrap(),
+            origin: None,
         };
         let res = BebopClient::process_quote_response(quote_response, &params).unwrap();
         assert_eq!(res.amount_out, BigUint::from_str("52571055094221715780641").unwrap());
@@ -413,6 +420,7 @@ mod tests {
             token_out: Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(),
             sender: Bytes::from_str("0x809305d724B6E79C71e10a097ABadd1274B9C279").unwrap(),
             receiver: Bytes::from_str("0x809305d724B6E79C71e10a097ABadd1274B9C279").unwrap(),
+            origin: None,
         };
         let res = BebopClient::process_quote_response(quote_response, &params).unwrap();
         assert_eq!(res.amount_out, BigUint::from_str("11186653890").unwrap());
@@ -433,6 +441,7 @@ mod tests {
             token_out: Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap(),
             sender: router.clone(),
             receiver: router,
+            origin: None,
         };
         let res = BebopClient::process_quote_response(quote_response, &params).unwrap();
         assert_eq!(res.amount_in, BigUint::from_str("1000000000000000000").unwrap());
@@ -466,6 +475,7 @@ mod tests {
             token_out: Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap(),
             sender: router.clone(),
             receiver: router,
+            origin: None,
         };
         let res = BebopClient::process_quote_response(quote_response, &params).unwrap();
         assert_eq!(res.amount_in, BigUint::from_str("1000000000000000000").unwrap());
@@ -532,6 +542,55 @@ mod tests {
         }
     }
 
+    /// Sends one binding quote request and asserts the server received `expected` as its only
+    /// `origin_address`.
+    async fn assert_origin_sent(
+        client_origin: Option<Bytes>,
+        request_origin: Option<Bytes>,
+        expected: &Bytes,
+    ) {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .match_query(mockito::Matcher::UrlEncoded(
+                "origin_address".into(),
+                bytes_to_address(expected)
+                    .unwrap()
+                    .to_string(),
+            ))
+            .with_body(include_str!("test_responses/aggregate_order.json"))
+            .create_async()
+            .await;
+        let client = BebopClient {
+            origin_address: client_origin,
+            ..create_test_client(server.url(), Duration::from_secs(5))
+        };
+        let params = GetAmountOutParams { origin: request_origin, ..create_test_quote_params() };
+
+        client
+            .request_binding_quote(&params)
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+    }
+
+    /// The end user a quote is for is the trade's own, where the feed's origin stands for every
+    /// trade it quotes.
+    #[tokio::test]
+    async fn the_requests_origin_is_the_one_bebop_is_told() {
+        let request_origin = Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap();
+        let client_origin = Bytes::from_str("0x2222222222222222222222222222222222222222").unwrap();
+
+        assert_origin_sent(
+            Some(client_origin.clone()),
+            Some(request_origin.clone()),
+            &request_origin,
+        )
+        .await;
+        assert_origin_sent(Some(client_origin.clone()), None, &client_origin).await;
+    }
+
     /// Bebop names the trade it will not do in an error body under HTTP 200; the two codes and
     /// their wording are what the production error log records. A size past its depth or below
     /// its minimum leaves the route to be priced elsewhere, where a code it has not been seen to
@@ -589,6 +648,7 @@ mod tests {
             token_out,
             sender: router.clone(),
             receiver: router,
+            origin: None,
         }
     }
 
@@ -728,6 +788,7 @@ mod tests {
             token_out: Bytes::from_str("0xfAbA6f8e4a5E8Ab82F62fe7C39859FA577269BE3").unwrap(),
             sender: router.clone(),
             receiver: router,
+            origin: None,
         };
         let res = BebopClient::process_quote_response(quote_response, &params).unwrap();
         assert_eq!(res.amount_in, BigUint::from_str("20000000000").unwrap());

@@ -252,6 +252,7 @@ mod tests {
             token_out: wbtc.clone(),
             sender: router.clone(),
             receiver: router.clone(),
+            origin: None,
         };
         let client = &feed.source.client;
         let market_makers = client

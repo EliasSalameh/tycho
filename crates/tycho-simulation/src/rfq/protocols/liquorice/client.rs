@@ -560,6 +560,7 @@ mod tests {
             token_out: Bytes::from_str(token_out).unwrap(),
             sender: Bytes::from_str("0x3333333333333333333333333333333333333333").unwrap(),
             receiver: Bytes::from_str("0x4444444444444444444444444444444444444444").unwrap(),
+            origin: None,
         }
     }
 
@@ -724,6 +725,7 @@ mod tests {
             token_out,
             sender: router.clone(),
             receiver: router,
+            origin: None,
         }
     }
 
