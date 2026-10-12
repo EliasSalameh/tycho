@@ -42,8 +42,14 @@ pub struct HashflowState {
 
 impl HashflowState {
     /// Smallest `base_token` amount (in base units) Hashflow accepts for a firm quote: the first
-    /// price level's quantity. `get_amount_out` fills smaller amounts partially against that
-    /// level, but the quote API rejects them, so callers size requests at or above this.
+    /// price level's quantity, in whole units of the token. `get_amount_out` fills smaller
+    /// amounts partially against that level, but the quote API answers them with code 79,
+    /// `Below minimum amount`, so callers size requests at or above this.
+    ///
+    /// The quantity is a fraction of a unit wide, and the unit below it is the one to name: the
+    /// venue signs there — measured against a live maker, which quoted ten and ninety units
+    /// under its published level and refused half of it — and it is an amount the ladder holds,
+    /// where the unit above is one a book of a single level does not reach.
     pub fn min_amount_in(&self) -> BigUint {
         let first_level_quantity = self
             .levels
@@ -51,7 +57,8 @@ impl HashflowState {
             .first()
             .map_or(0.0, |level| level.quantity);
         let scaled = first_level_quantity * 10f64.powi(self.base_token.decimals as i32);
-        BigUint::from_f64(scaled.ceil()).unwrap_or_default()
+        // `BigUint::from_f64` truncates, which is the rounding this wants.
+        BigUint::from_f64(scaled).unwrap_or_default()
     }
     /// The levels price one direction only: selling base for quote.
     fn valid_direction_guard(
@@ -391,6 +398,40 @@ mod tests {
             market_maker: "test_mm".to_string(),
             client: empty_client(),
         }
+    }
+
+    /// A book of one level advertises that level as both its minimum and its depth, so the
+    /// amount named by the minimum has to be one the same book can fill.
+    ///
+    /// How much of a unit the rounding adds is what decides whether `fill` notices. Here, four
+    /// thousand tokens of a six-decimal one, it adds 0.07 of a unit, which is 80 000 ulps of the
+    /// amount against the four a fill forgives. The same rounding on an eighteen-decimal token
+    /// adds a wei, a millionth of one ulp, and disappears.
+    #[test]
+    fn the_minimum_of_a_single_level_book_is_within_its_depth() {
+        let state = HashflowState {
+            base_token: usdc(),
+            quote_token: weth(),
+            levels: HashflowMarketMakerLevels {
+                pair: HashflowPair { base_token: usdc().address, quote_token: weth().address },
+                levels: Levels::new(vec![PriceLevel {
+                    quantity: 4327.8578109263835,
+                    price: 0.000_25,
+                }])
+                .unwrap(),
+            },
+            market_maker: "test_mm".to_string(),
+            client: empty_client(),
+        };
+
+        let minimum = state.min_amount_in();
+        let (limit, _) = state
+            .get_limits(usdc().address, weth().address)
+            .unwrap();
+
+        assert!(minimum <= limit, "minimum {minimum} is past the book's own limit {limit}");
+        let result = state.get_amount_out(minimum, &usdc(), &weth());
+        assert!(result.is_ok(), "{result:?}");
     }
 
     /// `min_amount_in` is documented as the amount a caller sizes its request at, so quoting
