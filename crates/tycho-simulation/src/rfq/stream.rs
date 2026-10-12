@@ -14,7 +14,10 @@ use crate::{
         errors::InvalidSnapshotError,
         models::{TryFromWithBlock, Update},
     },
-    rfq::{client::RFQClient, models::TimestampHeader},
+    rfq::{
+        client::RFQClient,
+        models::{ComponentLayout, TimestampHeader},
+    },
 };
 
 /// `RFQStreamBuilder` is a utility for constructing and managing a merged stream of RFQ (Request
@@ -55,6 +58,8 @@ impl RFQStreamBuilder {
         }
     }
 
+    /// Adds `provider`, whose components decode to `T`. A provider that streams the all-pairs
+    /// layout keeps its component when a token is unknown: the decoder drops the token.
     pub fn add_client<T>(mut self, name: &str, provider: Box<dyn RFQClient>) -> Self
     where
         T: ProtocolSim
@@ -62,8 +67,13 @@ impl RFQStreamBuilder {
             + Send
             + 'static,
     {
+        match provider.component_layout() {
+            ComponentLayout::PerPair => self.decoder.register_decoder::<T>(name),
+            ComponentLayout::AllPairs => self
+                .decoder
+                .register_decoder_dropping_unknown_tokens::<T>(name),
+        }
         self.clients.push(provider);
-        self.decoder.register_decoder::<T>(name);
         self
     }
 
