@@ -166,7 +166,7 @@ mod tests {
     use std::{str::FromStr, time::Duration};
 
     use rstest::rstest;
-    use tycho_common::models::Chain;
+    use tycho_common::{models::Chain, simulation::errors::SimulationError};
 
     use super::*;
     use crate::{
@@ -463,5 +463,55 @@ mod tests {
         let second = swap(best.new_state.as_ref()).unwrap();
         assert!(best.amount > second.amount, "the better maker quotes first");
         assert!(swap(second.new_state.as_ref()).is_err(), "two makers quote two swaps and no more");
+    }
+
+    /// A maker declines an amount below its first level, so the venue's floor under one
+    /// component is the smallest of its makers' — and what it refuses below, it names.
+    #[tokio::test]
+    async fn the_venue_floor_is_the_smallest_makers_minimum() {
+        let weth = Bytes::from_str(WETH).unwrap();
+        let usdc = Bytes::from_str(USDC).unwrap();
+        let market_makers = r#"{"marketMakers":["deep_mm","small_mm"]}"#.to_string();
+        // deep_mm takes two WETH at a time, small_mm takes one.
+        let price_levels = format!(
+            r#"{{"status":"success","levels":{{
+                "deep_mm":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"2","p":"3000"}}]}}],
+                "small_mm":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"2999"}}]}}]
+            }}}}"#
+        );
+        let server = spawn_http_server(move |target| {
+            if target.starts_with("/market-makers") {
+                Some(("200 OK", market_makers.clone()))
+            } else {
+                Some(("200 OK", price_levels.clone()))
+            }
+        })
+        .await;
+        let source = HashflowBookSource {
+            component_layout: ComponentLayout::AllPairs,
+            ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
+        };
+
+        let books = source.fetch().await.unwrap().books;
+        let state = &books.values().next().unwrap().state;
+        let tokens = &source.book_config.tokens;
+        let swap = |whole_weth: u64| {
+            state.get_amount_out(
+                num_bigint::BigUint::from(whole_weth) * num_bigint::BigUint::from(10u64).pow(17),
+                &tokens[&weth],
+                &tokens[&usdc],
+            )
+        };
+
+        // Half a WETH is under every maker's floor, one WETH is over small_mm's.
+        match swap(5) {
+            Err(SimulationError::RecoverableError(message)) => assert_eq!(
+                message,
+                "Amount below minimum. Input amount: 500000000000000000, min amount: \
+                 1000000000000000000 (both in base units)"
+            ),
+            other => panic!("expected the venue's floor, got {other:?}"),
+        }
+        assert!(swap(10).is_ok(), "one WETH is small_mm's minimum");
     }
 }

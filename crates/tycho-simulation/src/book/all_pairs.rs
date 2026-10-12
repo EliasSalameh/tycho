@@ -329,8 +329,9 @@ impl<S: PairState> AllPairs<S> {
         })
     }
 
-    /// The deepest limits among the books that may still quote the direction. A swap fills
-    /// against one book, so the venue's limit is the best single book's, not their sum.
+    /// The limits of the book that buys most in total among those that may still quote the
+    /// direction. A swap fills against one book, so the venue's limit is that book's, not the
+    /// sum of every book's.
     pub fn get_limits(
         &self,
         sell_token: Bytes,
@@ -341,9 +342,15 @@ impl<S: PairState> AllPairs<S> {
             let limits = book
                 .state
                 .get_limits(sell_token.clone(), buy_token.clone());
+            let bought = |limits: &Result<(BigUint, BigUint), SimulationError>| {
+                limits
+                    .as_ref()
+                    .ok()
+                    .map(|(_, bought)| bought.clone())
+            };
             if best
                 .as_ref()
-                .is_none_or(|taken| taken.as_ref().ok() < limits.as_ref().ok())
+                .is_none_or(|taken| bought(taken) < bought(&limits))
             {
                 best = Some(limits);
             }
@@ -809,8 +816,9 @@ mod tests {
     /// neither.
     #[test]
     fn the_price_and_the_limits_are_the_best_books() {
+        // The cheap book takes more A in total, the generous one buys more B with what it takes.
         let venue =
-            venue(vec![book("cheap", 2, 10), book("generous", 3, 4)], QuoteRule::OncePerVenue);
+            venue(vec![book("cheap", 2, 10), book("generous", 3, 8)], QuoteRule::OncePerVenue);
 
         assert_eq!(
             venue
@@ -824,8 +832,8 @@ mod tests {
                 .0
                 .get_limits(addr(0xaa), addr(0xbb))
                 .unwrap(),
-            (whole(10), whole(20)),
-            "the deepest book's limits, not the sum of both"
+            (whole(8), whole(24)),
+            "the limits of the book that buys most, not the sum of both"
         );
 
         let spent = venue

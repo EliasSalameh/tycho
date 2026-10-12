@@ -240,6 +240,15 @@ impl ProtocolSim for HashflowAllPairsState {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        // Every maker declines an amount below its first level, so an amount under the smallest
+        // of their floors is one no maker here fills, and that floor is what to raise it to.
+        if let Some(minimum) = self.min_amount_in(&token_in.address, &token_out.address) {
+            if amount_in < minimum {
+                return Err(SimulationError::RecoverableError(format!(
+                    "Amount below minimum. Input amount: {amount_in}, min amount: {minimum} (both in base units)"
+                )));
+            }
+        }
         self.amount_out(amount_in, &token_in.address, &token_out.address)
     }
 
