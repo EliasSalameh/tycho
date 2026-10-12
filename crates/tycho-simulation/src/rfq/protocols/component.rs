@@ -271,13 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn decode_all_pairs_component_missing_token() {
-        let (snapshot, mut tokens) = all_pairs_snapshot("rfq:test", &[weth(), usdc()], &["book"]);
-        tokens.remove(&weth().address);
-        let result = decode_all_pairs_component::<String>(&snapshot, &tokens);
-        assert!(
-            matches!(result, Err(InvalidSnapshotError::ValueError(msg)) if msg.contains("Token not found"))
-        );
+    fn decode_all_pairs_component_skips_invalid_book() {
+        let (snapshot, tokens) =
+            all_pairs_snapshot("rfq:test", &[weth(), usdc()], &serde_json::json!(["a", 7, "b"]));
+        let decoded = decode_all_pairs_component::<String>(&snapshot, &tokens).unwrap();
+        assert_eq!(decoded.books, ["a", "b"]);
     }
 
     #[test]
