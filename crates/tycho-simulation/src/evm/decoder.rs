@@ -102,6 +102,8 @@ where
     min_token_quality: u32,
     registry: HashMap<String, Box<RegistryFn<H>>>,
     inclusion_filters: HashMap<String, Vec<FilterFn>>,
+    /// Exchanges whose components keep the rest when a token is unknown.
+    unknown_token_dropping: HashSet<String>,
     /// Live override providers keyed by `protocol_system`. A pool of that protocol subscribes to
     /// its provider at creation time and reads fresh overrides on every simulation.
     override_providers: HashMap<String, Arc<dyn StateOverrideProvider>>,
@@ -138,6 +140,7 @@ where
             min_token_quality: 100,
             registry: HashMap::new(),
             inclusion_filters: HashMap::new(),
+            unknown_token_dropping: HashSet::new(),
             override_providers: HashMap::new(),
             block_time_secs: chain.block_time_secs(),
             chain,
@@ -314,6 +317,21 @@ where
         self.register_decoder_with_context::<T>(exchange, context);
     }
 
+    /// Registers a decoder for `exchange` that drops a token it does not know, or whose address it
+    /// cannot decode, and keeps the component. Other registrations fail the component. Use it for
+    /// a component with a fixed id, such as an all-pairs RFQ component: a failed one stays failed.
+    pub fn register_decoder_dropping_unknown_tokens<T>(&mut self, exchange: &str)
+    where
+        T: ProtocolSim
+            + TryFromWithBlock<ComponentWithState, H, Error = InvalidSnapshotError>
+            + Send
+            + 'static,
+    {
+        self.register_decoder::<T>(exchange);
+        self.unknown_token_dropping
+            .insert(exchange.to_string());
+    }
+
     /// Registers a client-side filter function for a given exchange.
     ///
     /// Associates a filter function with an exchange ID, enabling custom filtering of protocol
@@ -376,6 +394,9 @@ where
             .unwrap_or(false);
 
         for (protocol, protocol_msg) in msg.state_msgs.iter() {
+            let drops_unknown_tokens = self
+                .unknown_token_dropping
+                .contains(protocol.as_str());
             // Add any new tokens
             if let Some(deltas) = protocol_msg.deltas.as_ref() {
                 let mut state_guard = self.state.write().await;
@@ -604,12 +625,17 @@ where
                     for token in snapshot.component.tokens.clone() {
                         match state_guard.tokens.get(&token) {
                             Some(token) => {
-                                component_tokens.push(token.clone());
-
                                 // If the token is not an existing proxy token, we need to add it to
                                 // the simulation engine
                                 let token_address = match bytes_to_address(&token.address) {
                                     Ok(addr) => addr,
+                                    Err(_) if drops_unknown_tokens => {
+                                        warn!(
+                                            "Token address could not be decoded {}, ignoring the token in component {:x?}",
+                                            token.address, id
+                                        );
+                                        continue;
+                                    }
                                     Err(_) => {
                                         count_token_skips += 1;
                                         msg_failed_components.insert(id.clone());
@@ -620,6 +646,7 @@ where
                                         continue 'snapshot_loop;
                                     }
                                 };
+                                component_tokens.push(token.clone());
                                 // Deploy a proxy account without an implementation set
                                 if !state_guard
                                     .proxy_token_addresses
@@ -636,6 +663,12 @@ where
                                         ),
                                     );
                                 }
+                            }
+                            None if drops_unknown_tokens => {
+                                warn!(
+                                    "Token not found {}, ignoring the token in component {:x?}",
+                                    token, id
+                                );
                             }
                             None => {
                                 count_token_skips += 1;
