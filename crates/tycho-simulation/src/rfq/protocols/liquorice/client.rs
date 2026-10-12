@@ -657,6 +657,10 @@ impl LiquoriceClient {
 
 #[async_trait]
 impl RFQClient for LiquoriceClient {
+    fn component_layout(&self) -> ComponentLayout {
+        self.component_layout
+    }
+
     fn stream(
         &self,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {

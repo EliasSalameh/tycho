@@ -700,6 +700,10 @@ fn pair_component_id(mm_level: &HashflowMarketMakerLevels) -> String {
 
 #[async_trait]
 impl RFQClient for HashflowClient {
+    fn component_layout(&self) -> ComponentLayout {
+        self.component_layout
+    }
+
     fn stream(
         &self,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {
