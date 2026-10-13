@@ -265,7 +265,7 @@ fn apply_fee_discount(price: f64, fee_x24: u32) -> f64 {
 // amount-in that would produce roughly 90% price impact in a fee-less
 // constant-product pool. LunarBase does not treat this as a protocol limit;
 // it is only the initial probe for `quote_limit`, which halves the amount
-// until the LunarBase quote math accepts it.
+// and checks the minimum positive-output input if no probe succeeds.
 fn soft_limit(reserve_in: u128) -> BigUint {
     BigUint::from(reserve_in) * 2162u32 / 1000u32
 }
@@ -315,11 +315,35 @@ fn quote_limit(
             Err(QuoteError::Rejected | QuoteError::ReserveOverflow) => {
                 amount_in >>= 1;
                 if amount_in == BigUint::ZERO {
-                    return Ok((BigUint::ZERO, BigUint::ZERO));
+                    break;
                 }
             }
             Err(err) => return Err(map_quote_error(err)),
         }
+    }
+
+    if state.anchor_price_x96.is_zero() {
+        return Ok((BigUint::ZERO, BigUint::ZERO));
+    }
+    // Halving can miss the entire tradable interval. Invert both gross-output
+    // floors with ceiling division to find the first input with positive output.
+    let anchor = u256_to_biguint(state.anchor_price_x96);
+    let q96 = BigUint::from(1u64) << 96;
+    let (numerator, denominator) =
+        if token_in == state.token_x { (q96, anchor) } else { (anchor, q96) };
+    let intermediate = (&numerator + &denominator - 1u32) / &denominator;
+    let minimum_input = (intermediate * numerator + &denominator - 1u32) / denominator;
+    // Under multiplier one, a non-saturated fee leaves positive gross output
+    // positive. The normal quote still checks punishment, liquidity and capacity.
+    match state.quote_exact_in(token_in, token_out, biguint_to_u256(&minimum_input)?) {
+        Ok((amount_out, _)) => Ok((minimum_input, u256_to_biguint(amount_out))),
+        Err(
+            QuoteError::Paused |
+            QuoteError::Stale { .. } |
+            QuoteError::Rejected |
+            QuoteError::ReserveOverflow,
+        ) => Ok((BigUint::ZERO, BigUint::ZERO)),
+        Err(err) => Err(map_quote_error(err)),
     }
 }
 
@@ -747,6 +771,133 @@ mod tests {
         // The last three input units still round down to the same gross output.
         assert_eq!(input, BigUint::from(4_000_003u64));
         assert_eq!(output, BigUint::from(999_000u64));
+    }
+
+    #[test]
+    fn limits_recover_minimum_trade_for_empty_and_small_input_reserves() {
+        for x_to_y in [true, false] {
+            // Reserve 1 starts below the minimum; reserve 4 halves 8 -> 4 -> 2,
+            // skipping the only valid input (3). Reserve 3 already finds it.
+            for reserve_in in [0, 1, 3, 4] {
+                let state = rounding_boundary_state(x_to_y, reserve_in);
+                let (sell, buy) = if x_to_y {
+                    (state.token_x, state.token_y)
+                } else {
+                    (state.token_y, state.token_x)
+                };
+                assert_eq!(
+                    state
+                        .quote_exact_in(sell, buy, U256::from(3u64))
+                        .unwrap()
+                        .0,
+                    U256::from(1u64)
+                );
+                assert_eq!(
+                    state
+                        .get_limits(Bytes::from(sell), Bytes::from(buy))
+                        .unwrap(),
+                    (BigUint::from(3u64), BigUint::from(1u64)),
+                    "x_to_y={x_to_y}, reserve_in={reserve_in}"
+                );
+            }
+        }
+    }
+
+    fn rounding_boundary_state(x_to_y: bool, reserve_in: u128) -> LunarBaseState {
+        let mut state = state();
+        let q96 = U256::from(1u64) << 96usize;
+        if x_to_y {
+            state.anchor_price_x96 = q96 * U256::from(3u64) / U256::from(4u64);
+            state.reserve_x = reserve_in;
+            state.reserve_y = 1;
+        } else {
+            state.anchor_price_x96 = q96 * U256::from(4u64) / U256::from(3u64);
+            state.reserve_x = 1;
+            state.reserve_y = reserve_in;
+        }
+        state
+    }
+
+    #[test]
+    fn minimum_trade_limits_apply_fees_and_punishment() {
+        for x_to_y in [true, false] {
+            for (fee, punishment, available) in
+                [(1 << 22, 1 << 22, true), (MAX_U24, 0, false), (MAX_U24 - 1, MAX_U24, false)]
+            {
+                let mut state = rounding_boundary_state(x_to_y, 1);
+                state.fee_ask_x24 = fee;
+                state.fee_bid_x24 = fee;
+                state.max_punishment_x24 = punishment;
+                let (sell, buy) = if x_to_y {
+                    (state.token_x, state.token_y)
+                } else {
+                    (state.token_y, state.token_x)
+                };
+                let expected = if available {
+                    (BigUint::from(3u64), BigUint::from(1u64))
+                } else {
+                    (BigUint::ZERO, BigUint::ZERO)
+                };
+                assert_eq!(
+                    state
+                        .get_limits(Bytes::from(sell), Bytes::from(buy))
+                        .unwrap(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn minimum_trade_limits_preserve_unavailable_states_and_math_errors() {
+        for x_to_y in [true, false] {
+            for case in [
+                "paused",
+                "stale",
+                "no liquidity",
+                "reserve overflow",
+                "zero anchor",
+                "minimum exceeds capacity",
+                "output quantum exceeds liquidity",
+                "invalid math",
+            ] {
+                let mut state = rounding_boundary_state(x_to_y, 1);
+                let (sell, buy) = if x_to_y {
+                    (state.token_x, state.token_y)
+                } else {
+                    (state.token_y, state.token_x)
+                };
+                match case {
+                    "paused" => state.paused = true,
+                    "stale" => state.head_block = 102,
+                    "no liquidity" if x_to_y => state.reserve_y = 0,
+                    "no liquidity" => state.reserve_x = 0,
+                    "reserve overflow" if x_to_y => state.reserve_x = MAX_U112 - 2,
+                    "reserve overflow" => state.reserve_y = MAX_U112 - 2,
+                    "zero anchor" => state.anchor_price_x96 = U256::ZERO,
+                    "minimum exceeds capacity" => {
+                        state.anchor_price_x96 =
+                            if x_to_y { U256::from(1u64) } else { U256::from(1u64) << 159usize };
+                    }
+                    "output quantum exceeds liquidity" => {
+                        state.anchor_price_x96 =
+                            U256::from(1u64) << if x_to_y { 97usize } else { 95usize };
+                    }
+                    "invalid math" => state.max_punishment_x24 = 1 << 24,
+                    _ => unreachable!(),
+                }
+                let limits = state.get_limits(Bytes::from(sell), Bytes::from(buy));
+                if case == "invalid math" {
+                    assert!(limits.is_err(), "x_to_y={x_to_y}, {case}");
+                } else {
+                    assert_eq!(
+                        limits.unwrap(),
+                        (BigUint::ZERO, BigUint::ZERO),
+                        "x_to_y={x_to_y}, {case}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
