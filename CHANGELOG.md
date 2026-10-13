@@ -1,3 +1,12 @@
+## [0.455.1](https://github.com/propeller-heads/tycho/compare/0.455.0...0.455.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **common:** keep a newer account creation when merging deltas ([fe7bd85](https://github.com/propeller-heads/tycho/commit/fe7bd85dc50afd27af89a5520f588e5369a96198))
+* **indexer:** ignore account title in shadow comparison ([03816bb](https://github.com/propeller-heads/tycho/commit/03816bb66293dd99e90d80119db56e14c714da26))
+* **indexer:** label DCI slot re-fetches of tracked accounts as updates ([ff3a1c7](https://github.com/propeller-heads/tycho/commit/ff3a1c7e2028cfb2eda8c24f52f7db4a0559e2e8))
+
 ## [0.455.0](https://github.com/propeller-heads/tycho/compare/0.454.0...0.455.0) (2026-10-13)
 
 
