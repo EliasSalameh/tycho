@@ -67,6 +67,7 @@ INSERT INTO executors (chain, address, protocol_systems) VALUES
     ('bsc', '0x0ecbe4a09eff3f4d054723720f60b55ee52bd99e', ARRAY['pancake_v2', 'pancakeswap_v2']),
     ('bsc', '0x19e8f03be0159af8c04a9553f82eb1f17c2e8451', ARRAY['rfq:native']),
     ('bsc', '0x450b4a643553912c9af98dc8b9db2ef989fb1444', ARRAY['uniswap_v2']),
+    ('bsc', '0x5de5d17985716ab919b806023bd0ed294450ffd7', ARRAY['ring_swap_v2']),
     ('bsc', '0x8a61866f7f9c979bee4426247e144add46cd21aa', ARRAY['rfq:metric']),
     ('bsc', '0x8c41b3842d767bb07818e9e82fb62964910a82ef', ARRAY['native_wrapper']),
     ('bsc', '0x925a1ae9494ec8d92c2900dcdd6ca9ee621e10ed', ARRAY['uniswap_v4']),
