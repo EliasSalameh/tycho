@@ -222,6 +222,11 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn test_get_sqrt_ratio_at_tick_i32_min() {
+        assert!(get_sqrt_ratio_at_tick(i32::MIN).is_err());
+    }
+
     struct TestCase {
         tick: i32,
         ratio: U256,
