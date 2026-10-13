@@ -124,17 +124,29 @@ for any protocol indexed by Tycho.
   The line to `rfq/` is the counterparty: a maker who can decline a specific trade after pricing
   it makes an RFQ, a pool that fills any taker with fresh price data makes a pAMM
 - **`price_level_stream/`**: Titan pAMM price level stream — `PriceLevelStreamBuilder` turns the
-  Titan WebSocket's per-pair quote-ladder frames directly into `Update`s (no indexer feed
+  Titan WebSocket's book frames directly into `Update`s (no indexer feed
   round-trip); `PriceLevelStreamState` quotes by interpolating the ladder and refuses to quote
   once its frame is one slot old (`quotable_until`, monotonic, never serialized, ignored by
-  `eq`; `without_quote_guard` on the builder turns it off for slow quoters). Frames are best
+  `eq`; `without_quote_guard` on the builder turns it off for slow quoters). A frame carries one
+  flat `books` list — one book per venue and pair, priced in human units as float
+  `price`/`cumVolume` levels, with both assets named by address in `token1Address`/`token2Address`
+  — so `convert.rs` derives the integer ladders the states serve: `resolve_book_tokens` looks the
+  two addresses up and `ladders_for_book` turns the bids into the `token1 -> token2` ladder and
+  the asks into the reverse, converting the sides independently so a rejected one never costs the
+  other. `tracker.rs` groups the books per venue and feeds the freshness machinery below
+  unchanged. Resolution is fail-closed: a pair prices only if both addresses are in the consumer's
+  token map, which also supplies the decimals. The book's `token1`/`token2` symbols are display
+  labels read for the DEBUG logs alone, never resolved — so a token calling itself `WBTC` neither
+  captures another asset's quotes nor keeps it from being served. Frames are best
   effort, so `tracker.rs` never removes a component because a frame omits it. It gives every
   component its own deadline and emits `removed_pairs` only when the component's data is
   `stale_after` old; the next accepted frame carrying the component re-adds it. Frames are
-  accepted only if their wire `timestamp` is younger than `stale_after`, not more than one slot
+  accepted only if their stream `ts` is younger than `stale_after`, not more than one slot
   in the future, not older than the newest accepted one (equal allowed), and their block neither
   regresses nor jumps more than one block per elapsed slot plus 2; the block frontier lives in
-  `ServingState::Serving`, so it exists only while something is served. The windows and their
+  `ServingState::Serving`, so it exists only while something is served. The frame's beacon `slot`
+  carries no freshness decision, so a frame without it is judged like one carrying it. The windows
+  and their
   defaults are listed under `# Freshness contract` in `price_level_stream/mod.rs`; every window
   is a multiple of `SLOT` in `mod.rs`; the `stale_after` setter caps its value at
   `MAX_STALE_AFTER` (one hour). `build()` is an `async_stream` loop that selects over frames and
@@ -143,20 +155,63 @@ for any protocol indexed by Tycho.
   when no frame parses within the idle timeout; pings, unparsable text and the consumer's own
   pauses between polls do not count. `telemetry.rs` emits `price_level_stream_*` metrics through
   the `metrics` facade, with label values as enums there and a frame-age histogram at
-  acceptance. Per-venue series start at zero, and no label carries a wire value except the
-  address of an auto-detected venue. Components are identified as `pricelevelstream:{pamm}`. A
+  acceptance; `skipped_books_total{reason}` counts the books left unpriced
+  (`unadmitted_token`, `malformed_address`, `one_asset_pair`) and `rejected_sides_total{reason}` the
+  sides dropped whole (`unsupported_level`, `non_finite_amount`, `zero_amount`,
+  `conflicting_knots`). Per-venue series and every one of those reasons start at zero, and no
+  label carries a streamed value except the address of an auto-detected venue — a token address
+  or symbol never becomes a label, only a DEBUG log field. Components are identified as
+  `pricelevelstream:{pamm}`, where `{pamm}` names the venue's **canonical public identity**: the
+  address a swap goes to. `config.rs`'s `PAMM_ADDRESS_ALIASES` normalizes every boundary onto it —
+  incoming book `quoteAddress`es as well as the addresses handed to `add_pamm`/`deny_pamm`, either
+  of which may name either address (today's one entry is Kipseli, streamed under `0xc9a9…` and
+  executed at `0x71e7…`). Component ids, venue names, gas costs, denial and the `pamm_address`
+  attribute therefore always carry the public identity, never the streamed one; `maker` is
+  recorded nowhere. A
   new builder serves nothing: `with_known_pamms` registers the known-good venues and denies
   known-unexecutable ones, `add_pamm` registers individual ones, `deny_pamm` excludes one
   (dropping any registration and blocking auto-detection), and opt-in auto-detection
   additionally serves unknown venues under their address (`pricelevelstream:{0xaddress}`), at
-  most 64 per process. Precedence: between `add_pamm` and `deny_pamm` for the same address the
-  later call wins; `with_known_pamms` defaults never override either, regardless of call order.
+  most 64 per process. Precedence: between `add_pamm` and `deny_pamm` for the same venue the
+  later call wins, whichever of its addresses each named; `with_known_pamms` defaults never
+  override either, regardless of call order.
   By default `build` emits every venue under `fallback:{pamm}`, so tycho-execution routes their
   swaps through `TychoFallbackRouter` (retry on a solver-named fallback pool when the venue
   reverts); `without_fallback_router` keeps every venue on the direct `pricelevelstream:` path.
   Consumers cannot tell a stale removal from a retired venue. Venues may overlap with other
   integration paths of the same liquidity (e.g. `vm:fermiswap`) — consumers must deduplicate by
-  venue where double-counting matters
+  venue where double-counting matters.
+  `build` also opens a **second Titan socket** by default (`pamm_quote_stream_v2`; endpoint via
+  `override_endpoint` or `TITAN_PAMM_QUOTE_STREAM_URL`, off via `without_simulation_overrides`),
+  carrying the account state Titan simulated each venue on to price its ladders. `titan.rs`'s
+  `validate` refuses a venue entry **whole** (20/32-byte identities, hex quantities incl. odd-digit
+  balances, a build `timestamp`, 1:1 `assetPairs`/`pairSequences`, no `code`/full `state`, caps 32
+  accounts / 512 slots / 64 KiB measured on raw slot+word bytes); `overrides.rs` holds what it
+  accepts in a fail-closed `OverrideBuffer` keyed by `(canonical venue, sorted pair)` — the sequence
+  is **not** part of `PairKey`: a key holds a pair's recent sequences together, and the stamping
+  lookup adds the sequence as its discriminator — with one slot of lifetime fixed at admission and
+  never extended by a replay, 8 builds per key across all of that pair's sequences, 1,024
+  `(venue, pair)` keys, 16 entries per frame × 32 pairs per entry, newest-built wins, a same-build
+  conflicting payload poisons that build as a *recency bar* (older builds refused, newer ones still
+  supersede), plus a rotating sweep so a key no lookup visits still expires. `tracker.rs` stamps at
+  state construction on the **full identity only**: `PairProvenance` merges the books of one (venue,
+  pair), so books disagreeing on their version — or naming none — leave the state unstamped, and
+  the stamped clone's `expires_at` narrows to `min(ladder deadline, snapshot deadline)` while the
+  shared retained snapshot keeps its own. The snapshot rides inside the state as the serialized
+  `overrides` field (`PammSimulationOverrides`; no u128 at any serialization boundary — sequences
+  stay transient; `eq` compares it, `consumed()` keeps it, old recordings read back `None`).
+  Quoting never reads it: a dead/malformed second socket, a refused entry, an empty buffer, an
+  unreadable reference and the opt-out all end in a state that quotes and carries no snapshot.
+  `telemetry.rs` adds `override_match_total{outcome}` (5 `MatchResult` outcomes),
+  `override_buffer_total{event}` (17 `IngestEvent`s) and `refused_override_entries_total{reason}`
+  (10 `EntryRejection`s) — those three registered at zero only while stamping is on — plus
+  `invalid_provenance_total` (per **served** book, unreadable references only), which is registered
+  **unconditionally**, because the provenance read sits on the price level path: the series exists
+  at zero under `without_simulation_overrides`, so its presence is no evidence that stamping is on.
+  It also adds a `socket` label (`price_levels`/`quote_stream`) to the already-released
+  `frames_rejected_total`/`reconnects_total`, which **changes the identity of those two series**.
+  This path's provenance is the price level stream's own; `evm/override_stream/` is the separate
+  per-simulation override path of the `vm:` protocols and stays untouched
 
 ## Simulation Approaches
 
