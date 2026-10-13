@@ -1,3 +1,46 @@
+## [0.453.2](https://github.com/propeller-heads/tycho/compare/0.453.1...0.453.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **storage:** bound the transaction cleanup probes to the batch range ([#1583](https://github.com/propeller-heads/tycho/issues/1583)) ([e4b6ac6](https://github.com/propeller-heads/tycho/commit/e4b6ac6e91ec89b80c448c2ef1f1db712a85d7cc))
+
+
+### Performance Improvements
+
+* **storage:** bound the transaction cleanup probes to the batch range ([dffbaf0](https://github.com/propeller-heads/tycho/commit/dffbaf0042527e135a8776c49ee57d9ebf929680))
+
+## [0.453.1](https://github.com/propeller-heads/tycho/compare/0.453.0...0.453.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* clamp chunk_size to the server max page size in tycho-client ([7b46176](https://github.com/propeller-heads/tycho/commit/7b461766a9711cbbaa8c2fc0e5f5d5be6a56adca))
+* request every id chunk as page 0 in tycho-client ([f5c4945](https://github.com/propeller-heads/tycho/commit/f5c4945aca4f7c9ab594f94e41070290a4d0450d))
+* request every id chunk as page 0 in tycho-client ([#1579](https://github.com/propeller-heads/tycho/issues/1579)) ([64dd6e2](https://github.com/propeller-heads/tycho/commit/64dd6e2cb088f5ab0f2d6d061a531e8707eea26b))
+
+## [0.453.0](https://github.com/propeller-heads/tycho/compare/0.452.2...0.453.0) (2026-10-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **execution:** send a per-request origin with Bebop binding quotes (#1576)
+
+### Features
+
+* **common:** add per-request origin to GetAmountOutParams ([727ee84](https://github.com/propeller-heads/tycho/commit/727ee84f97fb81060d6b3ad93617d9568d3b78db))
+* **execution:** pass the end user origin from Solution to Bebop quotes ([343aa96](https://github.com/propeller-heads/tycho/commit/343aa96a0906d81bcfcdcf867680f1101f5b3e13))
+* **execution:** send a per-request origin with Bebop binding quotes ([#1576](https://github.com/propeller-heads/tycho/issues/1576)) ([dd8787b](https://github.com/propeller-heads/tycho/commit/dd8787b9905400caaf6ce165af4adeeb6a459534))
+* **simulation:** send per-request origin in Bebop binding quotes ([97e9d35](https://github.com/propeller-heads/tycho/commit/97e9d355c5584a319072978cdc2072001cbfa7d2))
+
+## [0.452.2](https://github.com/propeller-heads/tycho/compare/0.452.1...0.452.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **indexer:** give extractors their own database connection pool ([d7934d7](https://github.com/propeller-heads/tycho/commit/d7934d7761a79cdbae93342a2ec58ce1384ea4eb))
+* **indexer:** give extractors their own database connection pool ([#1571](https://github.com/propeller-heads/tycho/issues/1571)) ([d0788ae](https://github.com/propeller-heads/tycho/commit/d0788ae80369a045a2fe4b56c45ad2b727d4b3c5))
+
 ## [0.452.1](https://github.com/propeller-heads/tycho/compare/0.452.0...0.452.1) (2026-10-09)
 
 
