@@ -134,10 +134,19 @@ impl PostgresGateway {
         }
     }
 
-    /// With the component index enabled, requests with a protocol system and without `ids` are
-    /// counted and paged by `ComponentIndex::query`, a second implementation of this filter: the
-    /// missing-TVL, NaN, soft-delete, order and offset semantics must stay the same in both.
-    /// `test_serial_db_index_matches_sql` compares the two.
+    /// Returns the components of `chain` that match all given filters, and the number of matching
+    /// components on all pages.
+    ///
+    /// - `system`: only components of this protocol system.
+    /// - `ids`: only components with these external ids.
+    /// - `min_tvl`: only components with a TVL greater than this value. A component without a TVL
+    ///   row never matches; a NaN TVL matches every value.
+    /// - `pagination`: the page to return, in ascending database id order. Without it, all matching
+    ///   components are returned, in no particular order.
+    ///
+    /// Soft-deleted components are returned too. When the component index is enabled and `system`
+    /// is given without `ids`, the index selects the page and counts the matches; Postgres then
+    /// loads only the components on the page.
     #[instrument(level = Level::DEBUG, skip(self, ids, conn))]
     pub async fn get_protocol_components(
         &self,

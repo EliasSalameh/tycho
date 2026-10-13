@@ -14,7 +14,7 @@ postgres/
 ├── contract.rs         — account, code, storage slot, and native-balance persistence
 ├── protocol.rs         — protocol component, attribute, and token-balance persistence
 ├── token_cache.rs      — in-memory token store answering get_tokens without SQL (opt-in)
-├── component_index.rs  — in-memory id/TVL index counting and paging get_protocol_components (opt-in)
+├── component_index.rs  — in-memory id/TVL index counting and paging get_protocol_components
 ├── entry_point.rs      — entry point + tracing param/result persistence
 ├── extraction_state.rs — extractor checkpoint (cursor, block hash) persistence
 ├── snapshot.rs         — one-transaction read of all live contracts and components for the entity cache (StateSnapshotGateway)

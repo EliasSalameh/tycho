@@ -14,8 +14,8 @@
 //!
 //! Only what filtering, counting and paging need: per chain and protocol system, the database ids
 //! of the components in ascending order (the order of the SQL path) and the TVL of each. The
-//! component contents (tokens, contracts, attributes) stay in Postgres. They never change after
-//! insertion, but on large chains there are too many of them to hold in memory.
+//! component contents (tokens, contracts, attributes) stay in Postgres: on large chains they do
+//! not fit in memory.
 //!
 //! TVL follows the SQL semantics of `LEFT JOIN component_tvl ... WHERE tvl > threshold`: a
 //! component without a TVL row never matches a threshold, whatever its value. Soft-deleted
@@ -29,14 +29,13 @@
 //! The database is the source of truth. The index converges to it through three mechanisms:
 //!
 //! 1. **New-component poll** — every refresh reads the components with an id above the highest id
-//!    the index has seen. The index sees a new component only once its transaction commits, so from
-//!    that commit until the next poll, queries do not return the component. A full reload pauses
-//!    the polls while it runs, which makes this window longer.
+//!    the index has seen. A component committed after the last poll is missing from query results
+//!    until the next poll: at most one refresh period, plus the duration of a full reload when one
+//!    runs. This window is accepted because it lasts a few seconds. Closing it would require the
+//!    write path to add components to the index at commit.
 //! 2. **TVL poll** — every refresh reads the `component_tvl` rows whose `modified_ts` is newer than
-//!    the newest one read so far. The update trigger and the column default set `modified_ts` on
-//!    every write. A writer stamps all rows of one transaction with the same `modified_ts`, and the
-//!    index keeps equal keys in physical row order, so even a rewrite of the whole table reads the
-//!    table front to back.
+//!    the newest one read so far, through the `modified_ts` index. The update trigger and the
+//!    column default set `modified_ts` on every write.
 //! 3. **Full reload** — at startup and at a fixed interval, components and TVL are read again and
 //!    swapped in.
 //!
@@ -79,8 +78,8 @@
 //!
 //! # Cost
 //!
-//! 16 bytes per component plus a small per-system overhead: ~85 MB for 5.25M components. A full TVL
-//! read holds the fetched rows, 32 bytes each, until they are applied; a full reload also holds a
+//! 16 bytes per component plus a small per-system overhead: ~85 MB for 5.25M components. A refresh
+//! holds the TVL rows it read, 32 bytes each, until they are applied; a full reload also holds a
 //! second index until the swap.
 use std::{
     collections::HashMap,
