@@ -34,9 +34,9 @@
 //!    the polls while it runs, which makes this window longer.
 //! 2. **TVL poll** — every refresh reads the `component_tvl` rows whose `modified_ts` is newer than
 //!    the newest one read so far. The update trigger and the column default set `modified_ts` on
-//!    every write. When more than [`TVL_POLL_MAX_ROWS`] rows changed since the last poll, such as
-//!    after a cron rewrote the whole table, the poll stops and all TVL is read in one sequential
-//!    scan instead.
+//!    every write. A writer stamps all rows of one transaction with the same `modified_ts`, and the
+//!    index keeps equal keys in physical row order, so even a rewrite of the whole table reads the
+//!    table front to back.
 //! 3. **Full reload** — at startup and at a fixed interval, components and TVL are read again and
 //!    swapped in.
 //!
@@ -111,11 +111,6 @@ use crate::postgres::{
 /// TVL of a component without a `component_tvl` row. It never compares greater than a threshold.
 const NO_TVL: f64 = f64::NEG_INFINITY;
 
-/// Most rows a TVL poll applies. A poll that finds more reads all TVL in one sequential scan
-/// instead: right after a large write, the planner's statistics do not show it yet, and a read
-/// through the `modified_ts` index would visit most of the table in random order.
-const TVL_POLL_MAX_ROWS: usize = 10_000;
-
 /// Longest a refresh may run before the task abandons it and its connection. Reads already stop
 /// after the snapshot statement timeout; this also covers a connection that stopped answering.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -139,8 +134,6 @@ pub(crate) enum RefreshOutcome {
     TvlUnchanged,
     /// Applied the TVL rows that changed.
     TvlDelta { n_rows: usize },
-    /// Too many TVL rows changed; read all TVL.
-    TvlReload { n_rows: usize },
     /// Read components and TVL again.
     FullReload { n_components: usize },
 }
@@ -151,7 +144,6 @@ impl RefreshOutcome {
         match self {
             RefreshOutcome::TvlUnchanged => "tvl_unchanged",
             RefreshOutcome::TvlDelta { .. } => "tvl_delta",
-            RefreshOutcome::TvlReload { .. } => "tvl_reload",
             RefreshOutcome::FullReload { .. } => "full_reload",
         }
     }
@@ -270,12 +262,6 @@ impl ChainIndex {
         }
     }
 
-    fn clear_tvl(&mut self) {
-        for system in self.systems.values_mut() {
-            system.tvl.fill(NO_TVL);
-        }
-    }
-
     fn n_components(&self) -> usize {
         self.systems
             .values()
@@ -310,8 +296,6 @@ pub(crate) struct ComponentIndex {
     chain_db_id: i64,
     index: RwLock<ChainIndex>,
     refresh_state: Mutex<RefreshState>,
-    /// [`TVL_POLL_MAX_ROWS`], lowered by tests.
-    tvl_poll_max_rows: usize,
 }
 
 impl ComponentIndex {
@@ -342,7 +326,6 @@ impl ComponentIndex {
                 newest_tvl_ts: NaiveDateTime::default(),
                 last_full_reload: Instant::now(),
             }),
-            tvl_poll_max_rows: TVL_POLL_MAX_ROWS,
         };
         index.full_reload(conn).await?;
         Ok(index)
@@ -393,33 +376,23 @@ impl ComponentIndex {
         let chain_db_id = self.chain_db_id;
         let max_id = self.read_index().max_id;
         let newest = self.refresh_state().newest_tvl_ts;
-        let poll_max_rows = self.tvl_poll_max_rows;
-        let (new_components, changed_tvl, all_tvl) = snapshot_transaction(conn)
+        let (new_components, changed_tvl) = snapshot_transaction(conn)
             .run(|conn| {
                 async move {
                     bound_snapshot_reads(conn).await?;
                     let new_components = load_components(conn, chain_db_id, max_id).await?;
-                    let changed_tvl =
-                        load_tvl(conn, Some((newest, poll_max_rows as i64 + 1))).await?;
-                    let all_tvl = if changed_tvl.len() > poll_max_rows {
-                        Some(load_tvl(conn, None).await?)
-                    } else {
-                        None
-                    };
-                    Result::<_, PostgresError>::Ok((new_components, changed_tvl, all_tvl))
+                    let changed_tvl = load_tvl(conn, Some(newest)).await?;
+                    Result::<_, PostgresError>::Ok((new_components, changed_tvl))
                 }
                 .scope_boxed()
             })
             .await?;
 
         self.add_components(&new_components);
-        let outcome = if let Some(rows) = all_tvl {
-            self.write_tvl(&rows, true);
-            RefreshOutcome::TvlReload { n_rows: rows.len() }
-        } else if changed_tvl.is_empty() {
+        let outcome = if changed_tvl.is_empty() {
             RefreshOutcome::TvlUnchanged
         } else {
-            self.write_tvl(&changed_tvl, false);
+            self.write_tvl(&changed_tvl);
             RefreshOutcome::TvlDelta { n_rows: changed_tvl.len() }
         };
         gauge!("component_index_last_refresh_timestamp_seconds").set(unix_now());
@@ -440,16 +413,9 @@ impl ComponentIndex {
         gauge!("component_index_components").set(index.n_components() as f64);
     }
 
-    /// Writes `rows`, sorted by component id, into the index. With `replace_all`, all other
-    /// components lose their TVL.
-    fn write_tvl(&self, rows: &[TvlRow], replace_all: bool) {
-        {
-            let mut index = self.write_index();
-            if replace_all {
-                index.clear_tvl();
-            }
-            index.apply_tvl(rows);
-        }
+    /// Writes `rows`, sorted by component id, into the index.
+    fn write_tvl(&self, rows: &[TvlRow]) {
+        self.write_index().apply_tvl(rows);
         self.advance_newest_tvl_ts(rows);
     }
 
@@ -600,12 +566,12 @@ async fn load_components(
         .map_err(PostgresError::from)
 }
 
-/// Reads the `component_tvl` rows, sorted by component id: with `newer_than = (ts, limit)` at most
-/// `limit` rows with a `modified_ts` after `ts`, otherwise all rows. Rows of every chain are
+/// Reads the `component_tvl` rows, sorted by component id: with `newer_than`, the rows with a
+/// `modified_ts` after it, otherwise all rows. Rows of every chain are
 /// returned; `component_tvl` has no chain column, and matching by id discards the others.
 async fn load_tvl(
     conn: &mut AsyncPgConnection,
-    newer_than: Option<(NaiveDateTime, i64)>,
+    newer_than: Option<NaiveDateTime>,
 ) -> Result<Vec<TvlRow>, PostgresError> {
     let mut query = schema::component_tvl::table
         .select((
@@ -614,10 +580,8 @@ async fn load_tvl(
             schema::component_tvl::modified_ts,
         ))
         .into_boxed();
-    if let Some((since, limit)) = newer_than {
-        query = query
-            .filter(schema::component_tvl::modified_ts.gt(since))
-            .limit(limit);
+    if let Some(since) = newer_than {
+        query = query.filter(schema::component_tvl::modified_ts.gt(since));
     }
     let rows: Vec<(i64, f64, NaiveDateTime)> = query
         .load(conn)
@@ -748,19 +712,6 @@ mod test {
         assert!(above(system_8, 50.0).is_empty());
     }
 
-    #[test]
-    fn test_clear_tvl_then_apply_replaces_all_values() {
-        let mut chain_index = ChainIndex::from_sorted_components(&[(1, 7), (2, 7)]);
-        chain_index.apply_tvl(&[tvl_row(1, 1.0), tvl_row(2, 2.0)]);
-
-        chain_index.clear_tvl();
-        chain_index.apply_tvl(&[tvl_row(2, 3.0)]);
-
-        let system = &chain_index.systems[&7];
-        assert_eq!(above(system, f64::MIN), vec![2]);
-        assert_eq!(above(system, 2.5), vec![2]);
-    }
-
     fn index_with(rows: &[(i64, i64)]) -> ComponentIndex {
         let mut sorted: Vec<(i64, i64)> = rows
             .iter()
@@ -775,7 +726,6 @@ mod test {
                 newest_tvl_ts: NaiveDateTime::default(),
                 last_full_reload: Instant::now(),
             }),
-            tvl_poll_max_rows: TVL_POLL_MAX_ROWS,
         }
     }
 
@@ -912,9 +862,9 @@ mod benchmark {
         let rows = load_tvl(&mut conn, None).await.unwrap();
         let fetch_elapsed = started.elapsed();
         let started = Instant::now();
-        index.write_tvl(&rows, true);
+        index.write_tvl(&rows);
         println!(
-            "full TVL read: fetch+sort {fetch_elapsed:?} ({} rows), write under lock {:?}, RSS {}",
+            "all TVL applied: fetch+sort {fetch_elapsed:?} ({} rows), write under lock {:?}, RSS {}",
             rows.len(),
             started.elapsed(),
             rss()
@@ -1265,36 +1215,6 @@ mod serial_db_test {
             let outcome = fixture.refresh(&mut conn).await;
 
             assert_eq!(outcome, RefreshOutcome::TvlDelta { n_rows: 2 });
-            fixture
-                .assert_equivalent(&mut conn)
-                .await;
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_serial_db_bulk_tvl_write_reads_all_tvl() {
-        run_against_db(|pool| async move {
-            let mut conn = pool.get().await.unwrap();
-            let mut fixture = setup(&mut conn).await;
-            let index = Arc::get_mut(
-                fixture
-                    .indexed_gateway
-                    .component_index
-                    .as_mut()
-                    .unwrap(),
-            )
-            .unwrap();
-            index.tvl_poll_max_rows = 1;
-            // Three changed rows: more than the poll fetches (its row limit + 1), so only the full
-            // read sees all of them.
-            set_tvl(&mut conn, fixture.component_db_ids[0], 0.5).await;
-            set_tvl(&mut conn, fixture.component_db_ids[1], 50.0).await;
-            set_tvl(&mut conn, fixture.component_db_ids[4], 0.2).await;
-
-            let outcome = fixture.refresh(&mut conn).await;
-
-            assert_eq!(outcome, RefreshOutcome::TvlReload { n_rows: 7 });
             fixture
                 .assert_equivalent(&mut conn)
                 .await;
