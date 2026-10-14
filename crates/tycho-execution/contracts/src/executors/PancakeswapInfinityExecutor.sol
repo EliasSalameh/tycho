@@ -103,7 +103,9 @@ contract PancakeswapInfinityExecutor is IExecutor, ICallback {
         external
         payable
     {
-        (address tokenIn,,,,,,) = _decodeData(data);
+        // No _decodeData here: getTransferData already validated these bytes, and the
+        // callback's _swap validates them again before anything moves.
+        address tokenIn = address(bytes20(data[0:20]));
         // Native pays by value in the callback, no snapshot needed. ERC20 must sync before
         // lock: settle credits balanceNow - reservesBefore, and the token only lands once the
         // callback is running.
