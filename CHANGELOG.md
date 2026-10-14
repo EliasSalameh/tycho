@@ -1,3 +1,11 @@
+## [0.456.0](https://github.com/propeller-heads/tycho/compare/0.455.1...0.456.0) (2026-10-14)
+
+
+### Features
+
+* **indexer:** make RPC response caches disableable ([80c27b0](https://github.com/propeller-heads/tycho/commit/80c27b0743b86dfa10f1bf43ef65438c2275f33c))
+* **indexer:** make RPC response caches disableable ([#1582](https://github.com/propeller-heads/tycho/issues/1582)) ([429dcd5](https://github.com/propeller-heads/tycho/commit/429dcd50cb5b2a5574f27710b10ce7e5f46e78a2))
+
 ## [0.455.1](https://github.com/propeller-heads/tycho/compare/0.455.0...0.455.1) (2026-10-13)
 
 
