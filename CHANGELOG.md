@@ -1,3 +1,11 @@
+## [0.456.2](https://github.com/propeller-heads/tycho/compare/0.456.1...0.456.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **execution:** group swaps only when the input has one producer ([8c441b7](https://github.com/propeller-heads/tycho/commit/8c441b7b576828cd8562bcf88fd72e46bdc3d668))
+* **execution:** group swaps only when the input has one producer ([#1602](https://github.com/propeller-heads/tycho/issues/1602)) ([17a1857](https://github.com/propeller-heads/tycho/commit/17a185740c711a6315d4df9f3238729003791949))
+
 ## [0.456.1](https://github.com/propeller-heads/tycho/compare/0.456.0...0.456.1) (2026-10-14)
 
 
