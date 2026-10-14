@@ -176,6 +176,7 @@ mod tests {
             router_address: Some(Bytes::from("0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f")),
             group_token_in: swap.token_in().address.clone(),
             group_token_out: swap.token_out().address.clone(),
+            origin: None,
         };
         encoder.encode_swap(swap, &context)
     }
