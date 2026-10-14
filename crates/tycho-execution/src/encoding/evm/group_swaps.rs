@@ -55,7 +55,7 @@ pub fn group_swaps(swaps: &[Swap]) -> Vec<SwapGroup> {
     let mut grouped_swaps: Vec<SwapGroup> = Vec::new();
     let mut current_group: Option<SwapGroup> = None;
     let mut last_swap_protocol = "".to_string();
-    let mut groupable_protocol;
+    let mut is_groupable_protocol;
     let mut last_swap_out_token = Bytes::default();
     for swap in swaps {
         let mut current_swap_protocol = swap.component().protocol_system.clone();
@@ -63,28 +63,28 @@ pub fn group_swaps(swaps: &[Swap]) -> Vec<SwapGroup> {
         if current_swap_protocol == "uniswap_v4_hooks" {
             current_swap_protocol = "uniswap_v4".to_string();
         };
-        groupable_protocol = GROUPABLE_PROTOCOLS.contains(&current_swap_protocol.as_str());
+        is_groupable_protocol = GROUPABLE_PROTOCOLS.contains(&current_swap_protocol.as_str());
 
         // Split 0 can also mean that the swap is the remaining part of a branch of splits,
         // so we need to check the last swap's out token as well
-        let no_split = swap.split() == 0.0 && swap.token_in().address == last_swap_out_token;
+        let is_unsplit_continuation =
+            swap.split() == 0.0 && swap.token_in().address == last_swap_out_token;
 
-        // Inside a group this swap receives only what the previous swap produced. Any other
-        // producer's output would stay in the router, unspent.
-        let single_producer = producer_counts.get(&swap.token_in().address) == Some(&1);
+        // Inside a group this swap receives only what the previous swap produced.
+        let is_single_producer = producer_counts.get(&swap.token_in().address) == Some(&1);
 
         // Merging this swap would make the group's token_out equal to its token_in, which
         // the router rejects as an unsupported single-hop cycle. Keep the swap in its
         // own group instead.
-        let no_cycle = current_group
+        let is_acyclic = current_group
             .as_ref()
             .is_none_or(|g| swap.token_out().address != g.token_in);
 
         if current_swap_protocol == last_swap_protocol &&
-            groupable_protocol &&
-            no_split &&
-            single_producer &&
-            no_cycle
+            is_groupable_protocol &&
+            is_unsplit_continuation &&
+            is_single_producer &&
+            is_acyclic
         {
             // Second or later groupable pool in a sequence of groupable pools. Merge to the
             // current group.
