@@ -1,3 +1,26 @@
+## [0.458.0](https://github.com/propeller-heads/tycho/compare/0.457.0...0.458.0) (2026-10-14)
+
+
+### Features
+
+* **client:** delay restart snapshots by a random jitter ([26f06a9](https://github.com/propeller-heads/tycho/commit/26f06a9c39acdce0b7f0d351ab9615aba9910c7e))
+* **client:** enforce a 5 s minimum snapshot jitter ([718405c](https://github.com/propeller-heads/tycho/commit/718405c946ac8e492e9dbd09273c67390b5188cd))
+* **client:** expose snapshot jitter on TychoStreamBuilder and CLI ([7a35f99](https://github.com/propeller-heads/tycho/commit/7a35f999978437902b4673c248ef4df2a60bc091))
+* **simulation:** expose snapshot jitter on ProtocolStreamBuilder ([b3bcb08](https://github.com/propeller-heads/tycho/commit/b3bcb088348f7986754b833f2ab0a1211101b8b7))
+
+
+### Bug Fixes
+
+* **client:** apply snapshot jitter only after a synced block ([7b97435](https://github.com/propeller-heads/tycho/commit/7b974359b501810bddf4b6c797e869c129578529))
+* **client:** skip snapshot jitter when no snapshot is requested ([da851e5](https://github.com/propeller-heads/tycho/commit/da851e5cf8084c9920abd578c18961e5e8f861d8))
+* **common:** keep new tokens when merging block changes ([884c4fa](https://github.com/propeller-heads/tycho/commit/884c4fa145c52b1cfce69b4c4361e9cdf03733b0))
+* **tycho-client:** advance the round by Ready streams only ([435b232](https://github.com/propeller-heads/tycho/commit/435b2320e9f2f93685fd3d740366169a25c9fcaf))
+* **tycho-client:** classify a header equal to the tip as Latest ([29f1301](https://github.com/propeller-heads/tycho/commit/29f1301236d4f6fc1bd4580385cdf87b53be02d8))
+* **tycho-client:** keep the oldest block's parent in the block history ([ab4046c](https://github.com/propeller-heads/tycho/commit/ab4046cca99a81543a1947c350be5813ca4a8737))
+* **tycho-client:** mark reverts in block header logs ([c77f8c2](https://github.com/propeller-heads/tycho/commit/c77f8c282f3fd42f4bb47da144e5780a7b91111f))
+* **tycho-client:** resolve a revert by its target block ([7cc4b43](https://github.com/propeller-heads/tycho/commit/7cc4b43c2e4770ba4db01067e5da5fb0991c7d92))
+* **tycho-client:** stop catch-up at the first advanced block ([be3b791](https://github.com/propeller-heads/tycho/commit/be3b791ebf41d66fef78bb68dd3ecf5517f45d65))
+
 ## [0.457.0](https://github.com/propeller-heads/tycho/compare/0.456.2...0.457.0) (2026-10-14)
 
 
