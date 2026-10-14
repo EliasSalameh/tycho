@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use num_bigint::BigUint;
 use tycho_common::Bytes;
 
@@ -38,7 +40,18 @@ impl PartialEq for SwapGroup {
 ///
 /// An example where this applies is the case of USV4, which uses a PoolManager contract
 /// to save token transfers on consecutive swaps.
+///
+/// A swap joins the previous group only when the previous swap is the sole producer of its input
+/// token. A token that several swaps produce is spent through the router's balance, which a
+/// group bypasses.
 pub fn group_swaps(swaps: &[Swap]) -> Vec<SwapGroup> {
+    let mut producer_counts: HashMap<&Bytes, usize> = HashMap::new();
+    for swap in swaps {
+        *producer_counts
+            .entry(&swap.token_out().address)
+            .or_default() += 1;
+    }
+
     let mut grouped_swaps: Vec<SwapGroup> = Vec::new();
     let mut current_group: Option<SwapGroup> = None;
     let mut last_swap_protocol = "".to_string();
@@ -56,6 +69,10 @@ pub fn group_swaps(swaps: &[Swap]) -> Vec<SwapGroup> {
         // so we need to check the last swap's out token as well
         let no_split = swap.split() == 0.0 && swap.token_in().address == last_swap_out_token;
 
+        // Inside a group this swap receives only what the previous swap produced. Any other
+        // producer's output would stay in the router, unspent.
+        let single_producer = producer_counts.get(&swap.token_in().address) == Some(&1);
+
         // Merging this swap would make the group's token_out equal to its token_in, which
         // the router rejects as an unsupported single-hop cycle. Keep the swap in its
         // own group instead.
@@ -63,7 +80,11 @@ pub fn group_swaps(swaps: &[Swap]) -> Vec<SwapGroup> {
             .as_ref()
             .is_none_or(|g| swap.token_out().address != g.token_in);
 
-        if current_swap_protocol == last_swap_protocol && groupable_protocol && no_split && no_cycle
+        if current_swap_protocol == last_swap_protocol &&
+            groupable_protocol &&
+            no_split &&
+            single_producer &&
+            no_cycle
         {
             // Second or later groupable pool in a sequence of groupable pools. Merge to the
             // current group.
@@ -360,6 +381,58 @@ mod tests {
                     split: 0f64,
                     estimated_gas: BigUint::from(380_000u64),
                 }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_group_swaps_does_not_merge_into_token_with_several_producers() {
+        // WETH is produced by three swaps and spent by one. Grouping WBTC -> WETH with
+        // WETH -> DAI would leave the WETH from the two direct swaps in the router.
+        //
+        //         ┌──(USV3)──> WBTC ──(USV4)──┐
+        //   USDC ─┼──(USV4)───────────────────┼──> WETH ──(USV4)──> DAI
+        //         └──(USV4)───────────────────┘
+        //
+        // Expected: every swap in its own group.
+
+        let weth = weth();
+        let wbtc = Bytes::from_str("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599").unwrap();
+        let usdc = Bytes::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+        let dai = Bytes::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap();
+        let swap = |protocol_system: &str, token_in: &Bytes, token_out: &Bytes| {
+            Swap::new(
+                ProtocolComponent {
+                    protocol_system: protocol_system.to_string(),
+                    ..Default::default()
+                },
+                default_token(token_in.clone()),
+                default_token(token_out.clone()),
+                BigUint::ZERO,
+            )
+        };
+
+        let swaps = vec![
+            swap("uniswap_v3", &usdc, &wbtc).with_split(0.4),
+            swap("uniswap_v4", &usdc, &weth).with_split(0.3),
+            swap("uniswap_v4", &usdc, &weth),
+            swap("uniswap_v4", &wbtc, &weth),
+            swap("uniswap_v4", &weth, &dai),
+        ];
+        let grouped_swaps = group_swaps(&swaps);
+
+        let group_tokens: Vec<(Bytes, Bytes)> = grouped_swaps
+            .iter()
+            .map(|group| (group.token_in.clone(), group.token_out.clone()))
+            .collect();
+        assert_eq!(
+            group_tokens,
+            vec![
+                (usdc.clone(), wbtc.clone()),
+                (usdc.clone(), weth.clone()),
+                (usdc, weth.clone()),
+                (wbtc, weth.clone()),
+                (weth, dai),
             ]
         );
     }
