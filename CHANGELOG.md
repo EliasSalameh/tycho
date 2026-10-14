@@ -1,3 +1,11 @@
+## [0.456.1](https://github.com/propeller-heads/tycho/compare/0.456.0...0.456.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** resolve rustls advisories RUSTSEC-2026-0346 to 0349 ([934bfc8](https://github.com/propeller-heads/tycho/commit/934bfc83d40b26d69b474c4ceab715c39a638954))
+* **deps:** resolve rustls advisories RUSTSEC-2026-0346 to 0349 ([#1603](https://github.com/propeller-heads/tycho/issues/1603)) ([8d04d6f](https://github.com/propeller-heads/tycho/commit/8d04d6f85e811e79b4f3961c8365a8fa835ea21f))
+
 ## [0.456.0](https://github.com/propeller-heads/tycho/compare/0.455.1...0.456.0) (2026-10-14)
 
 
