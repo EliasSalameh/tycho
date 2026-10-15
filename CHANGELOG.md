@@ -1,3 +1,26 @@
+## [0.460.0](https://github.com/propeller-heads/tycho/compare/0.459.0...0.460.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **simulation:** keep fallback venues and drop bad books in all-pairs RFQ (#1587)
+* **simulation:** skip books the all-pairs RFQ states cannot price
+
+### Features
+
+* **simulation:** let an RFQ client say which layout it streams ([7808f61](https://github.com/propeller-heads/tycho/commit/7808f616477978e0abbf5e9b28b993647532d9f1))
+
+
+### Bug Fixes
+
+* **simulation:** drop unknown tokens of all-pairs RFQ components ([6a4ffe9](https://github.com/propeller-heads/tycho/commit/6a4ffe9265f4353ce188d00674b4cf6b54be8659))
+* **simulation:** keep fallback venues and drop bad books in all-pairs RFQ ([#1587](https://github.com/propeller-heads/tycho/issues/1587)) ([f1afb0d](https://github.com/propeller-heads/tycho/commit/f1afb0d96ab2792dddab05ae524c07d950d23d62))
+* **simulation:** keep swap directions to the tokens a component carries ([f350520](https://github.com/propeller-heads/tycho/commit/f35052081499eae0f5ef2f503c0488843f4c0873))
+* **simulation:** keep the fallback router on all-pairs RFQ components ([85048ff](https://github.com/propeller-heads/tycho/commit/85048ff712702b07861e0995bfce60d7ece6b022))
+* **simulation:** let the stream decoder drop unknown tokens ([e29e550](https://github.com/propeller-heads/tycho/commit/e29e550e3384679bba8f1f84c6af00d7ffdf66b5))
+* **simulation:** skip a bad book when decoding an all-pairs component ([db469e7](https://github.com/propeller-heads/tycho/commit/db469e7e0d93ca2d2ec8c2193674629b7b732c50))
+* **simulation:** skip books the all-pairs RFQ states cannot price ([08b8461](https://github.com/propeller-heads/tycho/commit/08b8461dc936a4d6004e6b410fd205944c3a45f9))
+
 ## [0.459.0](https://github.com/propeller-heads/tycho/compare/0.458.1...0.459.0) (2026-10-15)
 
 
