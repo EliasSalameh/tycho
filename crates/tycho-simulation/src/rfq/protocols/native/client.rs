@@ -287,7 +287,7 @@ impl NativeClient {
         }
 
         if quote_response.router_version != "6" {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Unexpected Native router version: expected 6, got {}",
                 quote_response.router_version
             )));
@@ -318,7 +318,7 @@ impl NativeClient {
             RFQError::ParsingError(format!("Invalid Native buyer token {}: {e}", order.buyer_token))
         })?;
         if order_seller_token != seller_token || order_buyer_token != buyer_token {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native Relay quote token mismatch: expected {}/{}, got {}/{}",
                 seller_token, buyer_token, order_seller_token, order_buyer_token
             )));
@@ -333,7 +333,7 @@ impl NativeClient {
             ))
         })?;
         if order_recipient != receiver {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native Relay quote recipient mismatch: expected {receiver}, got {order_recipient}"
             )));
         }
@@ -361,7 +361,7 @@ impl NativeClient {
             ))
         })?;
         if quoted_amount_in != params.amount_in {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native Relay quote input amount mismatch: expected {}, got {}",
                 params.amount_in, quoted_amount_in
             )));
@@ -374,7 +374,7 @@ impl NativeClient {
             ))
         })?;
         if signed_amount_in != params.amount_in {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native Relay signed input amount mismatch: expected {}, got {}",
                 params.amount_in, signed_amount_in
             )));
@@ -395,7 +395,7 @@ impl NativeClient {
         let expected_value =
             if seller_token == Address::ZERO { quoted_amount_in.clone() } else { BigUint::ZERO };
         if quoted_value != expected_value {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native Relay payable value mismatch: expected {}, got {}",
                 expected_value, quoted_value
             )));
@@ -420,7 +420,7 @@ impl NativeClient {
         .map_err(|e| RFQError::ParsingError(format!("Failed to decode calldata: {e}")))?;
 
         if calldata.len() < MIN_TRADE_RFQT_CALLDATA_LEN {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Native tradeRFQT calldata too short: expected at least {} bytes, got {}",
                 MIN_TRADE_RFQT_CALLDATA_LEN,
                 calldata.len()
@@ -428,7 +428,7 @@ impl NativeClient {
         }
 
         if calldata[..TRADE_RFQT_SELECTOR.len()] != TRADE_RFQT_SELECTOR {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Unexpected Native V6 selector: expected 0x{}, got 0x{}",
                 hex::encode(TRADE_RFQT_SELECTOR),
                 hex::encode(&calldata[..TRADE_RFQT_SELECTOR.len()]),
@@ -442,7 +442,7 @@ impl NativeClient {
         if quote_response.amount_in_offset as usize != ACTUAL_SELLER_AMOUNT_OFFSET ||
             quote_response.amount_out_minimum_offset as usize != ACTUAL_MIN_OUTPUT_AMOUNT_OFFSET
         {
-            return Err(RFQError::ParsingError(format!(
+            return Err(RFQError::FatalError(format!(
                 "Unexpected Native V6 override offsets: expected {}/{} but got {}/{}",
                 ACTUAL_SELLER_AMOUNT_OFFSET,
                 ACTUAL_MIN_OUTPUT_AMOUNT_OFFSET,
@@ -455,7 +455,7 @@ impl NativeClient {
             .iter()
             .any(|byte| *byte != 0)
         {
-            return Err(RFQError::ParsingError(
+            return Err(RFQError::FatalError(
                 "Native actualSellerAmount override must be zero".to_string(),
             ));
         }
@@ -463,7 +463,7 @@ impl NativeClient {
             .iter()
             .any(|byte| *byte != 0)
         {
-            return Err(RFQError::ParsingError(
+            return Err(RFQError::FatalError(
                 "Native actualMinOutputAmount override must be zero".to_string(),
             ));
         }
@@ -648,7 +648,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("Native Relay quote input amount mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("Native Relay quote input amount mismatch")
         ));
     }
 
@@ -662,7 +662,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("signed input amount mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("signed input amount mismatch")
         ));
     }
 
@@ -695,7 +695,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("quote token mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("quote token mismatch")
         ));
     }
 
@@ -709,7 +709,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("recipient mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("recipient mismatch")
         ));
     }
 
@@ -737,7 +737,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("calldata too short")
+            Err(RFQError::FatalError(message)) if message.contains("calldata too short")
         ));
     }
 
@@ -760,7 +760,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("selector")
+            Err(RFQError::FatalError(message)) if message.contains("selector")
         ));
     }
 
@@ -774,7 +774,7 @@ mod tests {
 
         assert!(matches!(
             NativeClient::process_quote_response(response, &params),
-            Err(RFQError::ParsingError(message)) if message.contains("Unexpected Native router version")
+            Err(RFQError::FatalError(message)) if message.contains("Unexpected Native router version")
         ));
     }
 
@@ -794,7 +794,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains(
+            Err(RFQError::FatalError(message)) if message.contains(
                 "Unexpected Native V6 override offsets"
             )
         ));
@@ -823,7 +823,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains(field_name)
+            Err(RFQError::FatalError(message)) if message.contains(field_name)
         ));
     }
 
@@ -852,7 +852,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("payable value mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("payable value mismatch")
         ));
     }
 
@@ -880,7 +880,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RFQError::ParsingError(message)) if message.contains("payable value mismatch")
+            Err(RFQError::FatalError(message)) if message.contains("payable value mismatch")
         ));
     }
 
