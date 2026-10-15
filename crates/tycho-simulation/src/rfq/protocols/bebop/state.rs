@@ -128,13 +128,16 @@ impl ProtocolSim for BebopState {
         let amount_in = sim::to_human(&amount_in, token_in.decimals);
         let fill = ladder.fill(amount_in);
         // The trade's worth is read on the quote side, which the swap already expresses: the
-        // amount sold when the quote token is sold, and what the ladder pays otherwise.
+        // amount sold when the quote token is sold, and what the ladder pays otherwise. The
+        // floor speaks for a book that took something: a side with no levels takes none of any
+        // amount and so is worth nothing, which the fill below reports as the absence of
+        // liquidity it is, the same answer at every size.
         let quote_amount = match direction {
             SwapDirection::QuoteToBase => amount_in,
             SwapDirection::BaseToQuote => fill.amount_out,
         };
         let worth_usd = quote_amount * self.usd_per_quote_token;
-        if worth_usd < MIN_TRADE_USD {
+        if fill.remaining_in < amount_in && worth_usd < MIN_TRADE_USD {
             return Err(SimulationError::RecoverableError(format!(
                 "Trade is worth {worth_usd} USD, below the {MIN_TRADE_USD} USD Bebop quotes"
             )));
@@ -392,6 +395,27 @@ mod tests {
             let error = result.unwrap_err().to_string();
             assert!(error.contains("below the 1 USD Bebop quotes"), "{error}");
         }
+    }
+
+    /// Nobody bidding is the absence of liquidity, not a trade too small to quote: the amount
+    /// is irrelevant, so both a trade well over the dollar floor and one under it get the same
+    /// answer.
+    #[rstest]
+    #[case::six_dollars_of_wbtc("10000")]
+    #[case::sixty_five_cents_of_wbtc("1000")]
+    fn selling_into_a_side_with_no_bids_reports_no_liquidity(#[case] amount_in: &str) {
+        let mut state = create_test_bebop_state();
+        state.book.bids = Levels::default();
+
+        let error = state
+            .get_amount_out(BigUint::from_str(amount_in).unwrap(), &wbtc(), &usdc())
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, SimulationError::InvalidInput(message, None)
+                if message.contains("no liquidity on this side")),
+            "{error:?}"
+        );
     }
 
     fn create_test_bebop_state() -> BebopState {
