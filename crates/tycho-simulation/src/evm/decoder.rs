@@ -102,8 +102,8 @@ where
     min_token_quality: u32,
     registry: HashMap<String, Box<RegistryFn<H>>>,
     inclusion_filters: HashMap<String, Vec<FilterFn>>,
-    /// Exchanges whose components keep the rest when a token is unknown.
-    unknown_token_dropping: HashSet<String>,
+    /// Protocols whose components drop an unknown token and keep the rest.
+    protocols_skip_unknown_tokens: HashSet<String>,
     /// Live override providers keyed by `protocol_system`. A pool of that protocol subscribes to
     /// its provider at creation time and reads fresh overrides on every simulation.
     override_providers: HashMap<String, Arc<dyn StateOverrideProvider>>,
@@ -140,7 +140,7 @@ where
             min_token_quality: 100,
             registry: HashMap::new(),
             inclusion_filters: HashMap::new(),
-            unknown_token_dropping: HashSet::new(),
+            protocols_skip_unknown_tokens: HashSet::new(),
             override_providers: HashMap::new(),
             block_time_secs: chain.block_time_secs(),
             chain,
@@ -328,7 +328,7 @@ where
             + 'static,
     {
         self.register_decoder::<T>(exchange);
-        self.unknown_token_dropping
+        self.protocols_skip_unknown_tokens
             .insert(exchange.to_string());
     }
 
@@ -395,7 +395,7 @@ where
 
         for (protocol, protocol_msg) in msg.state_msgs.iter() {
             let drops_unknown_tokens = self
-                .unknown_token_dropping
+                .protocols_skip_unknown_tokens
                 .contains(protocol.as_str());
             // Add any new tokens
             if let Some(deltas) = protocol_msg.deltas.as_ref() {
