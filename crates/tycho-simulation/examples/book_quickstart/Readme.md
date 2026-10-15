@@ -44,7 +44,7 @@ so the example works with no RFQ credentials at all. Pass `--disable-pamm` to le
 cargo run --release --example book_quickstart -- --disable-pamm
 ```
 
-`--all-pairs` builds the four RFQ venues as one component per venue instead of one per pair, which
+`--all-pairs` builds the four RFQ venues as one component per venue instead of one per book, which
 is the layout a router uses to hold a route to the quotes a venue will sign for it:
 
 ```bash

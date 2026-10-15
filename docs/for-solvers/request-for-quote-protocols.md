@@ -105,7 +105,7 @@ You should specify USD-priced stablecoins (e.g., USDC, USDT, DAI) as quote token
 
 ### Stream: Real-Time Price Updates
 
-Each feed publishes its complete set of books as a `BookSnapshot` over a `tokio::sync::watch` channel: one `Book` (component + state, plus the provider's `updated_at` where reported) per pair, anchored by the feed's receipt time (`anchor: ReceivedAt`, a `DateTime<Utc>`).
+Each feed publishes its complete set of books as a `BookSnapshot` over a `tokio::sync::watch` channel: one `Book` — a component, the state that prices it and the provider's `updated_at` where it reports one — for each book the venue publishes, anchored by the feed's receipt time (`anchor: ReceivedAt`, a `DateTime<Utc>`). What a book is depends on the venue: a pair for Bebop, Native and Metric, a pair and one market maker for Hashflow and Liquorice, since a firm quote comes from the maker it is asked of and so fills against that maker's depth alone.
 
 **A feed withdraws its snapshot** — the watch goes back to `None` — when nobody is refreshing it: once the published book is older than `max_snapshot_age`, and whenever the feed itself ends, because it gave up or because you dropped the stream or watch running it. So `None` means "nothing servable right now", not only "nothing yet", and you should stop quoting a provider whose snapshot has gone away. The knob lives on both feed configs, and `None` keeps the last snapshot until the feed ends. Setting it above the poll interval keeps a book servable from one poll to the next; setting it below turns it into a duty cycle — the book is servable for `max_snapshot_age` and gone until the next poll — which is what you want when a venue's rate limit fixes the cadence and you would rather decline than quote an old book. Only zero is rejected. While a provider keeps failing its feed retries with growing gaps rather than hammering it, so a book that a long outage withdrew can take a while to come back after the provider recovers.
 
@@ -145,7 +145,7 @@ Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is 
 
 ### Venue components
 
-By default every feed publishes one component per token pair, and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only the two venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
+By default a feed publishes a component per book — per pair, or per market maker and pair on the two venues that name their makers — and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only the two venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
 
 ```rust
 let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key)
@@ -154,7 +154,7 @@ let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key
     .expect("Failed to create Hashflow feed");
 ```
 
-Such a component carries every token the venue quotes, and the pairs it prices are not every pair of those tokens: the directions it quotes are its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. Add graph edges from that attribute, and rebuild them when the component's tokens change between snapshots. Its state prices and quotes exactly as the per-pair states do — the books behind it are the same ones.
+Such a component carries every token the venue quotes, and the pairs it prices are not every pair of those tokens: the directions it quotes are its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. A direction appears there only where a book has levels on that side, so a venue quoting a pair one way round advertises it one way round. Add graph edges from that attribute, and rebuild them when the component's tokens change between snapshots. Its state prices and quotes exactly as the per-pair states do — the books behind it are the same ones.
 
 A swap records the book it used in the `new_state` it returns, and how often one route may quote the venue is its quote rule, carried as the `quote_rule` static attribute:
 
