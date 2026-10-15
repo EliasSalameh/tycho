@@ -1,3 +1,11 @@
+## [0.458.1](https://github.com/propeller-heads/tycho/compare/0.458.0...0.458.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **simulation:** map RFQ client build failures to ValueError ([9543886](https://github.com/propeller-heads/tycho/commit/95438869930a1a0ace28de5188ebf7a476f88fb3))
+* **simulation:** map RFQ client build failures to ValueError ([#1606](https://github.com/propeller-heads/tycho/issues/1606)) ([fa5118c](https://github.com/propeller-heads/tycho/commit/fa5118cddc8be7b6c8bf68bcfa927335af13b661))
+
 ## [0.458.0](https://github.com/propeller-heads/tycho/compare/0.457.0...0.458.0) (2026-10-14)
 
 

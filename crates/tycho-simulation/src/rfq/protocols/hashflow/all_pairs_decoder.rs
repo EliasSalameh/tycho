@@ -42,7 +42,7 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for HashflowAllPairsS
             builder = builder.quote_rule(quote_rule);
         }
         let client = builder.build().map_err(|e| {
-            InvalidSnapshotError::MissingAttribute(format!("Couldn't create HashflowClient: {e}"))
+            InvalidSnapshotError::ValueError(format!("Couldn't create HashflowClient: {e}"))
         })?;
 
         HashflowAllPairsState::new(price_levels, tokens, client)
