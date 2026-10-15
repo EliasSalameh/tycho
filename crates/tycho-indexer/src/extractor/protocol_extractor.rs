@@ -60,7 +60,7 @@ pub struct Inner {
     first_message_processed: bool,
 }
 
-type BatchCommitHandle = tracing::instrument::Instrumented<JoinHandle<Result<(), ExtractionError>>>;
+type BatchCommitHandle = JoinHandle<Result<(), ExtractionError>>;
 
 #[derive(Default)]
 struct GatewayInner<G> {
@@ -806,9 +806,7 @@ where
             let (extractor_name, chain) = (self.name.clone(), self.chain);
 
             if let Some(db_commit_handle_to_join) = commit_handle_guard.take() {
-                let needs_await = !db_commit_handle_to_join
-                    .inner()
-                    .is_finished();
+                let needs_await = !db_commit_handle_to_join.is_finished();
                 let now = chrono::Utc::now().naive_utc();
 
                 let result = db_commit_handle_to_join
@@ -835,31 +833,10 @@ where
                 }
             }
 
-            let new_handle = tokio::spawn(async move {
-                let now = std::time::Instant::now();
-
-                let mut it = blocks_to_commit.iter().peekable();
-                while let Some(block) = it.next() {
-                    let force_db_commit = if is_syncing { false } else { it.peek().is_none() };
-
-                    gateway
-                        .advance(block.block_update(), block.cursor(), force_db_commit)
-                        .await
-                        .map_err(ExtractionError::Storage)?;
-                }
-
-                let mut committed_hieght_guard = committed_block_height.lock().await;
-                *committed_hieght_guard = Some(last_block_height);
-
-                trace!(batch_size, block_height = last_block_height, extractor_id = extractor_name, chain = %chain, "CommitTaskCompleted");
-
-                histogram!(
-                    "database_commit_duration_ms", "chain" => chain.to_string(), "extractor" => extractor_name
-                )
-                .record(now.elapsed().as_millis() as f64);
-
-                Ok(())
-            });
+            // Detached from the caller because the commit outlives the block that queued it;
+            // the caller is recorded as a follows-from link instead. The span wraps the task
+            // body, not its `JoinHandle` -- instrumenting the handle would only cover the
+            // await and leave every gateway call inside the task without a parent.
             let commit_span = info_span!(
                 parent: None,
                 "commit_blocks_task",
@@ -869,7 +846,38 @@ where
                 chain = %self.chain,
             );
             commit_span.follows_from(tracing::Span::current().id());
-            let new_handle = new_handle.instrument(commit_span);
+
+            let new_handle = tokio::spawn(
+                async move {
+                    let now = std::time::Instant::now();
+
+                    let mut it = blocks_to_commit.iter().peekable();
+                    while let Some(block) = it.next() {
+                        let force_db_commit =
+                            if is_syncing { false } else { it.peek().is_none() };
+
+                        gateway
+                            .advance(block.block_update(), block.cursor(), force_db_commit)
+                            .await
+                            .map_err(ExtractionError::Storage)?;
+                    }
+
+                    if let Some(flushed) = gateway.flushed_block_height().await {
+                        let mut guard = committed_block_height.lock().await;
+                        *guard = Some(guard.map_or(flushed, |current| current.max(flushed)));
+                    }
+
+                    trace!(batch_size, block_height = last_block_height, extractor_id = extractor_name, chain = %chain, "CommitTaskCompleted");
+
+                    histogram!(
+                        "database_commit_duration_ms", "chain" => chain.to_string(), "extractor" => extractor_name
+                    )
+                    .record(now.elapsed().as_millis() as f64);
+
+                    Ok(())
+                }
+                .instrument(commit_span),
+            );
 
             *commit_handle_guard = Some(new_handle);
 
@@ -2266,14 +2274,15 @@ mod test {
 
     const EXTRACTOR_NAME: &str = "TestExtractor";
     const TEST_PROTOCOL: &str = "TestProtocol";
-    async fn create_extractor_with_batch_size(
+    async fn create_extractor_with_chain_and_batch_size(
         gw: MockExtractorGateway,
         batch_size: usize,
+        chain: Chain,
     ) -> ProtocolExtractor<MockExtractorGateway, MockTokenPreProcessor, MockExtractorExtension>
     {
         let protocol_types = HashMap::from([("pt_1".to_string(), ProtocolType::default())]);
         let protocol_cache = ProtocolMemoryCache::new(
-            Chain::Ethereum,
+            chain,
             chrono::Duration::seconds(900),
             Arc::new(MockGateway::new()),
         );
@@ -2285,7 +2294,7 @@ mod test {
             gw,
             batch_size,
             EXTRACTOR_NAME,
-            Chain::Ethereum,
+            chain,
             ChainState::default(),
             TEST_PROTOCOL.to_string(),
             protocol_cache,
@@ -2296,6 +2305,14 @@ mod test {
         )
         .await
         .expect("Failed to create extractor")
+    }
+
+    async fn create_extractor_with_batch_size(
+        gw: MockExtractorGateway,
+        batch_size: usize,
+    ) -> ProtocolExtractor<MockExtractorGateway, MockTokenPreProcessor, MockExtractorExtension>
+    {
+        create_extractor_with_chain_and_batch_size(gw, batch_size, Chain::Ethereum).await
     }
 
     async fn create_extractor(
@@ -2422,7 +2439,7 @@ mod test {
             let guard = ex.gateway.commit_handle.lock().await;
             guard
                 .as_ref()
-                .is_some_and(|h| !h.inner().is_finished())
+                .is_some_and(|h| !h.is_finished())
         };
         let commit_task_is_none = async |ex: &ProtocolExtractor<_, _, _>| -> bool {
             ex.gateway
@@ -2525,6 +2542,86 @@ mod test {
         handle.await.unwrap().unwrap();
 
         assert_eq!(call_count.load(Ordering::SeqCst), 4, "second commit should be counted");
+    }
+
+    /// Syncs blocks 1-3 with batch size 2, so block 3 drains blocks 1 and 2 into a commit task.
+    /// The gateway flushes the writes of blocks up to `flush_through` only. Returns the
+    /// `db_committed_block_height` that block 4 reports after the commit task finished.
+    async fn db_committed_after_drain(flush_through: u64) -> Option<u64> {
+        let flushed = Arc::new(AtomicU64::new(0));
+        let mut gw = MockExtractorGateway::new();
+        gw.expect_ensure_protocol_types()
+            .times(1)
+            .returning(|_| Ok(()));
+        gw.expect_get_cursor()
+            .times(1)
+            .returning(|| Ok(("cursor".into(), Bytes::default())));
+        gw.expect_get_block()
+            .times(1)
+            .returning(|_| Ok(Block::default()));
+        let flushed_writer = flushed.clone();
+        gw.expect_advance()
+            .times(2)
+            .returning(move |changes, _, _| {
+                if changes.block.number <= flush_through {
+                    flushed_writer.fetch_max(changes.block.number, Ordering::SeqCst);
+                }
+                Ok(())
+            });
+        let flushed_reader = flushed.clone();
+        gw.expect_flushed_block_height()
+            .returning(move || {
+                let height = flushed_reader.load(Ordering::SeqCst);
+                (height > 0).then_some(height)
+            });
+        let extractor = create_extractor_with_batch_size(gw, 2).await;
+        let scoped = |n: u64| {
+            pb_fixtures::pb_block_scoped_data(
+                tycho_pb::BlockChanges {
+                    block: Some(pb_fixtures::pb_blocks(n)),
+                    ..Default::default()
+                },
+                Some(&format!("cursor@{n}")),
+                Some(n),
+            )
+        };
+
+        for n in 1..=3 {
+            extractor
+                .handle_tick_scoped_data(scoped(n))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let commit_task = extractor
+            .gateway
+            .commit_handle
+            .lock()
+            .await
+            .take()
+            .expect("block 3 must start a commit task");
+        commit_task.await.unwrap().unwrap();
+
+        extractor
+            .handle_tick_scoped_data(scoped(4))
+            .await
+            .unwrap()
+            .unwrap()
+            .db_committed_block_height
+    }
+
+    #[tokio::test]
+    async fn test_unflushed_drained_blocks_are_not_reported_as_committed() {
+        assert_eq!(
+            db_committed_after_drain(0).await,
+            Some(0),
+            "before the first flush, the stored cursor block is the committed height"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flushed_height_is_reported_as_committed() {
+        assert_eq!(db_committed_after_drain(1).await, Some(1));
     }
 
     #[tokio::test]
@@ -2696,6 +2793,67 @@ mod test {
                 .timestamp_subsec_micros(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn arc_same_timestamp_blocks_are_broadcast_and_persisted_in_number_order() {
+        let mut gw = MockExtractorGateway::new();
+        gw.expect_ensure_protocol_types()
+            .times(1)
+            .returning(|_| Ok(()));
+        gw.expect_get_cursor()
+            .times(1)
+            .returning(|| Ok(("cursor".into(), Bytes::default())));
+        let persisted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let persisted_by_mock = Arc::clone(&persisted);
+        gw.expect_advance()
+            .times(2)
+            .returning(move |changes, _, _| {
+                persisted_by_mock
+                    .lock()
+                    .unwrap()
+                    .push(changes.block.number);
+                Ok(())
+            });
+        gw.expect_flushed_block_height()
+            .returning(|| None);
+        gw.expect_get_block()
+            .times(1)
+            .returning(|_| Ok(Block::default()));
+
+        let extractor = create_extractor_with_chain_and_batch_size(gw, 1, Chain::Arc).await;
+        let timestamp = pb_fixtures::pb_blocks(1).ts;
+        let mut broadcast = Vec::new();
+
+        for number in 1..=3 {
+            let mut block = pb_fixtures::pb_blocks(number);
+            block.ts = timestamp;
+            let message = extractor
+                .handle_tick_scoped_data(pb_fixtures::pb_block_scoped_data(
+                    tycho_pb::BlockChanges { block: Some(block), ..Default::default() },
+                    Some(format!("cursor@{number}").as_str()),
+                    Some(number),
+                ))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(message.chain, Chain::Arc);
+            broadcast.push(message.block.number);
+        }
+
+        if let Some(handle) = extractor
+            .gateway
+            .commit_handle
+            .lock()
+            .await
+            .take()
+        {
+            handle.await.unwrap().unwrap();
+        }
+
+        assert_eq!(broadcast, vec![1, 2, 3]);
+        assert_eq!(*persisted.lock().unwrap(), vec![1, 2]);
+        assert_eq!(extractor.get_cursor().await, "cursor@3");
     }
 
     fn token_prices() -> HashMap<Bytes, f64> {

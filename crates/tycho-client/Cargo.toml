@@ -7,7 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 keywords.workspace = true
-license.workspace = true
+license-file.workspace = true
 categories.workspace = true
 readme = "README.md"
 
@@ -44,12 +44,13 @@ hyper = "0.14.27"
 backoff = { version = "0.4.0", features = ["tokio", "futures"] }
 time = "0.3.41"
 zstd = "0.13"
+rand.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
 rstest.workspace = true
-rand.workspace = true
 mockall.workspace = true
 mockito.workspace = true
 tracing-subscriber = "0.3.17"
 test-log = { version = "0.2.14", features = ["trace"] }
+tokio = { workspace = true, features = ["test-util"] }
