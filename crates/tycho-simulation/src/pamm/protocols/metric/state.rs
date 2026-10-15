@@ -512,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn test_book_without_bid_trades_only_the_ask_side() {
+    fn book_without_bid_trades_only_the_ask_side() {
         let state = state_without_bid();
         let ask = state
             .bid_ask
@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn test_book_without_ask_trades_only_the_bid_side() {
+    fn book_without_ask_trades_only_the_bid_side() {
         let state = state_without_ask();
         let bid = state
             .bid_ask
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn test_book_without_quotes_has_no_spot_price() {
+    fn book_without_quotes_has_no_spot_price() {
         let mut state = state();
         state.bid_ask.bid_adj = BigUint::zero();
         state.bid_ask.ask_adj = BigUint::from(u128::MAX);
@@ -592,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_zero_for_one() {
+    fn get_amount_out_zero_for_one() {
         let state = state();
         let result = state
             .get_amount_out(
@@ -606,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_one_for_zero() {
+    fn get_amount_out_one_for_zero() {
         let state = state();
         let result = state
             .get_amount_out(BigUint::from(3_010_000_000u64), &state.quote_token, &state.base_token)
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_caps_to_available_liquidity() {
+    fn get_amount_out_caps_to_available_liquidity() {
         let mut state = state();
         state.bid_ask.total_token1_available = Some(big("1500000000"));
         let err = state
@@ -631,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_depth_exhausted_reports_depth_message() {
+    fn get_amount_out_depth_exhausted_reports_depth_message() {
         let mut state = state();
         state.bid_ask.depth.bids = vec![MetricDepthBin {
             bin_idx: 0,
@@ -661,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_exhausted_returns_exact_cap() {
+    fn get_amount_out_exhausted_returns_exact_cap() {
         let mut state = state();
         // An 18-decimal cap above 2^53 that is NOT representable exactly as f64. This is the
         // value from the production log; the f64 round-trip would drift it to ...662912.
@@ -696,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_limits_caps_to_depth() {
+    fn get_limits_caps_to_depth() {
         let mut state = state();
         state.bid_ask.depth.bids = vec![MetricDepthBin {
             bin_idx: 0,
@@ -720,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_limits_aggregate_truncates_depth() {
+    fn get_limits_aggregate_truncates_depth() {
         let mut state = state();
         // Aggregate inventory (1000 USDC) is below the 3000 USDC depth total, so the exact
         // last-bin input does not apply and the limit falls back to the top-of-book estimate.
@@ -745,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_limits_uses_aggregate_without_depth() {
+    fn get_limits_uses_aggregate_without_depth() {
         let state = state();
 
         let (_, buy_limit) = state
@@ -757,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_walks_bid_depth() {
+    fn get_amount_out_walks_bid_depth() {
         let mut state = state();
         state.bid_ask.depth.bids = vec![MetricDepthBin {
             bin_idx: 0,
@@ -782,7 +782,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out_walks_ask_depth() {
+    fn get_amount_out_walks_ask_depth() {
         let mut state = state();
         state.bid_ask.depth.asks = vec![MetricDepthBin {
             bin_idx: 0,
@@ -812,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_partially_fills_bid_bin() {
+    fn depth_output_for_input_partially_fills_bid_bin() {
         // Full-bin input at price 2950: 3000 USDC costs 3000/2950 ≈ 1.0169 WETH.
         let bins = vec![depth_bin("3000000000", "1016949152542372881")];
 
@@ -829,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_partially_fills_ask_bin() {
+    fn depth_output_for_input_partially_fills_ask_bin() {
         // Full-bin input at price 3055: 1 WETH costs 3055 USDC.
         let bins = vec![depth_bin("1000000000000000000", "3055000000")];
 
@@ -849,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_exhausts_available_depth() {
+    fn depth_output_for_input_exhausts_available_depth() {
         let bins = vec![depth_bin("3000000000", "1016949152542372881")];
 
         let fill = depth_output_for_input(
@@ -864,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_walks_multiple_bins() {
+    fn depth_output_for_input_walks_multiple_bins() {
         // Bin 1 sells 3000 USDC for 1 WETH; bin 2 sells another 3000 USDC for 1.1 WETH.
         let bins = vec![
             depth_bin("3000000000", "1000000000000000000"),
@@ -885,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_caps_slice_to_aggregate_inventory() {
+    fn depth_output_for_input_caps_slice_to_aggregate_inventory() {
         let bins = vec![depth_bin("3000000000", "1000000000000000000")];
 
         // Aggregate inventory truncates the bin to 1500 USDC; the fillable slice costs a
@@ -902,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_rejects_inconsistent_bin() {
+    fn depth_output_for_input_rejects_inconsistent_bin() {
         // Volume without input would hand out output for free.
         let bins = vec![depth_bin("3000000000", "0")];
 
@@ -917,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn test_depth_output_for_input_rejects_non_monotonic_bins() {
+    fn depth_output_for_input_rejects_non_monotonic_bins() {
         let bins = vec![
             depth_bin("3000000000", "1000000000000000000"),
             // Cumulative volume goes backwards.
@@ -936,7 +936,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Metric's public API; requires METRIC_API_KEY"]
-    async fn test_live_metric_api_state_get_amount_out() {
+    async fn live_metric_api_state_get_amount_out() {
         use crate::pamm::protocols::metric::models::PaginatedMetadataResponse;
 
         let api_key = std::env::var("METRIC_API_KEY").expect("METRIC_API_KEY not set");

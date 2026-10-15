@@ -2358,7 +2358,7 @@ mod tests {
     }
 
     #[test]
-    fn test_every_n_updates_accepts_partial_blocks() {
+    fn every_n_updates_accepts_partial_blocks() {
         Cli::try_parse_from([
             "tycho-integration-test",
             "--tycho-url",
@@ -2373,7 +2373,7 @@ mod tests {
     }
 
     #[test]
-    fn test_every_n_blocks_alias_sets_test_every_n_updates() {
+    fn every_n_blocks_alias_sets_test_every_n_updates() {
         let cli = Cli::try_parse_from([
             "tycho-integration-test",
             "--tycho-url",

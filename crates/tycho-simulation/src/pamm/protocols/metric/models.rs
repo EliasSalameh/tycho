@@ -164,7 +164,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sentinel_sides_have_no_price() {
+    fn sentinel_sides_have_no_price() {
         let quote = |bid: String, ask: String| MetricBidAskResponse {
             bid_adj: bid.parse().unwrap(),
             ask_adj: ask.parse().unwrap(),
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_deserializes_depth_bins() {
+    fn bid_ask_deserializes_depth_bins() {
         let response: MetricBidAskResponse = serde_json::from_value(serde_json::json!({
             "bidAdj": "55340232221128654848000",
             "askAdj": "55524699661865750400000",
@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_null_totals_are_not_quotable() {
+    fn bid_ask_null_totals_are_not_quotable() {
         let response: MetricBidAskResponse = serde_json::from_value(serde_json::json!({
             "bidAdj": "55340232221128654848000",
             "askAdj": "55524699661865750400000",
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_absent_totals_decode_as_none() {
+    fn bid_ask_absent_totals_decode_as_none() {
         let response: MetricBidAskResponse = serde_json::from_value(serde_json::json!({
             "bidAdj": "55340232221128654848000",
             "askAdj": "55524699661865750400000",
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_null_depth_decodes_as_empty() {
+    fn bid_ask_null_depth_decodes_as_empty() {
         // `depth=false` makes the endpoint return an explicit null rather than omitting the key.
         let response: MetricBidAskResponse = serde_json::from_value(serde_json::json!({
             "bidAdj": "55340232221128654848000",
@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_empty_depth_is_not_quotable() {
+    fn bid_ask_empty_depth_is_not_quotable() {
         // Real degenerate pool observed on Base: bidAdj=0, askAdj=uint128 max sentinel, no depth.
         let response: MetricBidAskResponse = serde_json::from_value(serde_json::json!({
             "bidAdj": "0",
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bid_ask_unhealthy_provider_status_is_not_quotable() {
+    fn bid_ask_unhealthy_provider_status_is_not_quotable() {
         // Structurally complete quote, but the API reports the price provider as down: the
         // explicit status must veto quotability regardless of the structural checks.
         let quotable = serde_json::json!({
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn test_paginated_metadata_deserializes_tvl_fiat() {
+    fn paginated_metadata_deserializes_tvl_fiat() {
         let response: PaginatedMetadataResponse = serde_json::from_value(serde_json::json!({
             "data": [{
                 "pair": "ethusdc",

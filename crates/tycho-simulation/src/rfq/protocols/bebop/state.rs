@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spot_price_matching_base_and_quote() {
+    fn spot_price_matching_base_and_quote() {
         let state = create_test_bebop_state();
 
         // Test WBTC/USDC (base/quote) - should use average of best bid and ask
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spot_price_inverted_base_and_quote() {
+    fn spot_price_inverted_base_and_quote() {
         let state = create_test_bebop_state();
 
         // Test USDC/WBTC (quote/base) - should use average of best bid and ask, then invert
@@ -423,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spot_price_empty_asks() {
+    fn spot_price_empty_asks() {
         let mut state = create_test_bebop_state();
         state.book.asks = Levels::default();
 
@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spot_price_empty_bids() {
+    fn spot_price_empty_bids() {
         let mut state = create_test_bebop_state();
         state.book.bids = Levels::default();
         // Test WBTC/USDC with no bids - should use only best ask
@@ -446,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spot_price_no_liquidity() {
+    fn spot_price_no_liquidity() {
         let mut state = create_test_bebop_state();
         state.book.bids = Levels::default();
         state.book.asks = Levels::default();
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_limits_sell_base_for_quote() {
+    fn get_limits_sell_base_for_quote() {
         let state = create_test_bebop_state();
 
         // Test selling WBTC for USDC (should use bids)
@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_limits_buy_base_with_quote() {
+    fn get_limits_buy_base_with_quote() {
         let state = create_test_bebop_state();
 
         // Test buying WBTC with USDC (should use asks)
@@ -545,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_amount_out() {
+    fn get_amount_out_walks_the_ladder_on_both_sides() {
         // WETH/USDC
         let price_data = BebopPriceData {
             base: hex::decode("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), // WETH

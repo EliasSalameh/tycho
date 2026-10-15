@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Bebop's live API; requires BEBOP_KEY"]
-    async fn test_bebop_websocket_connection() {
+    async fn bebop_websocket_connection() {
         // We test with quote tokens that are not USDC in order to ensure our normalization works
         // fine
         let wbtc = Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap();
@@ -261,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Bebop's live API; requires BEBOP_KEY"]
-    async fn test_bebop_quote_single_order() {
+    async fn bebop_quote_single_order() {
         let token_in = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
         let token_out = Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap();
         dotenv().expect("Missing .env file");
@@ -332,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Bebop's live API; requires BEBOP_KEY"]
-    async fn test_bebop_quote_aggregate_order() {
+    async fn bebop_quote_aggregate_order() {
         // This will make a quote request similar to the previous test but with a very big amount
         // We expect the Bebop Quote to have an aggregate order (split between different mms)
         let token_in = Bytes::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();

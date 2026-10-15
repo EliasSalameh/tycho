@@ -302,7 +302,7 @@ mod tests {
     /// Hashflow answers a rejected RFQ with HTTP 200 and an `error` object, so the quote response
     /// has to deserialize that shape rather than only the successful one.
     #[test]
-    fn test_deserialize_rejected_quote_response() {
+    fn deserialize_rejected_quote_response() {
         let body = r#"{"status":"fail","rfqId":"0x2250000000000000000000000000000f",
             "error":{"code":82,"message":"No maker supports this request"}}"#;
 
@@ -389,7 +389,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_success() {
+        fn validate_success() {
             let quote = quote();
             let params = params();
             assert!(quote
@@ -398,7 +398,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_base_token_mismatch() {
+        fn validate_base_token_mismatch() {
             let mut quote = quote();
             quote.quote_data.base_token =
                 hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
@@ -410,7 +410,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_quote_token_mismatch() {
+        fn validate_quote_token_mismatch() {
             let mut quote = quote();
             quote.quote_data.quote_token =
                 hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
@@ -422,7 +422,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_trader_mismatch() {
+        fn validate_trader_mismatch() {
             let mut quote = quote();
             quote.quote_data.trader = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
             let params = params();
@@ -433,7 +433,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_effective_trader_mismatch() {
+        fn validate_effective_trader_mismatch() {
             let mut quote = quote();
             quote.quote_data.effective_trader =
                 Some(hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"));
@@ -445,7 +445,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_effective_trader_absent() {
+        fn validate_effective_trader_absent() {
             // An answer without an effectiveTrader is not tied to the address we requested
             // (Hashflow ties it to the trader instead), so validation must reject it.
             let mut quote = quote();
@@ -458,7 +458,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_base_token_amount_mismatch() {
+        fn validate_base_token_amount_mismatch() {
             let mut quote = quote();
             quote.quote_data.base_token_amount = "9999".to_string();
             let params = params();

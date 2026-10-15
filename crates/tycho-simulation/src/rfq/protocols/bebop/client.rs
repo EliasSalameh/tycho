@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_bebop_quote_response_aggregate_order() {
+    fn process_bebop_quote_response_aggregate_order() {
         let quote_response: BebopQuoteResponse = serde_json::from_str(AGGREGATE_ORDER).unwrap();
         let params = GetAmountOutParams {
             amount_in: BigUint::from_str("20000000000").unwrap(),
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_bebop_quote_response_aggregate_order_with_multihop() {
+    fn process_bebop_quote_response_aggregate_order_with_multihop() {
         let quote_response: BebopQuoteResponse =
             serde_json::from_str(AGGREGATE_ORDER_WITH_MULTIHOP).unwrap();
         let params = GetAmountOutParams {
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_bebop_quote_response_single_order() {
+    fn process_bebop_quote_response_single_order() {
         // Captured from a settlement-mode API account: the signed order's taker and receiver
         // are the requested sender/receiver and the calldata targets the settlement contract.
         let quote_response: BebopQuoteResponse = serde_json::from_str(SINGLE_ORDER).unwrap();
@@ -454,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_bebop_quote_response_single_order_router_mode() {
+    fn process_bebop_quote_response_single_order_router_mode() {
         // Captured from an API account configured for router-mode settlement: the signed
         // order's taker and receiver are the Bebop router contract (= tx.to), not the
         // requested sender/receiver.
@@ -612,7 +612,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bebop_quote_timeout() {
+    async fn bebop_quote_timeout() {
         let server = spawn_http_server(|_| {
             Some(MockResponse {
                 status: "200 OK",
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bebop_quote_retry_on_bad_response() {
+    async fn bebop_quote_retry_on_bad_response() {
         // The venue answers the first two attempts with a server error and the third with a
         // quote.
         // The route counts its own attempts, so one test's retries never reach another's.
@@ -699,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_bebop_quote_response_aggregate_order_router_mode() {
+    fn process_bebop_quote_response_aggregate_order_router_mode() {
         // Captured from a router-mode API account: an aggregate order split across three
         // makers where the signed order's taker and receiver are the Bebop router (= tx.to).
         let quote_response: BebopQuoteResponse =

@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_deserialize_price_levels_response() {
+    fn deserialize_price_levels_response() {
         let json = r#"{"prices":{"maker_0":[{"baseToken":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","quoteToken":"0xdac17f958d2ee523a2206206994597c13d831ec7","levels":[["1.00115000","100.000000000000000000"],["1.00125000","500.000000000000000000"]],"updatedAt":1769707860675}]}}"#;
         let response: LiquoricePriceLevelsResponse = serde_json::from_str(json).unwrap();
         let mm_levels = &response.prices["maker_0"];
@@ -249,14 +249,14 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_success() {
+        fn validate_success() {
             let level = quote_level();
             let params = params();
             assert!(level.validate(&params).is_ok());
         }
 
         #[test]
-        fn test_validate_rejects_mismatched_fields() {
+        fn validate_rejects_mismatched_fields() {
             let params = params();
 
             let mut level = quote_level();

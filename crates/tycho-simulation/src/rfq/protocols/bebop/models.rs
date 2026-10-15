@@ -355,7 +355,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_calculate_tvl_no_normalization() {
+    fn calculate_tvl_no_normalization() {
         let price_data = BebopPriceData {
             base: hex::decode("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), // WETH
             quote: hex::decode("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(), // USDC
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_tvl_with_normalization() {
+    fn calculate_tvl_with_normalization() {
         // Scenario: We have price data for ETH/TAMARA. One ETH is normally around 100 TAMARA,
         // and one TAMARA is around 10 USDC.
         let price_data_eth_tamara = BebopPriceData {
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_tvl_with_inverted_normalization() {
+    fn calculate_tvl_with_inverted_normalization() {
         // Scenario: We have price data for ETH/TAMARA. One ETH is normally around 100 TAMARA,
         // and we have price data for USDC/TAMARA (inverted - normally we'd want TAMARA/USDC).
         // One USDC is around 0.1 TAMARA (so one TAMARA is around 10 USDC).
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_mid_price() {
+    fn mid_price_averages_the_levels_a_swap_would_fill() {
         let weth_addr =
             Bytes::from(hex::decode("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap()); // WETH
         let usdc_addr =
@@ -631,14 +631,14 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_success() {
+        fn validate_single_success() {
             let quote = quote_partial_single();
             let params = params();
             assert!(quote.validate(&params).is_ok());
         }
 
         #[test]
-        fn test_validate_single_base_token_mismatch() {
+        fn validate_single_base_token_mismatch() {
             let mut quote = quote_partial_single();
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
                 single.taker_token = hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
@@ -649,7 +649,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_quote_token_mismatch() {
+        fn validate_single_quote_token_mismatch() {
             let mut quote = quote_partial_single();
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
                 single.maker_token = hex_to_bytes("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
@@ -660,7 +660,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_taker_address_mismatch() {
+        fn validate_single_taker_address_mismatch() {
             let mut quote = quote_partial_single();
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
                 single.taker_address = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
@@ -671,7 +671,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_receiver_mismatch() {
+        fn validate_single_receiver_mismatch() {
             let mut quote = quote_partial_single();
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
                 single.receiver = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
@@ -682,7 +682,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_base_token_amount_mismatch() {
+        fn validate_single_base_token_amount_mismatch() {
             let mut quote = quote_partial_single();
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
                 single.taker_amount = "9999".to_string();
@@ -693,14 +693,14 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_aggregate_success() {
+        fn validate_aggregate_success() {
             let quote = quote_partial_aggregate();
             let params = params();
             assert!(quote.validate(&params).is_ok());
         }
 
         #[test]
-        fn test_validate_aggregate_taker_address_mismatch() {
+        fn validate_aggregate_taker_address_mismatch() {
             let mut quote = quote_partial_aggregate();
             if let BebopOrderToSign::Aggregate(ref mut agg) = quote.to_sign {
                 agg.taker_address = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
@@ -711,7 +711,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_aggregate_receiver_mismatch() {
+        fn validate_aggregate_receiver_mismatch() {
             let mut quote = quote_partial_aggregate();
             if let BebopOrderToSign::Aggregate(ref mut agg) = quote.to_sign {
                 agg.receiver = hex_to_bytes("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
@@ -738,7 +738,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_router_mode_success() {
+        fn validate_single_router_mode_success() {
             let mut quote = quote_partial_single();
             make_router_mode(&mut quote);
             let params = params();
@@ -746,7 +746,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_aggregate_router_mode_success() {
+        fn validate_aggregate_router_mode_success() {
             let mut quote = quote_partial_aggregate();
             make_router_mode(&mut quote);
             let params = params();
@@ -754,7 +754,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_router_mode_receiver_mismatch() {
+        fn validate_single_router_mode_receiver_mismatch() {
             let mut quote = quote_partial_single();
             make_router_mode(&mut quote);
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {
@@ -766,7 +766,7 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_single_taker_neither_sender_nor_tx_to() {
+        fn validate_single_taker_neither_sender_nor_tx_to() {
             let mut quote = quote_partial_single();
             make_router_mode(&mut quote);
             if let BebopOrderToSign::Single(ref mut single) = quote.to_sign {

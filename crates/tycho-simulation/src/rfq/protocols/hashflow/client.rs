@@ -532,7 +532,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_request_binding_quote_without_effective_trader() {
+    async fn request_binding_quote_without_effective_trader() {
         // A response that drops the requested effectiveTrader would leave the quote in the
         // trader's shared nonce scope, so the client rejects it.
         let (server, _) =
@@ -599,7 +599,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_request_binding_quote_field_mapping() {
+    async fn request_binding_quote_field_mapping() {
         // The wire request carries the receiver as Hashflow's trader, a fresh random address as
         // the effectiveTrader — a new one per quote request — and the one maker it goes to.
         let (server, request_log) = quote_server(Duration::ZERO, QUOTE_RESPONSE).await;
@@ -646,7 +646,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hashflow_quote_timeout() {
+    async fn hashflow_quote_timeout() {
         let (server, _) = quote_server(Duration::from_millis(500), QUOTE_RESPONSE).await;
 
         // Test 1: Client with short timeout (200ms) - should timeout
@@ -691,7 +691,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hashflow_quote_retry_on_bad_response() {
+    async fn hashflow_quote_retry_on_bad_response() {
         // The venue answers the first two attempts with a server error and the third with a
         // quote.
         // The route counts its own attempts, so one test's retries never reach another's.

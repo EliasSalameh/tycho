@@ -160,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Hashflow's live API; requires HASHFLOW_USER and HASHFLOW_KEY"]
-    async fn test_hashflow_api_polling() {
+    async fn hashflow_api_polling() {
         dotenv().expect("Missing .env file");
         let user = std::env::var("HASHFLOW_USER").expect("HASHFLOW_USER not set");
         let key = std::env::var("HASHFLOW_KEY").expect("HASHFLOW_KEY not set");
@@ -224,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "hits Hashflow's live API; requires HASHFLOW_KEY"]
-    async fn test_request_binding_quote() {
+    async fn request_binding_quote() {
         let wbtc = Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap();
         let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
 

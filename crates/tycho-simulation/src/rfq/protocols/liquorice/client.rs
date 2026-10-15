@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_quote_response_no_liquidity() {
+    fn process_quote_response_no_liquidity() {
         use crate::rfq::protocols::liquorice::models::LiquoriceQuoteResponse;
 
         let response = LiquoriceQuoteResponse {
@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_quote_response_partial_fill_attributes() {
+    fn process_quote_response_partial_fill_attributes() {
         use crate::rfq::protocols::liquorice::models::{
             LiquoricePartialFill, LiquoriceQuoteResponse,
         };
@@ -620,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_quote_response_selects_best_valid_level() {
+    fn process_quote_response_selects_best_valid_level() {
         use crate::rfq::protocols::liquorice::models::LiquoriceQuoteResponse;
 
         let token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -682,7 +682,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_liquorice_quote_timeout() {
+    async fn liquorice_quote_timeout() {
         let server = spawn_http_server(|_| {
             Some(MockResponse {
                 status: "200 OK",
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_liquorice_quote_retry_on_bad_response() {
+    async fn liquorice_quote_retry_on_bad_response() {
         // The venue answers the first two attempts with a server error and the third with a
         // quote.
         // The route counts its own attempts, so one test's retries never reach another's.
