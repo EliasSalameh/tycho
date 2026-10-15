@@ -1,3 +1,12 @@
+## [0.459.0](https://github.com/propeller-heads/tycho/compare/0.458.1...0.459.0) (2026-10-15)
+
+
+### Features
+
+* **lunarbase:** enhance quote limit calculation and add tests for minimum trade limits ([c8273e9](https://github.com/propeller-heads/tycho/commit/c8273e9a046fc2327a0a7285897e16249a696c28))
+* **lunarbase:** support v0.4.1 pools and BSC indexing ([4e1b7a0](https://github.com/propeller-heads/tycho/commit/4e1b7a0bf4e0e18423bb32d999f1937f7a79da8b))
+* **lunarbase:** support v0.4.1 pools and BSC indexing ([#1445](https://github.com/propeller-heads/tycho/issues/1445)) ([c2bd62f](https://github.com/propeller-heads/tycho/commit/c2bd62fa1c0046c6ab38f20b6f15066dc2cacafb))
+
 ## [0.458.1](https://github.com/propeller-heads/tycho/compare/0.458.0...0.458.1) (2026-10-15)
 
 
