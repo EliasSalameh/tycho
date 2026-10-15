@@ -300,7 +300,7 @@ impl BebopClient {
             }
         }
         let component = component::all_pairs_component(
-            Self::PROTOCOL_SYSTEM,
+            &self.protocol_system,
             "bebop_pool",
             self.chain,
             &swap_directions,
@@ -412,6 +412,10 @@ impl BebopClient {
 
 #[async_trait]
 impl RFQClient for BebopClient {
+    fn component_layout(&self) -> ComponentLayout {
+        self.component_layout
+    }
+
     fn stream(
         &self,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {
@@ -702,6 +706,25 @@ mod tests {
         assert_eq!(
             BebopClient::FALLBACK_PROTOCOL_SYSTEM,
             tycho_execution::encoding::evm::BEBOP_FALLBACK_PROTOCOL_SYSTEM
+        );
+    }
+
+    #[test]
+    fn test_all_pairs_component_via_fallback_router() {
+        let (client, weth, _, usdc) = all_pairs_test_client();
+        let via_router = client.via_fallback_router();
+        let update =
+            BebopPricingUpdate { pairs: vec![price_data(&weth, &usdc, &[3000.0, 1.0], &[])] };
+
+        let component = via_router
+            .all_pairs_component(&update)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(component.component.protocol_system, BebopClient::FALLBACK_PROTOCOL_SYSTEM);
+        assert_eq!(
+            component.component.id,
+            component::component_id(BebopClient::FALLBACK_PROTOCOL_SYSTEM, via_router.chain)
         );
     }
 

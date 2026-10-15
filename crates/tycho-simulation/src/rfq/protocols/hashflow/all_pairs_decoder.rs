@@ -45,8 +45,7 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for HashflowAllPairsS
             InvalidSnapshotError::ValueError(format!("Couldn't create HashflowClient: {e}"))
         })?;
 
-        HashflowAllPairsState::new(price_levels, tokens, client)
-            .map_err(|e| InvalidSnapshotError::ValueError(e.to_string()))
+        Ok(HashflowAllPairsState::new(price_levels, tokens, client))
     }
 }
 

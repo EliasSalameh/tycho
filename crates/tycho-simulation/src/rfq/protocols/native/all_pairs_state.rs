@@ -3,6 +3,7 @@ use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 use async_trait::async_trait;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 use tycho_common::{
     dto::ProtocolStateDelta,
     models::{protocol::GetAmountOutParams, token::Token},
@@ -42,29 +43,32 @@ impl fmt::Debug for NativeAllPairsState {
 }
 
 impl NativeAllPairsState {
-    /// Fails when a book names a token `tokens` does not carry, or when its per-pair state
-    /// rejects it.
+    /// Skips a book with a token missing from `tokens` (`debug!`: the decoder logged the token)
+    /// and a book its per-pair state rejects (`warn!`).
     pub fn new(
         books: Vec<NativePriceData>,
         tokens: HashMap<Bytes, Token>,
         client: NativeClient,
-    ) -> Result<Self, SimulationError> {
+    ) -> Self {
         let mut states = Vec::with_capacity(books.len());
         for book in books {
-            // The client filters books to its tokens, so an unknown token means corrupt data.
+            let (base_address, quote_address) =
+                (book.base_address.clone(), book.quote_address.clone());
             let (Some(base_token), Some(quote_token)) =
-                (tokens.get(&book.base_address), tokens.get(&book.quote_address))
+                (tokens.get(&base_address), tokens.get(&quote_address))
             else {
-                return Err(SimulationError::FatalError(
-                    "Native book token addresses do not match state tokens".to_string(),
-                ));
+                debug!(
+                    "Skipping Native book {base_address}/{quote_address}: a token is missing from \
+                     the state."
+                );
+                continue;
             };
-            states.push(NativeState::new(
-                base_token.clone(),
-                quote_token.clone(),
-                book,
-                client.clone(),
-            )?);
+            match NativeState::new(base_token.clone(), quote_token.clone(), book, client.clone()) {
+                Ok(state) => states.push(state),
+                Err(e) => warn!(
+                    "Native book {base_address}/{quote_address} is invalid: {e}. Skipping it."
+                ),
+            }
         }
         let mut directions = HashMap::new();
         for (index, state) in states.iter().enumerate() {
@@ -79,7 +83,7 @@ impl NativeAllPairsState {
         }
         let mut directions: Vec<_> = directions.into_iter().collect();
         directions.sort();
-        Ok(Self { states: Arc::new(states), directions: Arc::new(directions), used: false })
+        Self { states: Arc::new(states), directions: Arc::new(directions), used: false }
     }
 
     /// The per-pair state that trades `token_in` for `token_out`.
@@ -246,7 +250,7 @@ mod tests {
         }
     }
 
-    fn state_with(books: Vec<NativePriceData>) -> Result<NativeAllPairsState, SimulationError> {
+    fn state_with(books: Vec<NativePriceData>) -> NativeAllPairsState {
         let client = NativeClient::new(
             Chain::Ethereum,
             String::new(),
@@ -266,7 +270,7 @@ mod tests {
     }
 
     fn state() -> NativeAllPairsState {
-        state_with(vec![book()]).unwrap()
+        state_with(vec![book()])
     }
 
     #[test]
@@ -307,11 +311,22 @@ mod tests {
         reverse.minimum_in_base = 0.0;
         reverse.bids = vec![NativePriceLevel { quantity: 2_000.0, price: 0.0005 }];
         reverse.asks = vec![];
-        let state = state_with(vec![forward, reverse]).unwrap();
+        let state = state_with(vec![forward, reverse]);
         let result = state
             .get_amount_out(BigUint::from(2_000_000_000u64), &usdc(), &weth())
             .unwrap();
         assert_eq!(result.amount, BigUint::from(1_000_000_000_000_000_000u64));
+    }
+
+    #[test]
+    fn skips_book_its_state_rejects() {
+        let mut invalid = book();
+        invalid.minimum_in_base = f64::NAN;
+        let state = state_with(vec![invalid]);
+        let price = state.spot_price(&weth(), &usdc());
+        assert!(
+            matches!(price, Err(SimulationError::InvalidInput(msg, None)) if msg == format!("Invalid token addresses. Got in={}, out={}", weth().address, usdc().address))
+        );
     }
 
     #[test]
@@ -347,7 +362,7 @@ mod tests {
         let mut empty = book();
         empty.bids.clear();
         empty.asks.clear();
-        let state = state_with(vec![empty]).unwrap();
+        let state = state_with(vec![empty]);
         assert!(matches!(
             state.spot_price(&other, &usdc()),
             Err(SimulationError::InvalidInput(message, None))
@@ -359,7 +374,7 @@ mod tests {
     fn reports_no_liquidity_for_empty_direction() {
         let mut book = book();
         book.bids.clear();
-        let state = state_with(vec![book]).unwrap();
+        let state = state_with(vec![book]);
         assert!(matches!(
             state.get_amount_out(BigUint::from(500_000_000_000_000_000u64), &weth(), &usdc()),
             Err(SimulationError::RecoverableError(_))

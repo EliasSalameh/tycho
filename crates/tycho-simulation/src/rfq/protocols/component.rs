@@ -5,6 +5,7 @@ use std::{
 
 use alloy::primitives::utils::keccak256;
 use serde::{de::DeserializeOwned, Serialize};
+use tracing::{debug, warn};
 use tycho_client::feed::synchronizer::{ComponentWithState, Snapshot, StateSyncMessage};
 use tycho_common::{
     models::{
@@ -105,14 +106,18 @@ pub struct DecodedAllPairs<B> {
     pub quote_rule: Option<QuoteRule>,
 }
 
-/// A missing `books` attribute is a venue with no books. Every token the component names must
-/// be in `all_tokens`. Fails on a per-pair component, which has no `swap_directions` attribute.
+/// Decodes an all-pairs component's tokens, books and quote rule.
+///
+/// A missing `books` attribute is a venue with no books. Fails on a per-pair component, which has
+/// no `swap_directions` attribute, and on a `books` attribute that is not a JSON list. Drops a
+/// token missing from `all_tokens` and a book that fails to parse: a failed component would stay
+/// failed, as its id never changes.
 pub fn decode_all_pairs_component<B: DeserializeOwned>(
     snapshot: &ComponentWithState,
     all_tokens: &HashMap<Bytes, Token>,
 ) -> Result<DecodedAllPairs<B>, InvalidSnapshotError> {
-    if !snapshot
-        .component
+    let component = &snapshot.component;
+    if !component
         .static_attributes
         .contains_key(SWAP_DIRECTIONS_ATTRIBUTE)
     {
@@ -120,14 +125,19 @@ pub fn decode_all_pairs_component<B: DeserializeOwned>(
             "Component {} of {} has no {SWAP_DIRECTIONS_ATTRIBUTE} attribute, so its client \
              streams per pair. Build the client with ComponentLayout::AllPairs, or register the \
              per-pair state for it.",
-            snapshot.component.id, snapshot.component.protocol_system
+            component.id, component.protocol_system
         )));
     }
     let mut tokens = HashMap::new();
-    for address in &snapshot.component.tokens {
-        let token = all_tokens.get(address).ok_or_else(|| {
-            InvalidSnapshotError::ValueError(format!("Token not found: {address}"))
-        })?;
+    for address in &component.tokens {
+        let Some(token) = all_tokens.get(address) else {
+            debug!(
+                "Component {} of {} names token {address}, which the decoder does not know. \
+                 Dropping the token and the books that name it.",
+                component.id, component.protocol_system
+            );
+            continue;
+        };
         tokens.insert(address.clone(), token.clone());
     }
     let books = match snapshot
@@ -135,13 +145,31 @@ pub fn decode_all_pairs_component<B: DeserializeOwned>(
         .attributes
         .get(BOOKS_ATTRIBUTE)
     {
-        Some(books) => serde_json::from_slice(books)
-            .map_err(|e| InvalidSnapshotError::ValueError(format!("Invalid books JSON: {e}")))?,
+        Some(books) => decode_books(books, component)?,
         None => Vec::new(),
     };
-    let quote_rule = QuoteRule::from_attributes(&snapshot.component.static_attributes)
+    let quote_rule = QuoteRule::from_attributes(&component.static_attributes)
         .map_err(InvalidSnapshotError::ValueError)?;
     Ok(DecodedAllPairs { books, tokens, quote_rule })
+}
+
+fn decode_books<B: DeserializeOwned>(
+    books: &[u8],
+    component: &ProtocolComponent,
+) -> Result<Vec<B>, InvalidSnapshotError> {
+    let books: Vec<serde_json::Value> = serde_json::from_slice(books)
+        .map_err(|e| InvalidSnapshotError::ValueError(format!("Invalid books JSON: {e}")))?;
+    let mut decoded = Vec::with_capacity(books.len());
+    for (index, book) in books.into_iter().enumerate() {
+        match serde_json::from_value(book) {
+            Ok(book) => decoded.push(book),
+            Err(e) => warn!(
+                "Component {} of {} has an invalid book at index {index}: {e}. Skipping it.",
+                component.id, component.protocol_system
+            ),
+        }
+    }
+    Ok(decoded)
 }
 
 /// Seconds since the UNIX epoch.
@@ -243,13 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn decode_all_pairs_component_missing_token() {
-        let (snapshot, mut tokens) = all_pairs_snapshot("rfq:test", &[weth(), usdc()], &["book"]);
-        tokens.remove(&weth().address);
-        let result = decode_all_pairs_component::<String>(&snapshot, &tokens);
-        assert!(
-            matches!(result, Err(InvalidSnapshotError::ValueError(msg)) if msg.contains("Token not found"))
-        );
+    fn decode_all_pairs_component_skips_invalid_book() {
+        let (snapshot, tokens) =
+            all_pairs_snapshot("rfq:test", &[weth(), usdc()], &serde_json::json!(["a", 7, "b"]));
+        let decoded = decode_all_pairs_component::<String>(&snapshot, &tokens).unwrap();
+        assert_eq!(decoded.books, ["a", "b"]);
     }
 
     #[test]
