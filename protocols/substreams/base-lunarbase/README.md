@@ -36,10 +36,11 @@ pools=0xpool:0xtokenX:0xtokenY:bootstrapBlock,0xpool2:0xtokenX2:0xtokenY2:bootst
 Both `map_protocol_components` and `map_protocol_changes` must receive the same
 parameters. Each pool becomes a component keyed by its proxy address.
 
-Integrated partners, including Tycho, are assumed to be whitelisted by the Pool.
-Quotes always use fee multiplier one; directional fees and immediate punishment
-still apply. The feed contains no router address or caller-specific fee policy,
-so changing the Tycho router does not require reindexing.
+Tycho partner quotes always use fee multiplier one; directional fees and immediate
+punishment still apply. This is a fixed integration rule, with no caller-policy
+setting or alternative quote mode. The feed contains no router address or caller
+fee policy, so changing the Tycho router does not require reindexing. On-chain
+partner execution assumes that the Pool has whitelisted the Tycho router.
 
 ## State schema and quote compatibility
 
@@ -60,16 +61,34 @@ simulator. Replaying their events to reconstruct later state does not make those
 earlier quotes compatible. This package does not identify the v0.4 activation block
 or automatically gate historical quote requests by implementation version.
 
-On-chain execution must use a whitelisted router to match the simulator. Historical
-quotes from an unwhitelisted caller with a higher multiplier are not directly
-comparable to the simulator's whitelist quotes.
-
-The later Pool policy that also checks `blacklist[tx.origin]` is outside this
-v0.4.1 integration. This feed does not track transaction-origin blacklist entries
-or model their effect on fees.
+The current deployed Pool implementations also check `blacklist[tx.origin]`.
+Partner routing does not bypass that check: a blacklisted origin can receive less
+than the simulator quotes. Tycho's simulator has no transaction-origin input; this
+integration does not index the origin blacklist or model its fees. Partner quotes
+assume a non-blacklisted origin.
 
 Fee-accounting buckets remain unindexed. Reserve transitions assume standard
 tokens and sufficient capacity for all fees to be credited to their buckets.
+
+`get_limits` derives its upper bound from output liquidity using the exact nested
+quote floors and caps it by remaining uint112 input-reserve capacity. It checks
+the minimum positive-output input and bisects if punishment saturates before the
+upper bound, returning the last executable input rather than a reserve-in heuristic.
+
+Price-constrained queries first quote the full liquidity/amount-capped input.
+`TradeLimitPrice` checks the actual rounded output/input ratio; `PoolTargetPrice`
+checks the post-swap directional price including punishment. If this full fill
+stays above the requested price, it is returned even when limited liquidity
+prevents reaching that price. Interior crossings retain Tycho's numerical search;
+returned fills must respect the caller's amount bounds and exact trade limit price.
+If floating-point search returns a fill below that limit, the query rejects it.
+
+The simulator uses a **100,000 gas** pool-call estimate for routing. This follows
+the [PR review measurements](https://github.com/propeller-heads/tycho/pull/1445#discussion_r4280512284),
+which report approximately 65,000–102,000 gas on Base/BSC including the pool's
+token transfer. It is an estimate, not a transaction gas limit or an upper bound.
+These trace measurements were supplied by the reviewer; local public RPCs did
+not expose the tracing methods needed to reproduce them.
 
 ## Bootstrap and historical replay
 
@@ -122,19 +141,31 @@ expectations from the Rust simulator. Each parent hash was checked again after
 capture. The captured Base caller has multiplier 100, while the BSC caller has
 multiplier one; neither caller was whitelisted at its snapshot block. These historical
 observations are retained in `observed_caller_policy`, outside the indexed snapshot.
-The Base observations are not expected whitelist quote outputs. The native math
-regression derives whitelist fees from a separate Base capture by dividing its
+The Base observations are not expected partner quote outputs. The native math
+regression derives partner fees from a separate Base capture by dividing its
 observed fee by 100; this is not a new on-chain parity check.
 
 ## Validation and release
 
-The Base range covers **51297755–51297765** and the BSC range covers
-**121835899–121835909**. Both enable component checks, snapshot decoding, simulation
-and execution from their verified parent snapshots. The historical Base range
-predates router whitelisting: its execution comparison will not match multiplier-one
-quotes unless the execution environment whitelists the router. For on-chain parity,
-recapture a parent snapshot and update the range to blocks with a whitelisted router.
-From `protocols/testing`, run:
+The Base execution fixture uses `test-base-lunarbase.yaml`, a test-only
+manifest with a complete parent snapshot for blocks **52636221–52636230**.
+`bootstrap/base-execution.json` records the parent/stop getters, range logs and
+six observed router quotes in both directions, without state overrides. The
+partner activation transaction is `0xb9cc388195cedcf714d5d308a826f1031144b75bc34e6cafdfda9caf2f1dd04c`
+at Base block **52636217**. Native regressions replay the captured events to the
+stop-state getters and compare simulator outputs/fees with the six RPC quotes.
+These checks do not establish a full Substreams/indexer/router execution pass.
+
+The production manifest and original `bootstrap/base.json` remain unchanged.
+The separate manifest is needed because bootstrap parameters belong to the
+manifest, while the shared harness only configures the replay range.
+
+The BSC range remains **121835899–121835909**. Both fixtures keep component checks,
+snapshot decoding, simulation and execution enabled, with the existing **0.5%**
+execution tolerance. No caller-policy option or pool storage override is added
+to the shared harness. The test-only manifest must not be published as a feed.
+
+For the complete range tests, from `protocols/testing`, run:
 
 ```bash
 cargo run -- range --package base-lunarbase --chain base
@@ -157,7 +188,7 @@ Before publishing or enabling either updated feed:
 1. Verify the active implementation and compare all indexed quote inputs against
    block-pinned getters after the v0.4 upgrade.
 2. Compare quotes and simulated swaps in both directions with on-chain execution,
-   using a whitelisted router. Include fee changes after a swap, punishment
+   using the partner router. Include fee changes after a swap, punishment
    cap boundaries, reserve limits and the exact freshness boundary.
 3. Publish the matching Substreams schema and simulator together, rebuilding
    snapshots by replay, using a complete verified parent snapshot when starting after
@@ -190,6 +221,6 @@ substreams pack base-lunarbase/bsc-lunarbase.yaml -o /tmp/bsc-lunarbase-v0.2.0.s
 
 The BSC manifest enables indexing configuration only. The repository has no
 registered BSC LunarBase executor address or default live LunarBase subscription.
-Verify the deployed executor, router registration and router whitelisting before
+Verify the deployed executor, router registration and partner fee policy before
 adding those production registrations. The generic execution test harness uses
 the existing LunarBase runtime fixture through a local bytecode override.

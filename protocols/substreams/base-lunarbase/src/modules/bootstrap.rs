@@ -189,6 +189,75 @@ mod tests {
     }
 
     #[test]
+    fn execution_fixture_replays_to_observed_stop_state() {
+        use crate::lunarbase::events::{decode_lunarbase_state_log, event_attributes};
+
+        let capture: Value =
+            serde_json::from_str(include_str!("../../bootstrap/base-execution.json")).unwrap();
+        let pool = capture["pool"].as_str().unwrap();
+        let start = capture["bootstrap_block"]
+            .as_u64()
+            .unwrap();
+        let document = serde_json::json!({pool: capture["snapshot"].clone()});
+        let config = Config::parse(&format!(
+            "pool={pool}&bootstrap_block={start}&bootstrap_states={document}"
+        ))
+        .unwrap();
+        let snapshot = &config.bootstrap_states[&parse_address(pool).unwrap()];
+        let mut attributes = snapshot.attributes.clone();
+        let mut decoded_events = 0;
+        for raw in capture["range_logs"]
+            .as_array()
+            .unwrap()
+        {
+            let bytes = |value: &Value| {
+                hex::decode(
+                    value
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches("0x"),
+                )
+                .unwrap()
+            };
+            let block = u64::from_str_radix(
+                raw["blockNumber"]
+                    .as_str()
+                    .unwrap()
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .unwrap();
+            assert!((start..=capture["stop_block"].as_u64().unwrap()).contains(&block));
+            let log = substreams_ethereum::pb::eth::v2::Log {
+                topics: raw["topics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(bytes)
+                    .collect(),
+                data: bytes(&raw["data"]),
+                ..Default::default()
+            };
+            if let Some(event) = decode_lunarbase_state_log(&log).unwrap() {
+                decoded_events += 1;
+                for attribute in event_attributes(&event, block) {
+                    attributes.insert(attribute.name, attribute.value);
+                }
+            }
+        }
+        assert!(decoded_events > 0);
+        let expected = parse_snapshot(
+            &capture["execution_state"],
+            &PoolConfig {
+                bootstrap_block: Some(capture["stop_block"].as_u64().unwrap() + 1),
+                ..config.pools[0]
+            },
+        )
+        .unwrap();
+        assert_eq!(attributes, expected.attributes);
+    }
+
+    #[test]
     fn verifies_parent_number_and_hash() {
         let parsed = config(&snapshots()).unwrap();
         let snapshot = &parsed.bootstrap_states[&parse_address(POOL).unwrap()];

@@ -1,4 +1,4 @@
-substreams_yaml_path: ./base-lunarbase.yaml
+substreams_yaml_path: ./test-base-lunarbase.yaml
 protocol_system: "lunarbase"
 protocol_type_names:
   - "lunarbase_pool"
@@ -8,15 +8,14 @@ module_name: "map_protocol_changes"
 # on-chain token balances intentionally do not always equal reserves.
 skip_balance_check: true
 tests:
-  # This historical range predates router whitelisting. Execution comparison
-  # requires a whitelisted router; recapture a later range for on-chain parity.
+  # Real partner-router state; no caller-policy overrides or execution skips.
   - name: test_base_v04_snapshot_replay
-    start_block: 51297755
-    stop_block: 51297765
+    start_block: 52636221
+    stop_block: 52636230
     expected_components:
       - id: "0x0000efc4ec03a7c47d3a38a9be7ff1d52dd01b99"
         tokens:
           - "0x0000000000000000000000000000000000000000"
           - "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
         # First pool-log transaction at replay start, not original deployment.
-        creation_tx: "0x89f3ab2178d63f32a9b15caf7c53225f1dca3bef15e147a2f393487712fff7e6"
+        creation_tx: "0xc47282a8f4f6cf1b45692c7be01eedafd402ca4fed3dac1469b35536b46509e5"
