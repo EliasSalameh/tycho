@@ -9,8 +9,8 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_book, AllPairsState, ComponentLayout, VenueBook},
-        component::{pair_book, pair_component_id},
+        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        component::pair_component_id,
         wire::EntryReader,
         BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },
@@ -119,8 +119,12 @@ impl BebopBookSource {
             })
             .collect_vec();
 
-        let mut books = Books::new();
-        let mut venue_books = Vec::new();
+        let mut collector = BookCollector::<BebopAllPairsState>::new(
+            self.protocol_system,
+            PROTOCOL_TYPE,
+            self.book_config.chain,
+            self.component_layout,
+        );
         for (book, (base_token, quote_token, tvl, usd_per_quote_token)) in pairs
             .into_iter()
             .zip(measured)
@@ -143,31 +147,9 @@ impl BebopBookSource {
                 usd_per_quote_token,
                 Arc::clone(&self.client),
             );
-            match self.component_layout {
-                ComponentLayout::PerPair => books.insert(pair_book(
-                    self.protocol_system,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    component_id,
-                    state,
-                    updated_at,
-                )),
-                ComponentLayout::AllPairs(_) => {
-                    venue_books.push(VenueBook { maker: None, updated_at, state })
-                }
-            }
+            collector.push(component_id, VenueBook { maker: None, updated_at, state });
         }
-        if let ComponentLayout::AllPairs(rule) = self.component_layout {
-            if !venue_books.is_empty() {
-                books.insert(all_pairs_book(
-                    self.protocol_system,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    BebopAllPairsState::new(venue_books, rule),
-                ));
-            }
-        }
-        Ok(books)
+        Ok(collector.finish())
     }
 }
 

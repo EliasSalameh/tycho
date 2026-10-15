@@ -78,6 +78,14 @@ impl Books {
     }
 }
 
+impl Extend<Book> for Books {
+    fn extend<I: IntoIterator<Item = Book>>(&mut self, books: I) {
+        for book in books {
+            self.insert(book);
+        }
+    }
+}
+
 /// One provider's complete set of books at one instant, so a pair absent from a snapshot is one
 /// the provider has stopped serving. The books are `Arc`'d so cloning the snapshot (e.g. out of a
 /// watch channel) never copies states.

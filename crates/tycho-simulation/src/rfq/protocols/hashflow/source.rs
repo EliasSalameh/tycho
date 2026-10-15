@@ -8,9 +8,9 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_book, AllPairsState, ComponentLayout, VenueBook},
-        component::{maker_component_id, pair_book},
-        tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
+        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        component::maker_component_id,
+        tvl, BookFeedConfig, BookSnapshot, ReceivedAt,
     },
     rfq::protocols::hashflow::{
         client::HashflowClient,
@@ -76,8 +76,12 @@ impl HttpSource for HashflowBookSource {
             .await?;
         debug!(market_makers = levels_by_mm.len(), "fetched price levels");
 
-        let mut books = Books::new();
-        let mut venue_books = Vec::new();
+        let mut collector = BookCollector::<HashflowAllPairsState>::new(
+            self.protocol_system,
+            PROTOCOL_TYPE,
+            self.book_config.chain,
+            self.component_layout,
+        );
         for (mm_name, mm_levels) in levels_by_mm.iter() {
             for mm_level in mm_levels {
                 let base_bytes = &mm_level.pair.base_token;
@@ -118,34 +122,13 @@ impl HttpSource for HashflowBookSource {
                     mm_name.clone(),
                     Arc::clone(&self.client),
                 );
-                match self.component_layout {
-                    ComponentLayout::PerPair => books.insert(pair_book(
-                        self.protocol_system,
-                        PROTOCOL_TYPE,
-                        self.book_config.chain,
-                        component_id,
-                        state,
-                        None,
-                    )),
-                    ComponentLayout::AllPairs(_) => venue_books.push(VenueBook {
-                        maker: Some(mm_name.clone()),
-                        updated_at: None,
-                        state,
-                    }),
-                }
+                collector.push(
+                    component_id,
+                    VenueBook { maker: Some(mm_name.clone()), updated_at: None, state },
+                );
             }
         }
-        if let ComponentLayout::AllPairs(rule) = self.component_layout {
-            if !venue_books.is_empty() {
-                books.insert(all_pairs_book(
-                    self.protocol_system,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    HashflowAllPairsState::new(venue_books, rule),
-                ));
-            }
-        }
-        Ok(BookSnapshot::received_now(books))
+        Ok(BookSnapshot::received_now(collector.finish()))
     }
 }
 

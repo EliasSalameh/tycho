@@ -28,8 +28,8 @@ use tycho_common::{
 
 use crate::{
     book::{
-        component::{encode_swap_directions, PairState, SWAP_DIRECTIONS_ATTRIBUTE},
-        Book,
+        component::{encode_swap_directions, pair_book, PairState, SWAP_DIRECTIONS_ATTRIBUTE},
+        Book, Books,
     },
     protocol::models::ProtocolComponent,
 };
@@ -671,15 +671,23 @@ pub(crate) fn all_pairs_component_id(protocol_system: &str) -> Bytes {
     Bytes::from(protocol_system.as_bytes())
 }
 
-/// The venue's one book, priced by `state`: every token its books name, the directions they
-/// price and the rule they are quoted under.
+/// The venue's one book, priced by `books` under `rule`: every token they name, the directions
+/// they price and the rule they are quoted under.
+///
+/// `None` where the venue priced nothing a consumer could route through, which is a component
+/// that would carry no tokens and no directions.
 pub(crate) fn all_pairs_book<W: AllPairsState>(
     protocol_system: &str,
     protocol_type: &str,
     chain: Chain,
-    state: W,
-) -> Book {
+    books: Vec<VenueBook<W::Pair>>,
+    rule: QuoteRule,
+) -> Option<Book> {
+    let state = W::new(books, rule);
     let pairs = state.pairs();
+    if pairs.books().is_empty() {
+        return None;
+    }
     let tokens: BTreeMap<Bytes, Token> = pairs
         .books()
         .iter()
@@ -702,7 +710,69 @@ pub(crate) fn all_pairs_book<W: AllPairsState>(
         Default::default(),
         Default::default(),
     );
-    Book { component, state: Arc::new(state), updated_at }
+    Some(Book { component, state: Arc::new(state), updated_at })
+}
+
+/// Gathers a venue's books into the components it publishes them as.
+///
+/// A source decodes the same books whichever layout it serves, so it pushes each one with the
+/// component id it would carry on its own and takes the [`Books`] at the end. Under
+/// [`ComponentLayout::PerPair`] that id is a component; under [`ComponentLayout::AllPairs`] the
+/// books end up behind one.
+pub(crate) struct BookCollector<W: AllPairsState> {
+    protocol_system: &'static str,
+    protocol_type: &'static str,
+    chain: Chain,
+    layout: ComponentLayout,
+    books: Books,
+    venue_books: Vec<VenueBook<W::Pair>>,
+}
+
+impl<W: AllPairsState> BookCollector<W> {
+    pub fn new(
+        protocol_system: &'static str,
+        protocol_type: &'static str,
+        chain: Chain,
+        layout: ComponentLayout,
+    ) -> Self {
+        BookCollector {
+            protocol_system,
+            protocol_type,
+            chain,
+            layout,
+            books: Books::new(),
+            venue_books: Vec::new(),
+        }
+    }
+
+    /// Takes one book of the venue, under the `component_id` the per-pair layout gives it.
+    pub fn push(&mut self, component_id: Bytes, book: VenueBook<W::Pair>) {
+        match self.layout {
+            ComponentLayout::PerPair => self.books.insert(pair_book(
+                self.protocol_system,
+                self.protocol_type,
+                self.chain,
+                component_id,
+                book.state,
+                book.updated_at,
+            )),
+            ComponentLayout::AllPairs(_) => self.venue_books.push(book),
+        }
+    }
+
+    /// The components the venue publishes for everything pushed so far.
+    pub fn finish(mut self) -> Books {
+        if let ComponentLayout::AllPairs(rule) = self.layout {
+            self.books.extend(all_pairs_book::<W>(
+                self.protocol_system,
+                self.protocol_type,
+                self.chain,
+                self.venue_books,
+                rule,
+            ));
+        }
+        self.books
+    }
 }
 
 #[cfg(test)]
@@ -1047,6 +1117,21 @@ mod tests {
         ));
     }
 
+    /// A venue whose books all price nothing is a component with no tokens and no directions,
+    /// which a consumer can do nothing with.
+    #[test]
+    fn a_venue_that_prices_nothing_publishes_no_component() {
+        let book = all_pairs_book::<TestVenue>(
+            "rfq:venue",
+            "venue_pool",
+            Chain::Ethereum,
+            vec![book("empty", 0, 0)],
+            QuoteRule::OncePerMaker,
+        );
+
+        assert!(book.is_none(), "{book:?}");
+    }
+
     /// A consumer reads the directions off the component rather than pairing up its tokens: the
     /// venue prices A into B and B into C, but nothing between A and C.
     #[test]
@@ -1063,12 +1148,14 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book(
+        let book = all_pairs_book::<TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
-            venue(vec![book("generous", 3, 10), b_to_c], QuoteRule::OncePerMaker),
-        );
+            vec![book("generous", 3, 10), b_to_c],
+            QuoteRule::OncePerMaker,
+        )
+        .expect("a venue pricing two pairs has a component");
 
         // "rfq:venue" in ASCII.
         assert_eq!(book.component.id.to_string(), "0x7266713a76656e7565");
@@ -1108,12 +1195,14 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book(
+        let book = all_pairs_book::<TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
-            venue(vec![book("generous", 3, 10), silent], QuoteRule::OncePerMaker),
-        );
+            vec![book("generous", 3, 10), silent],
+            QuoteRule::OncePerMaker,
+        )
+        .expect("one book prices a pair");
 
         let directions =
             decode_swap_directions(&book.component.static_attributes[SWAP_DIRECTIONS_ATTRIBUTE])
@@ -1192,5 +1281,28 @@ mod tests {
              2222222222222222222222222222222222222222"
         );
         assert!(decode_swap_directions(&[0u8; 41]).is_err());
+    }
+
+    /// A source pushes the same books either way, so the layout alone decides what it publishes.
+    #[rstest]
+    #[case::per_pair(ComponentLayout::PerPair, vec!["0x01", "0x02"])]
+    #[case::all_pairs(ComponentLayout::AllPairs(QuoteRule::OncePerVenue), vec!["0x7266713a76656e7565"])]
+    fn the_layout_decides_which_components_a_venues_books_become(
+        #[case] layout: ComponentLayout,
+        #[case] expected: Vec<&str>,
+    ) {
+        let mut collector =
+            BookCollector::<TestVenue>::new("rfq:venue", "venue_pool", Chain::Ethereum, layout);
+        collector.push(Bytes::from([0x01]), book("mm1", 2, 10));
+        collector.push(Bytes::from([0x02]), book("mm2", 3, 10));
+
+        let books = collector.finish();
+
+        let mut ids: Vec<&str> = books
+            .keys()
+            .map(String::as_str)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, expected);
     }
 }

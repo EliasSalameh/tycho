@@ -8,9 +8,9 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_book, AllPairsState, ComponentLayout, VenueBook},
-        component::{pair_book, pair_component_id},
-        BookFeedConfig, BookSnapshot, Books, ReceivedAt,
+        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        component::pair_component_id,
+        BookFeedConfig, BookSnapshot, ReceivedAt,
     },
     rfq::protocols::native::{
         client::NativeClient,
@@ -191,8 +191,12 @@ impl HttpSource for NativeBookSource {
             .map(|(component_id, book)| (component_id.clone(), self.normalized_tvl(book, &grouped)))
             .collect();
 
-        let mut books = Books::new();
-        let mut venue_books = Vec::new();
+        let mut collector = BookCollector::<NativeAllPairsState>::new(
+            PROTOCOL_SYSTEM,
+            PROTOCOL_TYPE,
+            self.book_config.chain,
+            self.component_layout,
+        );
         for (component_id, book) in grouped {
             // Only requested markets become components.
             let Some((base_token, quote_token)) = self
@@ -222,31 +226,9 @@ impl HttpSource for NativeBookSource {
                 Arc::clone(&self.client),
             );
             // Native's orderbook carries no per-book timestamp.
-            match self.component_layout {
-                ComponentLayout::PerPair => books.insert(pair_book(
-                    PROTOCOL_SYSTEM,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    component_id,
-                    state,
-                    None,
-                )),
-                ComponentLayout::AllPairs(_) => {
-                    venue_books.push(VenueBook { maker: None, updated_at: None, state })
-                }
-            }
+            collector.push(component_id, VenueBook { maker: None, updated_at: None, state });
         }
-        if let ComponentLayout::AllPairs(rule) = self.component_layout {
-            if !venue_books.is_empty() {
-                books.insert(all_pairs_book(
-                    PROTOCOL_SYSTEM,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    NativeAllPairsState::new(venue_books, rule),
-                ));
-            }
-        }
-        Ok(BookSnapshot::received_now(books))
+        Ok(BookSnapshot::received_now(collector.finish()))
     }
 }
 

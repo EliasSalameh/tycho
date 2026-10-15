@@ -9,9 +9,9 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_book, AllPairsState, ComponentLayout, VenueBook},
-        component::{maker_component_id, pair_book},
-        tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
+        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        component::maker_component_id,
+        tvl, BookFeedConfig, BookSnapshot, ReceivedAt,
     },
     rfq::protocols::liquorice::{
         client::LiquoriceClient,
@@ -65,8 +65,12 @@ impl HttpSource for LiquoriceBookSource {
         let prices_by_mm = self.client.fetch_price_levels().await?;
         debug!(market_makers = prices_by_mm.len(), "fetched price levels");
 
-        let mut books = Books::new();
-        let mut venue_books = Vec::new();
+        let mut collector = BookCollector::<LiquoriceAllPairsState>::new(
+            PROTOCOL_SYSTEM,
+            PROTOCOL_TYPE,
+            self.book_config.chain,
+            self.component_layout,
+        );
         for (mm_name, token_pair_prices) in prices_by_mm.iter() {
             for token_pair_price in token_pair_prices {
                 let base_bytes = &token_pair_price.base_token;
@@ -107,34 +111,13 @@ impl HttpSource for LiquoriceBookSource {
                     mm_name.clone(),
                     Arc::clone(&self.client),
                 );
-                match self.component_layout {
-                    ComponentLayout::PerPair => books.insert(pair_book(
-                        PROTOCOL_SYSTEM,
-                        PROTOCOL_TYPE,
-                        self.book_config.chain,
-                        maker_component_id(PROTOCOL_SYSTEM, base_bytes, quote_bytes, mm_name),
-                        state,
-                        updated_at,
-                    )),
-                    ComponentLayout::AllPairs(_) => venue_books.push(VenueBook {
-                        maker: Some(mm_name.clone()),
-                        updated_at,
-                        state,
-                    }),
-                }
+                collector.push(
+                    maker_component_id(PROTOCOL_SYSTEM, base_bytes, quote_bytes, mm_name),
+                    VenueBook { maker: Some(mm_name.clone()), updated_at, state },
+                );
             }
         }
-        if let ComponentLayout::AllPairs(rule) = self.component_layout {
-            if !venue_books.is_empty() {
-                books.insert(all_pairs_book(
-                    PROTOCOL_SYSTEM,
-                    PROTOCOL_TYPE,
-                    self.book_config.chain,
-                    LiquoriceAllPairsState::new(venue_books, rule),
-                ));
-            }
-        }
-        Ok(BookSnapshot::received_now(books))
+        Ok(BookSnapshot::received_now(collector.finish()))
     }
 }
 
