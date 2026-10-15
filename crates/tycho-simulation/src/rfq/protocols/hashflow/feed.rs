@@ -104,7 +104,7 @@ impl HashflowFeedBuilder {
         self
     }
 
-    /// Deadline for binding quote requests. Default: 5 s.
+    /// Deadline for binding quote requests.
     pub fn quote_timeout(mut self, timeout: Duration) -> Self {
         self.quote_timeout = timeout;
         self

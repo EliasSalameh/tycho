@@ -53,15 +53,15 @@ impl HashflowState {
         HashflowState { base_token, quote_token, levels, market_maker, client: Some(client) }
     }
 
-    /// Smallest `base_token` amount (in base units) Hashflow accepts for a firm quote: the first
-    /// price level's quantity, in whole units of the token. `get_amount_out` fills smaller
-    /// amounts partially against that level, but the quote API answers them with code 79,
-    /// `Below minimum amount`, so callers size requests at or above this.
+    /// Smallest `base_token` amount, in atomic units, that Hashflow accepts for a firm quote:
+    /// the first price level's quantity, which the ladder holds in whole units of the token,
+    /// scaled and rounded down. `get_amount_out` fills smaller amounts partially against that
+    /// level, but the quote API answers them with code 79, `Below minimum amount`, so callers
+    /// size requests at or above this.
     ///
-    /// The quantity is a fraction of a unit wide, and the unit below it is the one to name: the
-    /// venue signs there — measured against a live maker, which quoted ten and ninety units
-    /// under its published level and refused half of it — and it is an amount the ladder holds,
-    /// where the unit above is one a book of a single level does not reach.
+    /// Rounding down is what the venue signs at: measured against a live maker, it quoted ten
+    /// and ninety atomic units below its published level and refused half of it. Rounding up
+    /// would name an amount a book of a single level does not reach.
     pub fn min_amount_in(&self) -> BigUint {
         let first_level_quantity = self
             .levels
@@ -234,9 +234,9 @@ all_pairs_state! {
 }
 
 impl HashflowAllPairsState {
-    /// The smallest input the cheapest market maker on this direction accepts, in atomic units,
-    /// or `None` where the venue prices nothing in it. A swap goes to one maker, and a maker
-    /// declines an amount below its first level.
+    /// The smallest first-level minimum among the books pricing this direction, spent or not,
+    /// in atomic units, or `None` where the venue prices nothing in it. A swap goes to one
+    /// maker, and a maker declines an amount below its first level.
     pub fn min_amount_in(&self, token_in: &Bytes, token_out: &Bytes) -> Option<BigUint> {
         self.0
             .books_pricing(token_in, token_out)

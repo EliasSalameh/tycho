@@ -1,6 +1,6 @@
 //! Metric book feed for the `api.metric.xyz` v1 API.
 //!
-//! Endpoint reference: <https://docs.metric.xyz/RSm94m71kqtGICv4iKRj/developers/api>
+//! Endpoint reference: <https://docs.metric.xyz>
 
 use std::{future::Future, num::NonZeroUsize, time::Duration};
 
@@ -54,13 +54,14 @@ impl MetricFeedBuilder {
         }
     }
 
-    /// Serves this feed from somewhere else than Metric's own API.
+    /// Points the feed at another Metric deployment; [`build`](Self::build) rejects a value
+    /// that is not a URL.
     pub fn base_url(mut self, base_url: String) -> Self {
         self.base_url = Some(base_url);
         self
     }
 
-    /// How many of a poll's per-pool bid/ask requests run at once. Default 16.
+    /// How many of a poll's per-pool bid/ask requests run at once.
     ///
     /// Metric prices one pool per request, so this is what keeps a poll's duration flat as the
     /// venue adds pools instead of growing until the loop's `request_timeout` discards the whole

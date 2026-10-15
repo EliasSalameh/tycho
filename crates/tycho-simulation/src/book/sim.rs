@@ -133,7 +133,8 @@ pub fn to_atomic(amount: f64, decimals: u32) -> Result<BigUint, SimulationError>
 }
 
 /// Turns a fill of `amount_in` (human units) into the swap result, with the partially filled
-/// result attached to the `InvalidInput` error when the ladder ran out of liquidity.
+/// result attached to the `InvalidInput` error when the ladder ran out of liquidity. A fill
+/// that took nothing is an `InvalidInput` with no partial result attached.
 pub fn fill_result(
     fill: Fill,
     amount_in: f64,

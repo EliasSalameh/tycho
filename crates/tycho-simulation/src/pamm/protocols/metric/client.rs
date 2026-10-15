@@ -199,6 +199,9 @@ mod tests {
         )
     }
 
+    /// The metadata endpoint is paged by `offset`; the poll follows `nextOffset` and must stop
+    /// on the last page, on an empty page, and on an offset that does not advance (the API
+    /// would otherwise be polled forever).
     #[rstest]
     #[case::follows_next_offset_to_the_last_page(vec![(1, Some(500u64)), (1, None)], 2)]
     #[case::stops_when_next_offset_does_not_advance(vec![(1, Some(0)), (1, None)], 1)]

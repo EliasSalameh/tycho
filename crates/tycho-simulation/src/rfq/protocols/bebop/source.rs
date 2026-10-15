@@ -35,10 +35,10 @@ pub struct BebopBookSource {
     /// fallback-router one for a feed built with `with_fallback_router()`.
     pub protocol_system: &'static str,
     pub book_config: BookFeedConfig,
-    // USD-priced tokens the book's TVL is normalized into before the threshold applies.
+    /// USD-priced tokens the book's TVL is normalized into before the threshold applies.
     pub usd_quote_tokens: Arc<HashSet<Bytes>>,
-    // Requests binding quotes; shared with every state this source emits. Its key also
-    // authenticates the pricing WebSocket.
+    /// Requests binding quotes; shared with every state this source emits. Its key also
+    /// authenticates the pricing WebSocket.
     pub client: Arc<BebopClient>,
     /// Whether Bebop's pairs are published as one component or one each. Bebop names no
     /// market maker, so that component is quoted once per venue.
@@ -92,8 +92,8 @@ impl BebopBookSource {
 
     /// Builds the complete book for one pricing update: every pair between requested tokens
     /// whose TVL (normalized into an approved quote token) clears the threshold. Each pair the
-    /// update carries becomes its own component, in the orientation it was published in. Fails
-    /// when any pair carries an invalid price level.
+    /// update carries becomes its own component, in the orientation it was published in. Drops
+    /// a pair whose levels are invalid, and fails only when no pair in the update is valid.
     fn build_books(&self, update: BebopPricingUpdate) -> Result<Books, FeedError> {
         let mut reader = EntryReader::new();
         let pairs = reader.read(update.pairs, BebopBook::try_from);
@@ -102,13 +102,10 @@ impl BebopBookSource {
             .map_err(|reason| FeedError::Parsing(format!("Bebop pricing update: {reason}")))?;
         debug!(pairs = pairs.len(), "decoded pricing update");
 
-        // TVL normalization looks across all pairs, so it runs before the pairs are consumed.
-        // Only a pair between configured tokens becomes a book, and only those are normalized —
-        // but every pair stays in the list, because a kept pair's quote token may be priced by
-        // one that was filtered out.
         // Pricing a book in USD needs the whole update, since the pair that prices its quote
-        // token is another of the pairs the venue just sent — so every pair is measured before
-        // any of them is consumed. What comes out is what a book needs to exist at all.
+        // token is another of the pairs the venue just sent — including one that is not itself
+        // between configured tokens, which is why every pair stays in the list and is measured
+        // before any of them is consumed. What comes out is what a book needs to exist at all.
         let measured = pairs
             .iter()
             .map(|book| {

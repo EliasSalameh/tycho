@@ -216,7 +216,7 @@ pub struct NativeApiErrorResponse {
 }
 
 /// A chain Native Relay's swap API serves, resolved from the configured [`Chain`] when a feed is
-/// built. Its orderbook and firm-quote paths carry the chain by name.
+/// built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NativeSupportedChain {
@@ -243,7 +243,8 @@ impl TryFrom<Chain> for NativeSupportedChain {
 }
 
 impl NativeSupportedChain {
-    /// The segment Native's per-chain API paths carry.
+    /// How Native spells the chain: `?chain=` on the orderbook poll, `src_chain` and
+    /// `dst_chain` in a firm quote's body.
     pub fn as_str(self) -> &'static str {
         match self {
             NativeSupportedChain::Ethereum => "ethereum",

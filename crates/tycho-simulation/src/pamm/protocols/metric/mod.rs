@@ -5,6 +5,9 @@ mod source;
 pub mod state;
 
 /// Protocol system stamped on every component this integration emits.
+///
+/// The `rfq:` prefix is what tycho-execution's encoder registry keys Metric's encoder on, so it
+/// stays whatever module the integration lives in.
 pub const PROTOCOL_SYSTEM: &str = "rfq:metric";
 
 /// The protocol system of components whose swaps settle through Tycho's

@@ -352,9 +352,6 @@ mod tests {
         );
     }
 
-    /// The metadata endpoint is paged by `offset`; the poll follows `nextOffset` and must stop on
-    /// the last page, on an empty page, and on an offset that does not advance (the API would
-    /// otherwise be polled forever).
     /// One poll fetches every pool's bid/ask and shares a single `request_timeout`, so the
     /// default concurrency has to keep a full poll inside that budget at the pool count Metric
     /// actually serves. Base is the chain with pools. The token universe is stubbed from the
