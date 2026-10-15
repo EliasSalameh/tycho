@@ -85,6 +85,22 @@ impl SwapDirection {
     }
 }
 
+/// The client a state asks for a binding quote, or the error one that came out of a recording
+/// reports: a state is serialized without the venue's client, so a replayed book still prices
+/// but has nothing to quote through.
+pub fn quoting_client<'a, C>(
+    client: Option<&'a std::sync::Arc<C>>,
+    venue: &str,
+) -> Result<&'a C, SimulationError> {
+    client
+        .map(|client| client.as_ref())
+        .ok_or_else(|| {
+            SimulationError::FatalError(format!(
+                "This {venue} state carries no client, so it cannot request a quote"
+            ))
+        })
+}
+
 /// The directions of a book that quotes both ways round, as `(token sold, token bought)`: it
 /// buys base where it bids and sells base where it asks, and a side with nothing on it prices
 /// neither way.

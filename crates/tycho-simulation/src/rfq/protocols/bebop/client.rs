@@ -3,7 +3,6 @@ use std::{collections::HashMap, str::FromStr};
 use ::http::{Request, Uri};
 use num_bigint::BigUint;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, timeout, Duration};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest, ClientRequestBuilder, Error as TungsteniteError,
@@ -27,16 +26,11 @@ const BEBOP_API_HOST: &str = "api.bebop.xyz";
 /// Requests binding Bebop quotes. One instance is shared (via `Arc`) by every state a
 /// [`BebopFeed`](super::feed::BebopFeed) emits, so all of them reuse the same HTTP
 /// connection pool.
-///
-/// Serialization keeps the configuration but skips the credential and the HTTP client: a
-/// deserialized client gets a fresh connection pool and an empty key, so binding quotes fail at
-/// call time until re-configured. `Debug` output omits the credential as well.
-#[derive(derive_more::Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug)]
 pub struct BebopClient {
     quote_endpoint: String,
     pricing_ws_endpoint: String,
     // key header for authentication
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     key: String,
     quote_timeout: Duration,
@@ -46,7 +40,6 @@ pub struct BebopClient {
     origin_target: Option<Bytes>,
     /// Stable identifier for the upstream flow source when aggregating multiple sources.
     origin_source: Option<String>,
-    #[serde(skip)]
     http: Client,
 }
 
@@ -371,17 +364,6 @@ mod tests {
             None,
             None,
         )
-    }
-
-    #[test]
-    fn serialization_skips_credentials() {
-        let original = test_client();
-
-        let serialized = serde_json::to_string(&original).unwrap();
-        let deserialized: BebopClient = serde_json::from_str(&serialized).unwrap();
-
-        assert!(!serialized.contains("secret_key"), "{serialized}");
-        assert_eq!(deserialized.quote_endpoint, original.quote_endpoint);
     }
 
     #[test]

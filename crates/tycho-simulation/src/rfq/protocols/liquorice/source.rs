@@ -100,13 +100,13 @@ impl HttpSource for LiquoriceBookSource {
                 let updated_at = token_pair_price
                     .updated_at
                     .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
-                let state = LiquoriceState {
-                    base_token: base_token.clone(),
-                    quote_token: quote_token.clone(),
-                    book: token_pair_price.clone(),
-                    market_maker: mm_name.clone(),
-                    client: Arc::clone(&self.client),
-                };
+                let state = LiquoriceState::new(
+                    base_token.clone(),
+                    quote_token.clone(),
+                    token_pair_price.clone(),
+                    mm_name.clone(),
+                    Arc::clone(&self.client),
+                );
                 match self.component_layout {
                     ComponentLayout::PerPair => books.insert(pair_book(
                         PROTOCOL_SYSTEM,
@@ -272,18 +272,18 @@ mod tests {
             books[&id("old_mm")].updated_at,
             DateTime::from_timestamp_millis((newest_ms - 60_000) as i64)
         );
-        let expected = LiquoriceState {
-            base_token: source.book_config.tokens[&weth].clone(),
-            quote_token: source.book_config.tokens[&usdc].clone(),
-            book: LiquoriceTokenPairPrice {
+        let expected = LiquoriceState::new(
+            source.book_config.tokens[&weth].clone(),
+            source.book_config.tokens[&usdc].clone(),
+            LiquoriceTokenPairPrice {
                 base_token: weth.clone(),
                 quote_token: usdc.clone(),
                 levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 3000.0 }]).unwrap(),
                 updated_at: Some(newest_ms),
             },
-            market_maker: "fresh_mm".to_string(),
-            client: Arc::clone(&source.client),
-        };
+            "fresh_mm".to_string(),
+            Arc::clone(&source.client),
+        );
         assert!(
             books[&id("fresh_mm")]
                 .state

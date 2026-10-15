@@ -111,13 +111,13 @@ impl HttpSource for HashflowBookSource {
                 }
 
                 // `levels_by_mm` stays borrowed for the TVL normalization lookups above.
-                let state = HashflowState {
-                    base_token: base_token.clone(),
-                    quote_token: quote_token.clone(),
-                    levels: mm_level.clone(),
-                    market_maker: mm_name.clone(),
-                    client: Arc::clone(&self.client),
-                };
+                let state = HashflowState::new(
+                    base_token.clone(),
+                    quote_token.clone(),
+                    mm_level.clone(),
+                    mm_name.clone(),
+                    Arc::clone(&self.client),
+                );
                 match self.component_layout {
                     ComponentLayout::PerPair => books.insert(pair_book(
                         self.protocol_system,

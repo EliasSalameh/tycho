@@ -215,12 +215,12 @@ impl HttpSource for NativeBookSource {
                 continue;
             }
 
-            let state = NativeState {
-                base_token: base_token.clone(),
-                quote_token: quote_token.clone(),
+            let state = NativeState::new(
+                base_token.clone(),
+                quote_token.clone(),
                 book,
-                client: Arc::clone(&self.client),
-            };
+                Arc::clone(&self.client),
+            );
             // Native's orderbook carries no per-book timestamp.
             match self.component_layout {
                 ComponentLayout::PerPair => books.insert(pair_book(

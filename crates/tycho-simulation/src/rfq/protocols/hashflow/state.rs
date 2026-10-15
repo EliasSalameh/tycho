@@ -36,11 +36,23 @@ pub struct HashflowState {
     #[debug(skip)]
     pub(super) levels: HashflowMarketMakerLevels,
     pub(super) market_maker: String,
+    #[serde(skip)]
     #[debug(skip)]
-    pub(super) client: Arc<HashflowClient>,
+    client: Option<Arc<HashflowClient>>,
 }
 
 impl HashflowState {
+    /// A book this venue prices, with the client its binding quotes go to.
+    pub(super) fn new(
+        base_token: Token,
+        quote_token: Token,
+        levels: HashflowMarketMakerLevels,
+        market_maker: String,
+        client: Arc<HashflowClient>,
+    ) -> Self {
+        HashflowState { base_token, quote_token, levels, market_maker, client: Some(client) }
+    }
+
     /// Smallest `base_token` amount (in base units) Hashflow accepts for a firm quote: the first
     /// price level's quantity, in whole units of the token. `get_amount_out` fills smaller
     /// amounts partially against that level, but the quote API answers them with code 79,
@@ -190,8 +202,7 @@ impl IndicativelyPriced for HashflowState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
-        Ok(self
-            .client
+        Ok(sim::quoting_client(self.client.as_ref(), "Hashflow")?
             .request_binding_quote(&params, self.market_maker.clone())
             .await?)
     }
@@ -402,7 +413,7 @@ mod tests {
                 .unwrap(),
             },
             market_maker: "test_mm".to_string(),
-            client: empty_client(),
+            client: Some(empty_client()),
         }
     }
 
@@ -427,7 +438,7 @@ mod tests {
                 .unwrap(),
             },
             market_maker: "test_mm".to_string(),
-            client: empty_client(),
+            client: Some(empty_client()),
         };
 
         let minimum = state.min_amount_in();

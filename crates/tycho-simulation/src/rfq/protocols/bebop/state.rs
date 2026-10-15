@@ -43,11 +43,23 @@ pub struct BebopState {
     /// token at the moment this book was published. It is what turns the venue's dollar floor
     /// into an amount of a token.
     pub(super) usd_per_quote_token: f64,
+    #[serde(skip)]
     #[debug(skip)]
-    pub(super) client: Arc<BebopClient>,
+    client: Option<Arc<BebopClient>>,
 }
 
 impl BebopState {
+    /// A book this venue prices, with the client its binding quotes go to.
+    pub(super) fn new(
+        base_token: Token,
+        quote_token: Token,
+        book: BebopBook,
+        usd_per_quote_token: f64,
+        client: Arc<BebopClient>,
+    ) -> Self {
+        BebopState { base_token, quote_token, book, usd_per_quote_token, client: Some(client) }
+    }
+
     /// The ladder a swap in `direction` consumes, in the units of the token sold: the bids as
     /// published for selling base, the asks re-expressed per quote unit for selling quote.
     fn ladder(&self, direction: SwapDirection) -> Cow<'_, Levels> {
@@ -216,8 +228,7 @@ impl IndicativelyPriced for BebopState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
-        Ok(self
-            .client
+        Ok(sim::quoting_client(self.client.as_ref(), "Bebop")?
             .request_binding_quote(&params)
             .await?)
     }
@@ -427,6 +438,35 @@ mod tests {
         );
     }
 
+    /// A state read back from a recording carries no client: the venue's credentials are not
+    /// part of what is serialized, so a replayed book still prices but has nothing to ask for a
+    /// firm quote through.
+    #[tokio::test]
+    async fn a_replayed_state_prices_but_cannot_quote() {
+        let state = create_test_bebop_state();
+        let replayed: BebopState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+
+        let priced = replayed.get_amount_out(BigUint::from(10_000u64), &wbtc(), &usdc());
+        let quoted = replayed
+            .request_signed_quote(GetAmountOutParams {
+                amount_in: BigUint::from(10_000u64),
+                token_in: wbtc().address,
+                token_out: usdc().address,
+                sender: Bytes::zero(20),
+                receiver: Bytes::zero(20),
+                origin: None,
+            })
+            .await;
+
+        assert!(priced.is_ok(), "{priced:?}");
+        assert!(
+            matches!(&quoted, Err(SimulationError::FatalError(message))
+                if message.contains("carries no client")),
+            "{quoted:?}"
+        );
+    }
+
     fn create_test_bebop_state() -> BebopState {
         let price_data = BebopPriceData {
             base: hex::decode("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap(), // WBTC
@@ -441,7 +481,7 @@ mod tests {
             book: BebopBook::try_from(price_data).unwrap(),
             // The pair's quote token is USDC.
             usd_per_quote_token: 1.0,
-            client: empty_client(),
+            client: Some(empty_client()),
         }
     }
 
@@ -609,7 +649,7 @@ mod tests {
             book: BebopBook::try_from(price_data).unwrap(),
             // The pair's quote token is USDC.
             usd_per_quote_token: 1.0,
-            client: empty_client(),
+            client: Some(empty_client()),
         };
 
         // swap 3 WETH -> USDC

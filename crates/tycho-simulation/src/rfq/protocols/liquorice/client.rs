@@ -8,7 +8,6 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use num_bigint::BigUint;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
-use serde::{Deserialize, Serialize};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, instrument, warn};
 use tycho_common::{
@@ -39,32 +38,24 @@ fn refuses_the_chain(body: &str) -> bool {
 ///
 /// It is also how the feed reads the venue's price levels, so every request to Liquorice —
 /// quotes and books alike — goes through this one type and its one connection pool.
-///
-/// Serialization keeps the configuration but skips the credentials and the HTTP client: a
-/// deserialized client gets a fresh connection pool and empty credentials, so binding quotes
-/// fail at call time until re-configured. `Debug` output omits the credentials as well.
-#[derive(derive_more::Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug)]
 pub struct LiquoriceClient {
     chain_id: u64,
     quote_endpoint: String,
     price_levels_endpoint: String,
     // solver header for authentication
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     auth_solver: String,
     // key header for authentication
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     auth_key: String,
     quote_timeout: Duration,
     quote_expiry_secs: u64,
-    #[serde(skip)]
     http: Client,
     /// Liquorice issues credentials under two schemes: newer accounts authenticate with
     /// `Authorization: Basic base64(solver:key)`, older ones with a separate `solver` header
     /// beside `authorization`. Every client starts on Basic and switches to the legacy pair for
     /// good once the venue answers 401.
-    #[serde(skip)]
     use_legacy_auth: AtomicBool,
 }
 
@@ -499,23 +490,6 @@ mod tests {
             .await
             .expect("the second poll is served too");
         assert_eq!(attempts.load(Ordering::SeqCst), 3, "the rejected scheme is not tried again");
-    }
-
-    /// A state carries its client into every recording of it, so what authenticates the feed
-    /// must not survive the round trip, and what addresses the venue must.
-    #[test]
-    fn serialization_skips_credentials() {
-        let original = create_test_client(
-            "https://liquorice.example/quote".to_string(),
-            Duration::from_secs(1),
-        );
-
-        let serialized = serde_json::to_string(&original).unwrap();
-        let deserialized: LiquoriceClient = serde_json::from_str(&serialized).unwrap();
-
-        assert!(!serialized.contains("test_solver"), "{serialized}");
-        assert!(!serialized.contains("test_key"), "{serialized}");
-        assert_eq!(deserialized.quote_endpoint, original.quote_endpoint);
     }
 
     #[test]

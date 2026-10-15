@@ -33,11 +33,23 @@ pub struct LiquoriceState {
     #[debug(skip)]
     pub(super) book: LiquoriceTokenPairPrice,
     pub(super) market_maker: String,
+    #[serde(skip)]
     #[debug(skip)]
-    pub(super) client: Arc<LiquoriceClient>,
+    client: Option<Arc<LiquoriceClient>>,
 }
 
 impl LiquoriceState {
+    /// A book this venue prices, with the client its binding quotes go to.
+    pub(super) fn new(
+        base_token: Token,
+        quote_token: Token,
+        book: LiquoriceTokenPairPrice,
+        market_maker: String,
+        client: Arc<LiquoriceClient>,
+    ) -> Self {
+        LiquoriceState { base_token, quote_token, book, market_maker, client: Some(client) }
+    }
+
     /// The levels price one direction only: selling base for quote.
     fn valid_direction_guard(
         &self,
@@ -159,8 +171,7 @@ impl IndicativelyPriced for LiquoriceState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
-        Ok(self
-            .client
+        Ok(sim::quoting_client(self.client.as_ref(), "Liquorice")?
             .request_binding_quote(&params, &self.market_maker)
             .await?)
     }
@@ -344,7 +355,7 @@ mod tests {
                 updated_at: None,
             },
             market_maker: "test_mm".to_string(),
-            client: empty_client(),
+            client: Some(empty_client()),
         }
     }
 

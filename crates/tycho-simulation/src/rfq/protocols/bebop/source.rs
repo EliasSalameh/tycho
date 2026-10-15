@@ -136,13 +136,13 @@ impl BebopBookSource {
             // `last_update_ts` is milliseconds on the wire (Bebop's spec says seconds; 13-digit
             // values observed live).
             let updated_at = DateTime::from_timestamp_millis(book.last_update_ts as i64);
-            let state = BebopState {
-                base_token: base_token.clone(),
-                quote_token: quote_token.clone(),
+            let state = BebopState::new(
+                base_token.clone(),
+                quote_token.clone(),
                 book,
                 usd_per_quote_token,
-                client: Arc::clone(&self.client),
-            };
+                Arc::clone(&self.client),
+            );
             match self.component_layout {
                 ComponentLayout::PerPair => books.insert(pair_book(
                     self.protocol_system,

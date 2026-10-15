@@ -3,7 +3,6 @@ use std::{collections::HashMap, str::FromStr, time::SystemTime};
 use alloy::primitives::Address;
 use num_bigint::BigUint;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use tokio::time::{timeout, Duration};
 use tracing::{instrument, warn};
 use tycho_common::{
@@ -42,20 +41,14 @@ enum QuoteAttemptError {
 /// Requests binding Native Relay quotes. One instance is shared (via `Arc`) by every state a
 /// [`NativeFeed`](super::feed::NativeFeed) emits, so all of them reuse the same HTTP connection
 /// pool.
-///
-/// Serialization keeps the configuration but skips the credential and the HTTP client: a
-/// deserialized client gets a fresh connection pool and an empty key, so binding quotes fail at
-/// call time until re-configured. `Debug` output omits the credential as well.
-#[derive(derive_more::Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug)]
 pub struct NativeClient {
     chain: NativeSupportedChain,
     /// Base URL of the swap API; the firm-quote path is appended per request.
     endpoint: String,
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     api_key: String,
     quote_timeout: Duration,
-    #[serde(skip)]
     http: Client,
 }
 
@@ -598,17 +591,6 @@ mod tests {
             receiver: Bytes::from_str("0x4444444444444444444444444444444444444444").unwrap(),
             origin: None,
         }
-    }
-
-    #[test]
-    fn serialization_skips_credentials() {
-        let client = create_test_client("https://native.example".to_string());
-
-        let serialized = serde_json::to_string(&client).unwrap();
-        let deserialized: NativeClient = serde_json::from_str(&serialized).unwrap();
-
-        assert!(!serialized.contains("secret_key"), "{serialized}");
-        assert_eq!(deserialized.endpoint, client.endpoint);
     }
 
     #[test]

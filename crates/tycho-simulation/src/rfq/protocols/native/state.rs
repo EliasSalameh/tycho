@@ -37,11 +37,22 @@ pub struct NativeState {
     pub(super) quote_token: Token,
     #[debug(skip)]
     pub(super) book: NativePriceData,
+    #[serde(skip)]
     #[debug(skip)]
-    pub(super) client: Arc<NativeClient>,
+    client: Option<Arc<NativeClient>>,
 }
 
 impl NativeState {
+    /// A book this venue prices, with the client its binding quotes go to.
+    pub(super) fn new(
+        base_token: Token,
+        quote_token: Token,
+        book: NativePriceData,
+        client: Arc<NativeClient>,
+    ) -> Self {
+        NativeState { base_token, quote_token, book, client: Some(client) }
+    }
+
     fn enforce_minimum(
         amount: &BigUint,
         minimum: f64,
@@ -237,8 +248,7 @@ impl IndicativelyPriced for NativeState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
-        Ok(self
-            .client
+        Ok(sim::quoting_client(self.client.as_ref(), "Native")?
             .request_binding_quote(&params)
             .await?)
     }
@@ -389,7 +399,7 @@ mod tests {
             Duration::from_secs(5),
         ));
 
-        NativeState { base_token, quote_token, book, client }
+        NativeState { base_token, quote_token, book, client: Some(client) }
     }
 
     /// Selling base at the atomic input minimum is accepted, one unit below it is not; the same

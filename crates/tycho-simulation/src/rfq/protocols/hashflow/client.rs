@@ -3,7 +3,6 @@ use std::{collections::HashMap, str::FromStr};
 use alloy::primitives::{Address, U256};
 use num_bigint::BigUint;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, instrument, warn};
 use tycho_common::{
@@ -32,24 +31,17 @@ fn refuses_the_chain(body: &str) -> bool {
 /// Requests binding Hashflow quotes. One instance is shared (via `Arc`) by every state a
 /// [`HashflowFeed`](super::feed::HashflowFeed) emits, so all of them reuse the same HTTP
 /// connection pool.
-///
-/// Serialization keeps the configuration but skips the credentials and the HTTP client: a
-/// deserialized client gets a fresh connection pool and empty credentials, so binding quotes
-/// fail at call time until re-configured. `Debug` output omits the credentials as well.
-#[derive(derive_more::Debug, Serialize, Deserialize)]
+#[derive(derive_more::Debug)]
 pub struct HashflowClient {
     chain_id: u64,
     quote_endpoint: String,
     price_levels_endpoint: String,
     market_makers_endpoint: String,
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     source: String,
-    #[serde(skip_serializing, default)]
     #[debug(skip)]
     auth_key: String,
     quote_timeout: Duration,
-    #[serde(skip)]
     http: Client,
 }
 
@@ -533,21 +525,6 @@ mod tests {
             "test_key".to_string(),
             quote_timeout,
         )
-    }
-
-    /// A state carries its client into every recording of it, so what authenticates the feed
-    /// must not survive the round trip, and what addresses the venue must.
-    #[test]
-    fn serialization_skips_credentials() {
-        let original =
-            create_test_client("https://hashflow.example/rfq".to_string(), Duration::from_secs(1));
-
-        let serialized = serde_json::to_string(&original).unwrap();
-        let deserialized: HashflowClient = serde_json::from_str(&serialized).unwrap();
-
-        assert!(!serialized.contains("test_user"), "{serialized}");
-        assert!(!serialized.contains("test_key"), "{serialized}");
-        assert_eq!(deserialized.quote_endpoint, original.quote_endpoint);
     }
 
     #[test]
