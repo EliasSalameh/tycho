@@ -16,7 +16,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::all_pairs_state,
+        all_pairs::{all_pairs_state, RefusesQuote},
         component::PairState,
         levels::Levels,
         sim::{self, SwapDirection},
@@ -241,6 +241,8 @@ all_pairs_state! {
     /// turn whichever rule it is published under.
     BebopAllPairsState(BebopState);
 }
+
+impl RefusesQuote for BebopAllPairsState {}
 
 #[cfg(test)]
 mod tests {

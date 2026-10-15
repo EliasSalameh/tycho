@@ -65,7 +65,7 @@ impl HttpSource for LiquoriceBookSource {
         let prices_by_mm = self.client.fetch_price_levels().await?;
         debug!(market_makers = prices_by_mm.len(), "fetched price levels");
 
-        let mut collector = BookCollector::<LiquoriceAllPairsState>::new(
+        let mut collector = BookCollector::new(
             PROTOCOL_SYSTEM,
             PROTOCOL_TYPE,
             self.book_config.chain,
@@ -117,7 +117,7 @@ impl HttpSource for LiquoriceBookSource {
                 );
             }
         }
-        Ok(BookSnapshot::received_now(collector.finish()))
+        Ok(BookSnapshot::received_now(collector.finish::<LiquoriceAllPairsState>()))
     }
 }
 

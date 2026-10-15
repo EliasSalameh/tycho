@@ -379,6 +379,50 @@ impl<S: PairState> AllPairs<S> {
                 .zip(other.books().iter())
                 .all(|(ours, theirs)| ours.maker == theirs.maker && ours.state.eq(&theirs.state))
     }
+
+    /// The swap against the best book available, handed back as `W` — the venue's own state
+    /// type, which is what a consumer carries on rather than the single book it just used.
+    ///
+    /// `W` has spent the turn of the book that filled, including on the state attached to a
+    /// partial fill.
+    pub fn amount_out<W>(
+        &self,
+        amount_in: &BigUint,
+        token_in: &Bytes,
+        token_out: &Bytes,
+    ) -> Result<GetAmountOutResult, SimulationError>
+    where
+        W: From<Self> + ProtocolSim + 'static,
+    {
+        let (book, answer) = self.best(amount_in, token_in, token_out)?;
+        let quoted =
+            || -> Box<dyn ProtocolSim> { Box::new(W::from(self.spending(book.maker.as_deref()))) };
+        match answer {
+            Ok(mut result) => {
+                result.new_state = quoted();
+                Ok(result)
+            }
+            Err(SimulationError::InvalidInput(message, Some(mut partial))) => {
+                partial.new_state = quoted();
+                Err(SimulationError::InvalidInput(message, Some(partial)))
+            }
+            Err(refused) => Err(refused),
+        }
+    }
+
+    /// The book a quote for this swap goes to: the one [`Self::amount_out`] picks on this state.
+    ///
+    /// Asked on the state a swap returned, the book it used is spent, so the quote names another
+    /// book or the state reports that there is none.
+    pub fn quoting_book(
+        &self,
+        amount_in: &BigUint,
+        token_in: &Bytes,
+        token_out: &Bytes,
+    ) -> Result<&S, SimulationError> {
+        let (book, _) = self.best(amount_in, token_in, token_out)?;
+        Ok(&book.state)
+    }
 }
 
 impl<S: PairState> VenueBook<S> {
@@ -412,26 +456,11 @@ fn rank(answer: &Result<GetAmountOutResult, SimulationError>) -> (u8, Option<&Bi
     }
 }
 
-/// A venue's state under [`ComponentLayout::AllPairs`]: the wrapper a venue registers with
-/// `#[typetag::serde]`, which [`AllPairs`] itself cannot be — typetag registers concrete types,
-/// and a generic has as many as it has parameters.
+/// What a venue refuses whatever book would price it, such as a size below every maker's floor.
 ///
-/// Implementing it is naming the books and how to put a set of them back into the venue's own
-/// state; the swap and the quote routing come with it.
-pub(crate) trait AllPairsState: ProtocolSim + Clone + Sized + 'static {
-    /// The per-pair state this venue's books are, the same one its `PerPair` layout publishes.
-    type Pair: PairState;
-
-    /// The venue's books behind one component, quoted under `rule`.
-    fn new(books: Vec<VenueBook<Self::Pair>>, rule: QuoteRule) -> Self;
-
-    fn pairs(&self) -> &AllPairs<Self::Pair>;
-
-    fn with_pairs(&self, pairs: AllPairs<Self::Pair>) -> Self;
-
-    /// What the venue refuses whatever book would price it, such as a size below every maker's
-    /// floor. A venue that refuses on size alone answers it here rather than letting a book
-    /// price something the venue will not sign. Refusing nothing is the default.
+/// A venue that refuses on size alone answers it here rather than letting a book price something
+/// the venue will not sign. Refusing nothing is the default.
+pub(crate) trait RefusesQuote {
     fn check_amount(
         &self,
         _amount_in: &BigUint,
@@ -440,80 +469,20 @@ pub(crate) trait AllPairsState: ProtocolSim + Clone + Sized + 'static {
     ) -> Result<(), SimulationError> {
         Ok(())
     }
-
-    /// The swap against the best book available, returning the state that book has quoted in.
-    ///
-    /// The returned state replaces the book's own, including the one attached to a partial fill:
-    /// what a consumer carries on is the venue, not the single book it just used.
-    fn amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Bytes,
-        token_out: &Bytes,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        self.check_amount(&amount_in, token_in, token_out)?;
-        let (book, answer) = self
-            .pairs()
-            .best(&amount_in, token_in, token_out)?;
-        let quoted = || -> Box<dyn ProtocolSim> {
-            Box::new(
-                self.with_pairs(
-                    self.pairs()
-                        .spending(book.maker.as_deref()),
-                ),
-            )
-        };
-        match answer {
-            Ok(mut result) => {
-                result.new_state = quoted();
-                Ok(result)
-            }
-            Err(SimulationError::InvalidInput(message, Some(mut partial))) => {
-                partial.new_state = quoted();
-                Err(SimulationError::InvalidInput(message, Some(partial)))
-            }
-            Err(refused) => Err(refused),
-        }
-    }
-
-    /// Whether `other` is this venue's books, which is what a venue's `eq` compares.
-    fn same_books(&self, other: &dyn ProtocolSim) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.pairs().same_books(other.pairs()))
-    }
-
-    /// The book a quote for this swap goes to: the one [`Self::amount_out`] picks on this state.
-    ///
-    /// Asked on the state a swap returned, the book it used is spent, so the quote names another
-    /// book or the state reports that there is none.
-    fn quoting_book(
-        &self,
-        amount_in: &BigUint,
-        token_in: &Bytes,
-        token_out: &Bytes,
-    ) -> Result<&Self::Pair, SimulationError> {
-        let (book, _) = self
-            .pairs()
-            .best(amount_in, token_in, token_out)?;
-        Ok(&book.state)
-    }
 }
 
-/// Declares a venue's all-pairs state: the wrapper type, its [`AllPairsState`] impl and the
-/// `ProtocolSim` and `IndicativelyPriced` impls that delegate to this module.
+/// Declares a venue's all-pairs state: the wrapper type and the `ProtocolSim` and
+/// `IndicativelyPriced` impls that delegate to the [`AllPairs`] it holds.
 ///
 /// `#[typetag::serde]` registers concrete types, so each venue needs its own wrapper even
 /// though none of them holds anything of its own. The doc comments written at the invocation
 /// describe the venue's books; the rule a swap spends them under is the same everywhere and is
-/// written here. A venue with something to refuse before a book is picked adds a
-/// [`AllPairsState::check_amount`] after the semicolon.
+/// written here. [`RefusesQuote`] is the one thing a venue answers for itself, so each writes
+/// its own impl beside the invocation.
 macro_rules! all_pairs_state {
     (
         $(#[$doc:meta])*
         $wrapper:ident($pair:ty);
-        $($extra:item)*
     ) => {
         $(#[$doc])*
         ///
@@ -523,29 +492,8 @@ macro_rules! all_pairs_state {
         /// every book spent.
         ///
         /// [`QuoteRule`]: crate::book::all_pairs::QuoteRule
-        #[derive(Clone, Debug, Serialize, Deserialize)]
+        #[derive(Clone, Debug, Serialize, Deserialize, ::derive_more::From)]
         pub struct $wrapper($crate::book::all_pairs::AllPairs<$pair>);
-
-        impl $crate::book::all_pairs::AllPairsState for $wrapper {
-            type Pair = $pair;
-
-            fn new(
-                books: ::std::vec::Vec<$crate::book::all_pairs::VenueBook<$pair>>,
-                rule: $crate::book::all_pairs::QuoteRule,
-            ) -> Self {
-                $wrapper($crate::book::all_pairs::AllPairs::new(books, rule))
-            }
-
-            fn pairs(&self) -> &$crate::book::all_pairs::AllPairs<$pair> {
-                &self.0
-            }
-
-            fn with_pairs(&self, pairs: $crate::book::all_pairs::AllPairs<$pair>) -> Self {
-                $wrapper(pairs)
-            }
-
-            $($extra)*
-        }
 
         #[typetag::serde]
         impl ::tycho_common::simulation::protocol_sim::ProtocolSim for $wrapper {
@@ -572,12 +520,14 @@ macro_rules! all_pairs_state {
                 ::tycho_common::simulation::protocol_sim::GetAmountOutResult,
                 ::tycho_common::simulation::errors::SimulationError,
             > {
-                $crate::book::all_pairs::AllPairsState::amount_out(
+                $crate::book::all_pairs::RefusesQuote::check_amount(
                     self,
-                    amount_in,
+                    &amount_in,
                     &token_in.address,
                     &token_out.address,
-                )
+                )?;
+                self.0
+                    .amount_out::<$wrapper>(&amount_in, &token_in.address, &token_out.address)
             }
 
             fn get_limits(
@@ -635,7 +585,10 @@ macro_rules! all_pairs_state {
                 &self,
                 other: &dyn ::tycho_common::simulation::protocol_sim::ProtocolSim,
             ) -> bool {
-                $crate::book::all_pairs::AllPairsState::same_books(self, other)
+                other
+                    .as_any()
+                    .downcast_ref::<$wrapper>()
+                    .is_some_and(|other| self.0.same_books(&other.0))
             }
         }
 
@@ -652,8 +605,7 @@ macro_rules! all_pairs_state {
                 ::tycho_common::simulation::errors::SimulationError,
             > {
                 ::tycho_common::simulation::indicatively_priced::IndicativelyPriced::request_signed_quote(
-                    $crate::book::all_pairs::AllPairsState::quoting_book(
-                        self,
+                    self.0.quoting_book(
                         &params.amount_in,
                         &params.token_in,
                         &params.token_out,
@@ -681,15 +633,17 @@ pub(crate) fn all_pairs_component_id(protocol_system: &str) -> Bytes {
 ///
 /// `None` where the venue priced nothing a consumer could route through, which is a component
 /// that would carry no tokens and no directions.
-pub(crate) fn all_pairs_book<W: AllPairsState>(
+pub(crate) fn all_pairs_book<S: PairState, W>(
     protocol_system: &str,
     protocol_type: &str,
     chain: Chain,
-    books: Vec<VenueBook<W::Pair>>,
+    books: Vec<VenueBook<S>>,
     rule: QuoteRule,
-) -> Option<Book> {
-    let state = W::new(books, rule);
-    let pairs = state.pairs();
+) -> Option<Book>
+where
+    W: From<AllPairs<S>> + ProtocolSim + 'static,
+{
+    let pairs = AllPairs::new(books, rule);
     if pairs.books().is_empty() {
         return None;
     }
@@ -715,7 +669,7 @@ pub(crate) fn all_pairs_book<W: AllPairsState>(
         Default::default(),
         Default::default(),
     );
-    Some(Book { component, state: Arc::new(state), updated_at })
+    Some(Book { component, state: Arc::new(W::from(pairs)), updated_at })
 }
 
 /// Gathers a venue's books into the components it publishes them as.
@@ -724,16 +678,16 @@ pub(crate) fn all_pairs_book<W: AllPairsState>(
 /// component id it would carry on its own and takes the [`Books`] at the end. Under
 /// [`ComponentLayout::PerPair`] that id is a component; under [`ComponentLayout::AllPairs`] the
 /// books end up behind one.
-pub(crate) struct BookCollector<W: AllPairsState> {
+pub(crate) struct BookCollector<S> {
     protocol_system: &'static str,
     protocol_type: &'static str,
     chain: Chain,
     layout: ComponentLayout,
     books: Books,
-    venue_books: Vec<VenueBook<W::Pair>>,
+    venue_books: Vec<VenueBook<S>>,
 }
 
-impl<W: AllPairsState> BookCollector<W> {
+impl<S: PairState> BookCollector<S> {
     pub fn new(
         protocol_system: &'static str,
         protocol_type: &'static str,
@@ -751,7 +705,7 @@ impl<W: AllPairsState> BookCollector<W> {
     }
 
     /// Takes one book of the venue, under the `component_id` the per-pair layout gives it.
-    pub fn push(&mut self, component_id: Bytes, book: VenueBook<W::Pair>) {
+    pub fn push(&mut self, component_id: Bytes, book: VenueBook<S>) {
         match self.layout {
             ComponentLayout::PerPair => self.books.insert(pair_book(
                 self.protocol_system,
@@ -765,16 +719,21 @@ impl<W: AllPairsState> BookCollector<W> {
         }
     }
 
-    /// The components the venue publishes for everything pushed so far.
-    pub fn finish(mut self) -> Books {
+    /// The components the venue publishes for everything pushed so far, the all-pairs one as
+    /// `W` — the venue's own state type.
+    pub fn finish<W>(mut self) -> Books
+    where
+        W: From<AllPairs<S>> + ProtocolSim + 'static,
+    {
         if let ComponentLayout::AllPairs(rule) = self.layout {
-            self.books.extend(all_pairs_book::<W>(
-                self.protocol_system,
-                self.protocol_type,
-                self.chain,
-                self.venue_books,
-                rule,
-            ));
+            self.books
+                .extend(all_pairs_book::<S, W>(
+                    self.protocol_system,
+                    self.protocol_type,
+                    self.chain,
+                    self.venue_books,
+                    rule,
+                ));
         }
         self.books
     }
@@ -889,22 +848,21 @@ mod tests {
     }
 
     /// A venue publishing [`TestBook`]s under one component.
-    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Serialize, Deserialize, derive_more::From)]
     struct TestVenue(AllPairs<TestBook>);
 
-    impl AllPairsState for TestVenue {
-        type Pair = TestBook;
+    impl RefusesQuote for TestVenue {}
 
-        fn new(books: Vec<VenueBook<TestBook>>, rule: QuoteRule) -> Self {
-            TestVenue(AllPairs::new(books, rule))
-        }
-
-        fn pairs(&self) -> &AllPairs<TestBook> {
-            &self.0
-        }
-
-        fn with_pairs(&self, pairs: AllPairs<TestBook>) -> Self {
-            TestVenue(pairs)
+    impl TestVenue {
+        /// What [`ProtocolSim::get_amount_out`] answers, by the addresses the tests name.
+        fn amount_out(
+            &self,
+            amount_in: &BigUint,
+            token_in: &Bytes,
+            token_out: &Bytes,
+        ) -> Result<GetAmountOutResult, SimulationError> {
+            self.0
+                .amount_out::<TestVenue>(amount_in, token_in, token_out)
         }
     }
 
@@ -925,7 +883,9 @@ mod tests {
             token_in: &Token,
             token_out: &Token,
         ) -> Result<GetAmountOutResult, SimulationError> {
-            self.amount_out(amount_in, &token_in.address, &token_out.address)
+            self.check_amount(&amount_in, &token_in.address, &token_out.address)?;
+            self.0
+                .amount_out::<TestVenue>(&amount_in, &token_in.address, &token_out.address)
         }
 
         fn get_limits(
@@ -958,7 +918,10 @@ mod tests {
         }
 
         fn eq(&self, other: &dyn ProtocolSim) -> bool {
-            self.same_books(other)
+            other
+                .as_any()
+                .downcast_ref::<TestVenue>()
+                .is_some_and(|other| self.0.same_books(&other.0))
         }
     }
 
@@ -1004,7 +967,7 @@ mod tests {
         );
 
         let swap = venue
-            .amount_out(whole(1), &addr(0xaa), &addr(0xbb))
+            .amount_out(&whole(1), &addr(0xaa), &addr(0xbb))
             .unwrap();
 
         assert_eq!(swap.amount, whole(3));
@@ -1017,7 +980,7 @@ mod tests {
         let venue =
             venue(vec![book("shallow", 2, 1), book("empty", 5, 0)], QuoteRule::OncePerMaker);
 
-        match venue.amount_out(whole(4), &addr(0xaa), &addr(0xbb)) {
+        match venue.amount_out(&whole(4), &addr(0xaa), &addr(0xbb)) {
             Err(SimulationError::InvalidInput(_, Some(partial))) => {
                 assert_eq!(partial.amount, whole(2));
             }
@@ -1037,7 +1000,7 @@ mod tests {
         let venue = venue(vec![book("generous", 3, 10), book("cheap", 2, 10)], rule);
 
         let first = venue
-            .amount_out(whole(1), &addr(0xaa), &addr(0xbb))
+            .amount_out(&whole(1), &addr(0xaa), &addr(0xbb))
             .unwrap();
         assert_eq!(first.amount, whole(3));
 
@@ -1062,7 +1025,7 @@ mod tests {
         let venue = venue(vec![book("shallow", 2, 1)], QuoteRule::OncePerVenue);
 
         let Err(SimulationError::InvalidInput(_, Some(partial))) =
-            venue.amount_out(whole(4), &addr(0xaa), &addr(0xbb))
+            venue.amount_out(&whole(4), &addr(0xaa), &addr(0xbb))
         else {
             panic!("expected a partial fill");
         };
@@ -1081,8 +1044,8 @@ mod tests {
     fn a_direction_the_venue_does_not_price_is_invalid_input() {
         let venue = venue(vec![book("generous", 3, 10)], QuoteRule::OncePerMaker);
 
-        let reverse = venue.amount_out(whole(1), &addr(0xbb), &addr(0xaa));
-        let unknown = venue.amount_out(whole(1), &addr(0xaa), &addr(0xcc));
+        let reverse = venue.amount_out(&whole(1), &addr(0xbb), &addr(0xaa));
+        let unknown = venue.amount_out(&whole(1), &addr(0xaa), &addr(0xcc));
 
         assert!(matches!(reverse, Err(SimulationError::InvalidInput(_, None))), "got {reverse:?}");
         assert!(matches!(unknown, Err(SimulationError::InvalidInput(_, None))), "got {unknown:?}");
@@ -1113,7 +1076,7 @@ mod tests {
         );
 
         let spent = venue
-            .amount_out(whole(1), &addr(0xaa), &addr(0xbb))
+            .amount_out(&whole(1), &addr(0xaa), &addr(0xbb))
             .unwrap()
             .new_state;
         assert!(matches!(
@@ -1126,7 +1089,7 @@ mod tests {
     /// which a consumer can do nothing with.
     #[test]
     fn a_venue_that_prices_nothing_publishes_no_component() {
-        let book = all_pairs_book::<TestVenue>(
+        let book = all_pairs_book::<TestBook, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1153,7 +1116,7 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book::<TestVenue>(
+        let book = all_pairs_book::<TestBook, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1200,7 +1163,7 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book::<TestVenue>(
+        let book = all_pairs_book::<TestBook, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1245,7 +1208,7 @@ mod tests {
 
         assert_eq!(
             replayed
-                .amount_out(whole(1), &addr(0xaa), &addr(0xbb))
+                .amount_out(&whole(1), &addr(0xaa), &addr(0xbb))
                 .unwrap()
                 .amount,
             whole(3)
@@ -1296,12 +1259,11 @@ mod tests {
         #[case] layout: ComponentLayout,
         #[case] expected: Vec<&str>,
     ) {
-        let mut collector =
-            BookCollector::<TestVenue>::new("rfq:venue", "venue_pool", Chain::Ethereum, layout);
+        let mut collector = BookCollector::new("rfq:venue", "venue_pool", Chain::Ethereum, layout);
         collector.push(Bytes::from([0x01]), book("mm1", 2, 10));
         collector.push(Bytes::from([0x02]), book("mm2", 3, 10));
 
-        let books = collector.finish();
+        let books = collector.finish::<TestVenue>();
 
         let mut ids: Vec<&str> = books
             .keys()

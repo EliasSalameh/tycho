@@ -117,7 +117,7 @@ impl BebopBookSource {
             })
             .collect_vec();
 
-        let mut collector = BookCollector::<BebopAllPairsState>::new(
+        let mut collector = BookCollector::new(
             self.protocol_system,
             PROTOCOL_TYPE,
             self.book_config.chain,
@@ -148,7 +148,7 @@ impl BebopBookSource {
             );
             collector.push(component_id, VenueBook { maker: None, updated_at, state });
         }
-        Ok(collector.finish())
+        Ok(collector.finish::<BebopAllPairsState>())
     }
 }
 

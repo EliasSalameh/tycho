@@ -17,7 +17,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::all_pairs_state,
+        all_pairs::{all_pairs_state, RefusesQuote},
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -212,7 +212,9 @@ all_pairs_state! {
     /// Hashflow's books on one chain behind one component: every market maker's levels on every
     /// pair it quotes.
     HashflowAllPairsState(HashflowState);
+}
 
+impl RefusesQuote for HashflowAllPairsState {
     /// Every maker declines an amount below its first level, so an amount under the smallest
     /// of their floors is one no maker here fills, and that floor is what to raise it to.
     fn check_amount(
@@ -222,12 +224,12 @@ all_pairs_state! {
         token_out: &Bytes,
     ) -> Result<(), SimulationError> {
         match self.min_amount_in(token_in, token_out) {
-            Some(minimum) if amount_in < &minimum => Err(SimulationError::RecoverableError(
-                format!(
+            Some(minimum) if amount_in < &minimum => {
+                Err(SimulationError::RecoverableError(format!(
                     "Amount below minimum. Input amount: {amount_in}, min amount: {minimum} \
                      (both in base units)"
-                ),
-            )),
+                )))
+            }
             _ => Ok(()),
         }
     }

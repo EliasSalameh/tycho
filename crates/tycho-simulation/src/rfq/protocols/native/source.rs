@@ -192,7 +192,7 @@ impl HttpSource for NativeBookSource {
             .map(|(component_id, book)| (component_id.clone(), self.normalized_tvl(book, &grouped)))
             .collect();
 
-        let mut collector = BookCollector::<NativeAllPairsState>::new(
+        let mut collector = BookCollector::new(
             PROTOCOL_SYSTEM,
             PROTOCOL_TYPE,
             self.book_config.chain,
@@ -230,7 +230,7 @@ impl HttpSource for NativeBookSource {
             // Native's orderbook carries no per-book timestamp.
             collector.push(component_id, VenueBook { maker: None, updated_at: None, state });
         }
-        Ok(BookSnapshot::received_now(collector.finish()))
+        Ok(BookSnapshot::received_now(collector.finish::<NativeAllPairsState>()))
     }
 }
 

@@ -16,7 +16,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::all_pairs_state,
+        all_pairs::{all_pairs_state, RefusesQuote},
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -181,6 +181,8 @@ all_pairs_state! {
     /// Liquorice's books on one chain behind one component: one book per market maker and pair.
     LiquoriceAllPairsState(LiquoriceState);
 }
+
+impl RefusesQuote for LiquoriceAllPairsState {}
 
 #[cfg(test)]
 mod tests {

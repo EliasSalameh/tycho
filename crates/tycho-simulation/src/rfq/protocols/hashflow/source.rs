@@ -76,7 +76,7 @@ impl HttpSource for HashflowBookSource {
             .await?;
         debug!(market_makers = levels_by_mm.len(), "fetched price levels");
 
-        let mut collector = BookCollector::<HashflowAllPairsState>::new(
+        let mut collector = BookCollector::new(
             self.protocol_system,
             PROTOCOL_TYPE,
             self.book_config.chain,
@@ -128,7 +128,7 @@ impl HttpSource for HashflowBookSource {
                 );
             }
         }
-        Ok(BookSnapshot::received_now(collector.finish()))
+        Ok(BookSnapshot::received_now(collector.finish::<HashflowAllPairsState>()))
     }
 }
 

@@ -80,7 +80,7 @@ ethabi = "18.0.0"
 base64 = "0.22.1"
 bytes = "1.11.1"
 chrono = { version = "0.4.26", default-features = false, features = ["serde", "clock", "std"] }
-derive_more = { version = "2.0", features = ["debug", "deref"] }
+derive_more = { version = "2.0", features = ["debug", "deref", "from"] }
 hex = "0.4.3"
 hex-literal = "0.4.1"
 rand = "0.8.5"
