@@ -84,20 +84,51 @@ impl QuoteRule {
             QuoteRule::OncePerVenue => "once_per_venue",
         }
     }
+}
 
-    /// Whether a book of `maker` may still be quoted, given what `used` already took.
-    fn allows(self, used: &HashSet<String>, maker: Option<&str>) -> bool {
-        match self {
-            QuoteRule::OncePerMaker => !used.contains(maker.unwrap_or_default()),
-            QuoteRule::OncePerVenue => used.is_empty(),
+/// What a route has already taken from a venue, in the shape its [`QuoteRule`] counts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Spent {
+    /// Under [`QuoteRule::OncePerMaker`]: the makers this route has quoted, and whether it has
+    /// quoted the books of a venue that names none, which are one turn between them.
+    Makers { named: HashSet<String>, unnamed: bool },
+    /// Under [`QuoteRule::OncePerVenue`]: whether this route has quoted the venue at all.
+    Venue(bool),
+}
+
+impl Spent {
+    fn nothing(rule: QuoteRule) -> Self {
+        match rule {
+            QuoteRule::OncePerMaker => Spent::Makers { named: HashSet::new(), unnamed: false },
+            QuoteRule::OncePerVenue => Spent::Venue(false),
         }
     }
 
-    /// What a swap against `maker` spends, which is what the next swap is held to.
-    fn spend(self, maker: Option<&str>) -> String {
+    fn rule(&self) -> QuoteRule {
         match self {
-            QuoteRule::OncePerMaker => maker.unwrap_or_default().to_string(),
-            QuoteRule::OncePerVenue => String::new(),
+            Spent::Makers { .. } => QuoteRule::OncePerMaker,
+            Spent::Venue(_) => QuoteRule::OncePerVenue,
+        }
+    }
+
+    /// Whether a book of `maker` may still be quoted.
+    fn allows(&self, maker: Option<&str>) -> bool {
+        match (self, maker) {
+            (Spent::Makers { named, .. }, Some(maker)) => !named.contains(maker),
+            (Spent::Makers { unnamed, .. }, None) => !unnamed,
+            (Spent::Venue(signed), _) => !signed,
+        }
+    }
+
+    /// The same turns with a swap against `maker` taken out of them.
+    fn spending(&self, maker: Option<&str>) -> Self {
+        match (self.clone(), maker) {
+            (Spent::Makers { mut named, unnamed }, Some(maker)) => {
+                named.insert(maker.to_string());
+                Spent::Makers { named, unnamed }
+            }
+            (Spent::Makers { named, .. }, None) => Spent::Makers { named, unnamed: true },
+            (Spent::Venue(_), _) => Spent::Venue(true),
         }
     }
 }
@@ -123,10 +154,9 @@ pub(crate) struct VenueBook<S> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "S: Serialize + DeserializeOwned + PairState")]
 pub(crate) struct AllPairs<S> {
-    books: Arc<Books<S>>,
-    /// What [`QuoteRule::spend`] returned for every swap this state is downstream of.
-    used: HashSet<String>,
-    rule: QuoteRule,
+    books: Arc<VenueBooks<S>>,
+    /// The turns every swap this state is downstream of has taken.
+    spent: Spent,
 }
 
 /// A venue's books and, for each direction, which of them price it.
@@ -135,20 +165,20 @@ pub(crate) struct AllPairs<S> {
 /// a set of books comes from anywhere other than a source.
 #[derive(Debug, Deserialize)]
 #[serde(from = "Vec<VenueBook<S>>", bound = "S: DeserializeOwned + PairState")]
-struct Books<S> {
+struct VenueBooks<S> {
     books: Vec<VenueBook<S>>,
     /// Indices into `books`, by token sold and then token bought, so a swap looks only at the
     /// books that price it and a lookup costs no allocation.
     by_direction: HashMap<Bytes, HashMap<Bytes, Vec<usize>>>,
 }
 
-impl<S: Serialize> Serialize for Books<S> {
+impl<S: Serialize> Serialize for VenueBooks<S> {
     fn serialize<W: serde::Serializer>(&self, serializer: W) -> Result<W::Ok, W::Error> {
         self.books.serialize(serializer)
     }
 }
 
-impl<S: PairState> From<Vec<VenueBook<S>>> for Books<S> {
+impl<S: PairState> From<Vec<VenueBook<S>>> for VenueBooks<S> {
     fn from(books: Vec<VenueBook<S>>) -> Self {
         let mut by_direction: HashMap<Bytes, HashMap<Bytes, Vec<usize>>> = HashMap::new();
         let mut kept: Vec<VenueBook<S>> = Vec::new();
@@ -171,17 +201,17 @@ impl<S: PairState> From<Vec<VenueBook<S>>> for Books<S> {
             }
             kept.push(book);
         }
-        Books { books: kept, by_direction }
+        VenueBooks { books: kept, by_direction }
     }
 }
 
 impl<S: PairState> AllPairs<S> {
     pub fn new(books: Vec<VenueBook<S>>, rule: QuoteRule) -> Self {
-        AllPairs { books: Arc::new(books.into()), used: HashSet::new(), rule }
+        AllPairs { books: Arc::new(books.into()), spent: Spent::nothing(rule) }
     }
 
     pub fn rule(&self) -> QuoteRule {
-        self.rule
+        self.spent.rule()
     }
 
     /// Every direction the venue prices, which is what its component advertises.
@@ -214,7 +244,7 @@ impl<S: PairState> AllPairs<S> {
     }
 
     /// The books that price `token_in` into `token_out`, spent or not.
-    pub fn pricing(
+    pub fn books_pricing(
         &self,
         token_in: &Bytes,
         token_out: &Bytes,
@@ -239,7 +269,7 @@ impl<S: PairState> AllPairs<S> {
         token_out: &Bytes,
     ) -> Result<impl Iterator<Item = &VenueBook<S>>, SimulationError> {
         let mut pricing = self
-            .pricing(token_in, token_out)
+            .books_pricing(token_in, token_out)
             .peekable();
         if pricing.peek().is_none() {
             return Err(SimulationError::InvalidInput(
@@ -248,10 +278,7 @@ impl<S: PairState> AllPairs<S> {
             ));
         }
         let mut quotable = pricing
-            .filter(|book| {
-                self.rule
-                    .allows(&self.used, book.maker.as_deref())
-            })
+            .filter(|book| self.spent.allows(book.maker.as_deref()))
             .peekable();
         if quotable.peek().is_none() {
             return Err(SimulationError::RecoverableError(
@@ -263,9 +290,7 @@ impl<S: PairState> AllPairs<S> {
 
     /// The same books with the turn of `maker`'s book spent.
     fn spending(&self, maker: Option<&str>) -> Self {
-        let mut used = self.used.clone();
-        used.insert(self.rule.spend(maker));
-        AllPairs { books: Arc::clone(&self.books), used, rule: self.rule }
+        AllPairs { books: Arc::clone(&self.books), spent: self.spent.spending(maker) }
     }
 }
 
@@ -280,6 +305,14 @@ impl<S: PairState> VenueBook<S> {
             (quote, base)
         }
     }
+}
+
+/// A loop over [`AllPairs::candidates`] that ranked nothing. Candidates are at least one book
+/// or an error, so this is a bug here rather than anything the venue did.
+fn no_book_ranked(what: &str) -> SimulationError {
+    SimulationError::FatalError(format!(
+        "Books were reported for this direction, and none of them was ranked to {what}"
+    ))
 }
 
 /// How good an answer to a swap is: a complete fill beats a partial one, a partial fill beats a
@@ -313,9 +346,7 @@ impl<S: PairState> AllPairs<S> {
                 best = Some((book, answer));
             }
         }
-        best.ok_or_else(|| {
-            SimulationError::FatalError("A book that prices a swap gives no answer".to_string())
-        })
+        best.ok_or_else(|| no_book_ranked("answer this swap"))
     }
 
     /// The best price among the books that may still quote `base` into `quote`.
@@ -331,9 +362,7 @@ impl<S: PairState> AllPairs<S> {
                 best = Some(price);
             }
         }
-        best.unwrap_or_else(|| {
-            Err(SimulationError::FatalError("A book that prices a pair has no price".to_string()))
-        })
+        best.unwrap_or_else(|| Err(no_book_ranked("price this pair")))
     }
 
     /// The limits of the book that buys most in total among those that may still quote the
@@ -362,17 +391,14 @@ impl<S: PairState> AllPairs<S> {
                 best = Some(limits);
             }
         }
-        best.unwrap_or_else(|| {
-            Err(SimulationError::FatalError("A book that prices a pair has no limits".to_string()))
-        })
+        best.unwrap_or_else(|| Err(no_book_ranked("report its limits")))
     }
 }
 
 impl<S: PairState> AllPairs<S> {
     /// Whether these are the same books, in the same order, with the same turns spent.
     pub fn same_books(&self, other: &Self) -> bool {
-        self.rule == other.rule &&
-            self.used == other.used &&
+        self.spent == other.spent &&
             self.books().len() == other.books().len() &&
             self.books()
                 .iter()
