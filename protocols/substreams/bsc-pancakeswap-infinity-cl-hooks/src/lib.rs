@@ -3,7 +3,8 @@
 //! PancakeSwap Infinity CL pools whose hook is a `CLAlphaHook`, the hook Binance Alpha listings
 //! launch their pools with.
 //!
-//! `CLAlphaHook` registers `beforeSwap` only, and its `_beforeSwap` does nothing but revert
+//! `CLAlphaHook` registers `beforeSwap` and no other swap callback, and its `_beforeSwap` does
+//! nothing but revert
 //! `PoolNotStarted` until `poolStartedTimestamp[id]` has passed. After that a swap is exactly a
 //! hookless swap. The CL package skips every pool with a swap hook; this package indexes the
 //! `CLAlphaHook` ones with the same modules and attribute schema, plus:
