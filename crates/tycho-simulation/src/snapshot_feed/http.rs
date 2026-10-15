@@ -218,11 +218,10 @@ fn polled_snapshots<S: HttpSource>(
     }
 }
 
-/// Reads, in the body a venue answered a failing status with, its own words for something it
-/// will not serve at all — a chain it does not price, say. That answer is a
-/// [`FeedError::Fatal`] rather than the retryable [`FeedError::Connection`], since another
-/// attempt gets the same one. Every fetch here takes one, because what a failing status means
-/// is the venue's to say and not this module's.
+/// Whether a failing response's body says the venue will never serve this request, such as a
+/// chain it does not price. A refusal is a [`FeedError::Fatal`] rather than the retryable
+/// [`FeedError::Connection`], since another attempt gets the same answer. Every fetch here
+/// takes one, because what a failing status means is the venue's to say and not this module's.
 ///
 /// A plain `fn`, so the verdict rests on what the venue said and on nothing else.
 pub(crate) type RefusalCheck = fn(&str) -> bool;

@@ -11,17 +11,16 @@ use serde_json::value::RawValue;
 use serde_with::DeserializeAs;
 use tracing::warn;
 
-/// Reads a JSON response's entries one at a time, dropping any the venue got wrong and warning
-/// why, so a poll keeps every entry the venue got right.
+/// Reads a JSON array one entry at a time, dropping each entry it cannot parse with one warning
+/// and keeping the rest, so a poll keeps every entry the venue got right.
 ///
-/// Entries dropped with none left over are an error: a feed publishes complete snapshots, so a
-/// response that reads as nothing withdraws every pair the venue was serving, and a changed shape
-/// — which breaks every entry at once — must not be able to do that. A response carrying no
-/// entries at all is served as it is.
+/// Dropping every entry is an error instead. A feed publishes complete snapshots, so a response
+/// that parses as nothing would withdraw every pair the venue was serving, and a changed
+/// response shape breaks every entry at once. An array that carries no entries parses as empty.
 ///
-/// Grouped entries are counted across their groups, so one group reading as nothing leaves the
-/// others standing. A group that is not a run of entries at all fails the response, as a change
-/// of shape does.
+/// For a map of groups, the failures count across the whole response, so one unreadable group
+/// does not drop the others. A group that is not an array is a change of shape, and fails the
+/// response.
 pub struct SkipInvalidEntries;
 
 impl<'de, T: DeserializeOwned> DeserializeAs<'de, Vec<T>> for SkipInvalidEntries {
@@ -96,7 +95,8 @@ impl EntryReader {
         entries
     }
 
-    /// Warns about what was dropped, or reports that nothing survived it.
+    /// Logs one warning for the entries that were dropped, or returns an error if every entry
+    /// was.
     pub fn finish(self) -> Result<(), String> {
         let Some(first) = self.dropped.first() else { return Ok(()) };
         let dropped = self.dropped.len();
@@ -157,7 +157,7 @@ mod tests {
         );
     }
 
-    /// The rule is about the response, not each group in it.
+    /// The all-failed check counts entries across the whole response, not per group.
     #[test]
     fn a_group_that_reads_as_nothing_does_not_cost_the_other_groups() {
         let Groups(groups) =
@@ -225,8 +225,8 @@ mod tests {
         );
     }
 
-    /// A shape that is no longer the one we read breaks every entry at once, which is how it
-    /// tells itself apart from a venue quoting one pair badly.
+    /// A changed response shape fails every entry, so the response errors rather than serving
+    /// nothing. That is what tells it apart from a venue quoting one pair badly.
     #[test]
     fn a_shape_that_is_no_longer_the_one_we_read_is_an_error() {
         let error = serde_json::from_str::<Groups>(r#"{"mm1": [{"quantity": "1"}]}"#).unwrap_err();
@@ -239,7 +239,7 @@ mod tests {
         );
     }
 
-    /// Where a group's entries should be is the response's shape, not one maker's content.
+    /// A group that is not an array is a change of shape, so it fails the whole response.
     #[test]
     fn a_group_that_is_not_a_run_of_entries_is_an_error() {
         let error = serde_json::from_str::<Groups>(r#"{"mm1": "nothing to quote"}"#).unwrap_err();

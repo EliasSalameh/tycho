@@ -1,13 +1,13 @@
 //! A venue published as one component for all of its pairs.
 //!
-//! A feed publishes a book per pair by default, which is what a consumer routes through. A venue
-//! that signs a quote per trade can only sign so many for one route, and a consumer that carries
-//! simulated state from one swap to the next does so per component: so a venue can instead be
-//! published as one component covering every pair it prices, where a swap records the book it
-//! used and the next swap on the state it returned is held to the venue's [`QuoteRule`].
+//! By default a feed publishes one component per pair, which is what a consumer routes through.
+//! A venue that signs a quote per trade can only sign so many for one route. A consumer carries
+//! simulated state between swaps per component, so the venue can instead publish one component
+//! for every pair it prices. Each swap then records the book it used, and the next swap on the
+//! returned state is held to the venue's [`QuoteRule`].
 //!
-//! The books are the ones the per-pair layout would publish. Picking a book is picking among
-//! them, every price comes from one of them, and a quote goes to the one that priced the swap.
+//! The books are the ones the per-pair layout would publish. Every price comes from one of
+//! them, and a quote goes to the book that priced the swap.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -34,13 +34,13 @@ use crate::{
     protocol::models::ProtocolComponent,
 };
 
-/// Which components a feed publishes for its venue, as its builder settled it.
+/// Which components a feed publishes for its venue. The venue's feed builder picks the layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComponentLayout {
     /// One component per pair the venue prices, each priced by that pair's own book.
     PerPair,
-    /// One component for every pair the venue prices, priced by all of its books at once and
-    /// holding a route to this rule.
+    /// One component for every pair the venue prices, priced by all of its books at once. A
+    /// route may quote that component only as often as this [`QuoteRule`] allows.
     AllPairs(QuoteRule),
 }
 
@@ -59,7 +59,7 @@ pub enum QuoteRule {
     /// one: a maker's second quote prices as if the first had not happened, so a route that took
     /// both would count the same liquidity twice.
     OncePerMaker,
-    /// The venue signs once, whoever is behind the quote.
+    /// The venue signs once per route, whichever maker backs the quote.
     OncePerVenue,
 }
 
@@ -69,8 +69,9 @@ impl QuoteRule {
 
     const ALL: [QuoteRule; 2] = [QuoteRule::OncePerMaker, QuoteRule::OncePerVenue];
 
-    /// The rule a component is published under, which is how often a route may quote it.
-    /// `None` for a component that names no rule, which is one component of one pair.
+    /// Reads the rule from a component's [`ATTRIBUTE`](Self::ATTRIBUTE). `None` where the
+    /// attribute is absent, as it is on a per-pair component, and an error for a value no rule
+    /// goes by.
     pub fn from_attributes(
         attributes: &HashMap<String, Bytes>,
     ) -> Result<Option<QuoteRule>, String> {
