@@ -3,6 +3,8 @@
 //!
 //! Endpoint reference: <https://docs.metric.xyz/RSm94m71kqtGICv4iKRj/developers/api>
 
+use std::mem;
+
 use chrono::DateTime;
 use tracing::{debug, warn};
 
@@ -29,8 +31,9 @@ pub struct MetricBookSource {
 impl HttpSource for MetricBookSource {
     type Snapshot = BookSnapshot<ReceivedAt>;
 
-    /// A metadata failure fails the poll; a single pool's bid/ask failure only drops that pool
-    /// from this book.
+    /// A metadata failure fails the poll, and so does losing every pool: a book that reads as
+    /// nothing withdraws every pair the venue was serving, which is an outage rather than a
+    /// poll that worked. Losing some of the pools only drops those from this book.
     async fn fetch(&self) -> Result<BookSnapshot<ReceivedAt>, FeedError> {
         let metadata = self.client.fetch_metadata().await?;
 
@@ -47,24 +50,27 @@ impl HttpSource for MetricBookSource {
             })
             .collect();
 
-        let mut books = Books::new();
-        for (pool, bid_ask) in self
+        let polled = self
             .client
             .fetch_bid_ask_each(quotable)
-            .await
-        {
+            .await;
+        let requested = polled.len();
+        let mut failures: Vec<FeedError> = Vec::new();
+        let mut books = Books::new();
+        for (pool, bid_ask) in polled {
+            let bid_ask = match bid_ask {
+                Ok(bid_ask) => bid_ask,
+                Err(e) => {
+                    warn!(pool = %pool.pool_address, error = %e, "skipping pool, bid/ask fetch failed");
+                    failures.push(e);
+                    continue;
+                }
+            };
             let Some((token0, token1)) = self
                 .book_config
                 .pair_tokens(&pool.token0, &pool.token1)
             else {
                 continue;
-            };
-            let bid_ask = match bid_ask {
-                Ok(bid_ask) => bid_ask,
-                Err(e) => {
-                    warn!(pool = %pool.pool_address, error = %e, "skipping pool, bid/ask fetch failed");
-                    continue;
-                }
             };
             if !bid_ask.is_quotable() {
                 debug!(pool = %pool.pool_address, "skipping pool, not quotable");
@@ -88,7 +94,28 @@ impl HttpSource for MetricBookSource {
                 updated_at,
             ));
         }
+        if requested > 0 && failures.len() == requested {
+            return Err(every_pool_failed(failures));
+        }
         Ok(BookSnapshot::received_now(books))
+    }
+}
+
+/// What a poll reports when none of the pools it asked answered: the pools' own verdict where
+/// they agree on it, and an unreachable venue where they do not. One pool calling its failure
+/// fatal is about that pool; every pool calling it fatal is about the venue, and nothing is
+/// gained by polling on. The individual failures are logged as they arrive.
+fn every_pool_failed(failures: Vec<FeedError>) -> FeedError {
+    let summary =
+        format!("none of Metric's {} quotable pools answered its bid/ask request", failures.len());
+    let mut failures = failures.into_iter();
+    let Some(first) = failures.next() else {
+        return FeedError::Connection(summary);
+    };
+    if failures.all(|other| mem::discriminant(&other) == mem::discriminant(&first)) {
+        first.in_context(summary)
+    } else {
+        FeedError::Connection(summary)
     }
 }
 
@@ -97,6 +124,7 @@ mod tests {
     use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     use num_bigint::BigUint;
+    use rstest::rstest;
     use tycho_common::{
         models::{token::Token, Chain},
         Bytes,
@@ -111,6 +139,16 @@ mod tests {
         },
         snapshot_feed::http::test_support::spawn_http_server,
     };
+
+    const FIRST_POOL: &str = "0x1111111111111111111111111111111111111111";
+    const SECOND_POOL: &str = "0x2222222222222222222222222222222222222222";
+
+    /// How the venue answers a key it has stopped accepting. It is about this request, so a
+    /// later poll may be served.
+    const REFUSED_KEY: (&str, &str) = ("401 Unauthorized", r#"{"message":"invalid api key"}"#);
+
+    /// How the venue answers for a chain it does not serve, which no later poll reaches either.
+    const UNSERVED_CHAIN: (&str, &str) = ("404 Not Found", r#"{"error": "Unknown chainId: 1"}"#);
 
     fn pool_json(pool: &str, tvl_fiat: Option<f64>) -> serde_json::Value {
         serde_json::json!({
@@ -256,6 +294,53 @@ mod tests {
         let result = source.fetch().await;
 
         assert!(matches!(result, Err(FeedError::Connection(_))), "got {result:?}");
+    }
+
+    /// A key the venue has stopped accepting answers every pool the same way. The empty book
+    /// that leaves would withdraw every pair while reporting a poll that worked, so the feed's
+    /// failure budget would never see the outage. What the pools answered decides the failure:
+    /// a chain the venue has stopped serving is a chain no later poll reaches either, while one
+    /// pool alone saying so is about that pool, whatever the pool beside it answered.
+    #[rstest]
+    #[case::every_pool_on_a_refused_key(REFUSED_KEY, REFUSED_KEY, false)]
+    #[case::every_pool_on_an_unserved_chain(UNSERVED_CHAIN, UNSERVED_CHAIN, true)]
+    #[case::one_pool_of_two_refusing_the_chain(UNSERVED_CHAIN, REFUSED_KEY, false)]
+    #[tokio::test]
+    async fn losing_every_pool_fails_the_poll(
+        #[case] first_answer: (&'static str, &'static str),
+        #[case] second_answer: (&'static str, &'static str),
+        #[case] fatal: bool,
+    ) {
+        let page = metadata_page(
+            &[pool_json(FIRST_POOL, Some(1_000.0)), pool_json(SECOND_POOL, Some(1_000.0))],
+            None,
+        );
+        let server = spawn_http_server(move |target| {
+            if target.starts_with("/public/v1/evm/1/metadata?") {
+                return Some(("200 OK", page.clone()));
+            }
+            let (status, body) =
+                if target == bid_ask_target(FIRST_POOL) { first_answer } else { second_answer };
+            Some((status, body.to_string()))
+        })
+        .await;
+        let endpoint = server.url();
+        let mut source = source(Chain::Ethereum, &endpoint, "revoked");
+        source.book_config.tokens = Arc::new(test_token_map(&[
+            (&weth().address, "WETH", 18),
+            (&usdc().address, "USDC", 6),
+        ]));
+
+        let result = source.fetch().await;
+
+        let error = result.expect_err("a poll that lost every pool must fail");
+        assert_eq!(error.is_fatal(), fatal, "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("none of Metric's 2 quotable pools"),
+            "{error}"
+        );
     }
 
     /// The metadata endpoint is paged by `offset`; the poll follows `nextOffset` and must stop on
