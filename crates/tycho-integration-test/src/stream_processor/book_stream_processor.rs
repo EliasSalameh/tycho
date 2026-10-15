@@ -109,7 +109,7 @@ impl BookStreamProcessor {
             if pamm_feeds {
                 info!("No RFQ venue is configured. Continuing with the pAMM feeds only.");
             } else {
-                return Err(miette!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, LIQUORICE_USER and LIQUORICE_KEY, or NATIVE_API_KEY environment variables, or drop --disable-pamm-feeds to run Metric on its own."));
+                return Err(miette!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, LIQUORICE_USER and LIQUORICE_KEY, or NATIVE_API_KEY environment variables, or drop --disable-pamm to run Metric on its own."));
             }
         }
         Ok(Self {

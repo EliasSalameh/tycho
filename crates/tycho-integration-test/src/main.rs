@@ -106,17 +106,17 @@ struct Cli {
 
     /// Disable the RFQ book feeds (Bebop, Hashflow, Liquorice, Native)
     #[arg(long, default_value_t = false)]
-    disable_rfq_feeds: bool,
+    disable_rfq: bool,
 
     /// Disable the pAMM book feeds (Metric)
     #[arg(long, default_value_t = false)]
-    disable_pamm_feeds: bool,
+    disable_pamm: bool,
 
     /// Publish each RFQ venue as one component for every pair it prices, which a route may
     /// take one quote from, rather than one component per pair. The number of directions
     /// simulated per venue and update is --max-simulations.
     #[arg(long, default_value_t = false)]
-    book_all_pairs: bool,
+    rfq_all_pairs: bool,
 
     /// Disable the Titan pAMM price level stream (only active on Ethereum)
     #[arg(long, default_value_t = false)]
@@ -496,15 +496,15 @@ async fn run(cli: Cli) -> miette::Result<()> {
             );
         }
     }
-    if !cli.disable_rfq_feeds || !cli.disable_pamm_feeds {
+    if !cli.disable_rfq || !cli.disable_pamm {
         let book_stream_processor = BookStreamProcessor::new(
             chain,
             tvl_threshold,
             cli.max_simulations as usize,
             Duration::from_secs(cli.skip_messages_duration),
-            !cli.disable_rfq_feeds,
-            !cli.disable_pamm_feeds,
-            cli.book_all_pairs,
+            !cli.disable_rfq,
+            !cli.disable_pamm,
+            cli.rfq_all_pairs,
         )
         .unwrap_or_else(|e| panic!("Failed to create book stream processor: {e}"));
         rfq_handle = Some(
@@ -556,7 +556,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
     let rfq_semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
     let price_level_semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
     let mut protocol_stream_open = true;
-    let mut book_stream_open = !cli.disable_rfq_feeds || !cli.disable_pamm_feeds;
+    let mut book_stream_open = !cli.disable_rfq || !cli.disable_pamm;
     let mut price_level_stream_open = price_level_handle.is_some();
 
     // Staleness watchdog: if no protocol update arrives within stale_threshold_secs, mark all

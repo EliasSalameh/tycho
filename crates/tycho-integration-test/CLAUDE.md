@@ -26,7 +26,7 @@ cargo run -p tycho-integration-test -- \
   --tvl-threshold 100
 ```
 
-Key optional flags: `--no-tls`, `--disable-onchain`, `--disable-rfq-feeds`, `--disable-pamm-feeds`,
+Key optional flags: `--no-tls`, `--disable-onchain`, `--disable-rfq`, `--disable-pamm`,
 `--disable-price-level-stream`, `--disable-execution`, `--protocols uniswap_v2,curve`,
 `--max-blocks 100`, `--parallel-simulations 5`, `--always-test-components <id,...>`,
 `--price-level-stream-block-interval 1`, `--price-level-stream-stale-threshold-secs 10`,

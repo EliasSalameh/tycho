@@ -80,7 +80,7 @@ struct Cli {
     chain: Chain,
     /// Disable the pAMM book feeds (Metric), keeping the RFQ venues
     #[arg(long, default_value_t = false)]
-    disable_pamm_feeds: bool,
+    disable_pamm: bool,
     /// Publish each RFQ venue as one component for every pair it prices, which a route may take
     /// one quote from, rather than one component per pair
     #[arg(long, default_value_t = false)]
@@ -147,8 +147,8 @@ async fn main() {
         (liquorice_user.is_none() || liquorice_key.is_none()) &&
         native_key.is_none()
     {
-        if cli.disable_pamm_feeds {
-            panic!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, LIQUORICE_USER and LIQUORICE_KEY, or NATIVE_API_KEY environment variables, or drop --disable-pamm-feeds to run Metric on its own.");
+        if cli.disable_pamm {
+            panic!("No RFQ credentials found. Please set BEBOP_KEY, HASHFLOW_USER and HASHFLOW_KEY, LIQUORICE_USER and LIQUORICE_KEY, or NATIVE_API_KEY environment variables, or drop --disable-pamm to run Metric on its own.");
         } else {
             println!(
                 "No authenticated RFQ credentials found. Continuing with the pAMM feeds only.\n"
@@ -306,7 +306,7 @@ async fn main() {
         }
     }
 
-    if !cli.disable_pamm_feeds {
+    if !cli.disable_pamm {
         println!("Setting up Metric feed...\n");
         match env::var("METRIC_API_KEY") {
             Ok(api_key) => match MetricFeedBuilder::new(book_config, api_key).build() {

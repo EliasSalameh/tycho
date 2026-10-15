@@ -39,7 +39,7 @@ export METRIC_API_KEY=<your-metric-trading-key>
 export PRIVATE_KEY=<your-wallet-private-key>
 ```
 
-Metric's feed talks to Metric's public endpoint (`MetricFeedBuilder::base_url` points it elsewhere) and sends the trading key as the Bearer token the authenticated `bid_ask` endpoint requires. The example registers Metric by default; `--disable-pamm-feeds` leaves it out.
+Metric's feed talks to Metric's public endpoint (`MetricFeedBuilder::base_url` points it elsewhere) and sends the trading key as the Bearer token the authenticated `bid_ask` endpoint requires. The example registers Metric by default; `--disable-pamm` leaves it out.
 
 Then run the example:
 

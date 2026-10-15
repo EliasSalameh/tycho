@@ -38,10 +38,10 @@ cargo run --release --example book_quickstart
 ```
 
 The pAMM feeds (Metric) run alongside the RFQ venues by default, and need only `METRIC_API_KEY` —
-so the example works with no RFQ credentials at all. Pass `--disable-pamm-feeds` to leave them out:
+so the example works with no RFQ credentials at all. Pass `--disable-pamm` to leave them out:
 
 ```bash
-cargo run --release --example book_quickstart -- --disable-pamm-feeds
+cargo run --release --example book_quickstart -- --disable-pamm
 ```
 
 `--all-pairs` builds the four RFQ venues as one component per venue instead of one per pair, which
@@ -74,7 +74,7 @@ export PRIVATE_KEY=<your-private-key>
 ## Important Notes
 
 - **Credentials**: Contact each venue directly to obtain API credentials for accessing its live
-  book. The pAMM feeds need only `METRIC_API_KEY`; `--disable-pamm-feeds` leaves them out.
+  book. The pAMM feeds need only `METRIC_API_KEY`; `--disable-pamm` leaves them out.
 
 ## What you'll see
 
