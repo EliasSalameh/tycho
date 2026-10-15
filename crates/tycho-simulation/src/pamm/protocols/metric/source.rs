@@ -207,7 +207,7 @@ mod tests {
                 min_tvl_usd: 0.0,
             },
             client: MetricClient::new(
-                &reqwest::Url::parse(base_url).unwrap(),
+                Some(base_url),
                 chain.try_id().unwrap(),
                 api_key.to_string(),
                 DEFAULT_BID_ASK_CONCURRENCY,

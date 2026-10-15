@@ -5,7 +5,7 @@
 use std::num::NonZeroUsize;
 
 use futures::{stream, StreamExt};
-use reqwest::{Client, Url};
+use reqwest::Client;
 use tokio::time::{timeout, Duration};
 use tracing::debug;
 use tycho_common::Bytes;
@@ -22,6 +22,10 @@ use crate::{
 fn refuses_the_chain(body: &str) -> bool {
     serde_json::from_str::<MetricApiError>(body).is_ok_and(|error| error.refuses_the_chain())
 }
+
+/// Metric's public API, where a client talks unless it is given another.
+const METRIC_API_URL: &str = "https://api.metric.xyz";
+
 /// Page size for the paginated metadata endpoint. The API clamps `count` to `[1, 500]`.
 const METADATA_PAGE_SIZE: u32 = 500;
 
@@ -59,14 +63,17 @@ pub struct MetricClient {
 impl MetricClient {
     /// A client for the Metric deployment at `base_url`, serving the chain with `chain_id`.
     /// Every endpoint it requests hangs off that chain's own prefix.
+    /// A client for Metric's API on `chain_id`. `base_url` points it somewhere else than the
+    /// venue, which is what
+    /// [`MetricFeedBuilder::base_url`](super::feed::MetricFeedBuilder::base_url) passes on.
     pub fn new(
-        base_url: &Url,
+        base_url: Option<&str>,
         chain_id: u64,
         api_key: String,
         bid_ask_concurrency: NonZeroUsize,
     ) -> Self {
-        let chain_endpoint =
-            format!("{}/public/v1/evm/{chain_id}", base_url.as_str().trim_end_matches('/'));
+        let base_url = base_url.unwrap_or(METRIC_API_URL);
+        let chain_endpoint = format!("{}/public/v1/evm/{chain_id}", base_url.trim_end_matches('/'));
         MetricClient {
             metadata_endpoint: format!("{chain_endpoint}/metadata"),
             chain_endpoint,
@@ -185,7 +192,7 @@ mod tests {
 
     fn client(base_url: &str, chain_id: u64, api_key: &str) -> MetricClient {
         MetricClient::new(
-            &Url::parse(base_url).unwrap(),
+            Some(base_url),
             chain_id,
             api_key.to_string(),
             DEFAULT_BID_ASK_CONCURRENCY,

@@ -384,12 +384,10 @@ mod tests {
 
     fn empty_client() -> Arc<HashflowClient> {
         Arc::new(HashflowClient::new(
+            None,
             1,
-            "https://api.hashflow.com/taker/v3/rfq".to_string(),
-            "https://api.hashflow.com/taker/v3/price-levels".to_string(),
-            "https://api.hashflow.com/taker/v3/market-makers".to_string(),
-            "".to_string(),
-            "".to_string(),
+            String::new(),
+            String::new(),
             Duration::from_secs(30),
         ))
     }

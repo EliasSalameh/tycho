@@ -194,10 +194,8 @@ mod tests {
             },
             usd_quote_tokens: Arc::new(quote_tokens),
             client: Arc::new(HashflowClient::new(
+                Some(endpoint),
                 1,
-                "https://hashflow.example/rfq".to_string(),
-                format!("{endpoint}/price-levels"),
-                format!("{endpoint}/market-makers"),
                 "test_user".to_string(),
                 "test_key".to_string(),
                 Duration::from_secs(5),
@@ -256,7 +254,7 @@ mod tests {
             }}}}"#
         );
         let server = spawn_http_server(move |target| {
-            if target.starts_with("/market-makers") {
+            if target.starts_with("/taker/v3/market-makers") {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -304,7 +302,7 @@ mod tests {
             }}}}"#
         );
         let server = spawn_http_server(move |target| {
-            if target.starts_with("/market-makers") {
+            if target.starts_with("/taker/v3/market-makers") {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -399,7 +397,7 @@ mod tests {
             }}}}"#
         );
         let server = spawn_http_server(move |target| {
-            if target.starts_with("/market-makers") {
+            if target.starts_with("/taker/v3/market-makers") {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -463,7 +461,7 @@ mod tests {
             }}}}"#
         );
         let server = spawn_http_server(move |target| {
-            if target.starts_with("/market-makers") {
+            if target.starts_with("/taker/v3/market-makers") {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))

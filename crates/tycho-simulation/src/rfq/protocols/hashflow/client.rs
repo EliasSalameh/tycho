@@ -28,6 +28,9 @@ fn refuses_the_chain(body: &str) -> bool {
         .is_ok_and(|failure| failure.error.refuses_the_chain())
 }
 
+/// Hashflow's public taker API, where a client talks unless it is given another.
+const HASHFLOW_API_URL: &str = "https://api.hashflow.com";
+
 /// Requests binding Hashflow quotes. One instance is shared (via `Arc`) by every state a
 /// [`HashflowFeed`](super::feed::HashflowFeed) emits, so all of them reuse the same HTTP
 /// connection pool.
@@ -46,20 +49,23 @@ pub struct HashflowClient {
 }
 
 impl HashflowClient {
+    /// A client for Hashflow's taker API, whose three endpoints share the version's own path.
+    /// `base_url` points it somewhere else than the venue, which is how a test reaches a server
+    /// of its own.
     pub fn new(
+        base_url: Option<&str>,
         chain_id: u64,
-        quote_endpoint: String,
-        price_levels_endpoint: String,
-        market_makers_endpoint: String,
         source: String,
         auth_key: String,
         quote_timeout: Duration,
     ) -> Self {
+        let base_url = base_url.unwrap_or(HASHFLOW_API_URL);
+        let taker = format!("{}/taker/v3", base_url.trim_end_matches('/'));
         HashflowClient {
             chain_id,
-            quote_endpoint,
-            price_levels_endpoint,
-            market_makers_endpoint,
+            quote_endpoint: format!("{taker}/rfq"),
+            price_levels_endpoint: format!("{taker}/price-levels"),
+            market_makers_endpoint: format!("{taker}/market-makers"),
             source,
             auth_key,
             quote_timeout,
@@ -515,12 +521,10 @@ mod tests {
         (addr, request_log)
     }
 
-    fn create_test_client(quote_endpoint: String, quote_timeout: Duration) -> HashflowClient {
+    fn create_test_client(base_url: String, quote_timeout: Duration) -> HashflowClient {
         HashflowClient::new(
+            Some(&base_url),
             Chain::Ethereum.id(),
-            quote_endpoint,
-            "https://api.hashflow.com/taker/v3/price-levels".to_string(),
-            "https://api.hashflow.com/taker/v3/market-makers".to_string(),
             "test_user".to_string(),
             "test_key".to_string(),
             quote_timeout,
@@ -545,7 +549,7 @@ mod tests {
     async fn a_refused_status_leaves_the_component_quotable() {
         let server =
             spawn_http_server(|_| Some(("429 Too Many Requests", "slow down".to_string()))).await;
-        let client = create_test_client(format!("{}/quote", server.url()), Duration::from_secs(1));
+        let client = create_test_client(server.url(), Duration::from_secs(1));
 
         let error = client
             .request_binding_quote(&create_test_quote_params(), "mm1".to_string())
@@ -578,10 +582,8 @@ mod tests {
         // trader's shared nonce scope, so the client rejects it.
         let (addr, _) =
             create_delayed_response_server(0, QUOTE_RESPONSE_WITHOUT_EFFECTIVE_TRADER).await;
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client =
+            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
         let params = create_test_quote_params();
 
         let err = client
@@ -624,10 +626,8 @@ mod tests {
         #[case] says: &str,
     ) {
         let (addr, _) = create_delayed_response_server(0, body).await;
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client =
+            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
 
         let error = client
             .request_binding_quote(&create_test_quote_params(), "mm1".to_string())
@@ -650,10 +650,8 @@ mod tests {
         // The wire request carries the receiver as Hashflow's trader, a fresh random address as
         // the effectiveTrader — a new one per quote request — and the one maker it goes to.
         let (addr, request_log) = create_delayed_response_server(0, QUOTE_RESPONSE).await;
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client =
+            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
         let params = create_test_quote_params();
 
         let first_quote = client
@@ -701,7 +699,7 @@ mod tests {
 
         // Test 1: Client with short timeout (200ms) - should timeout
         let client_short_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
+            format!("http://127.0.0.1:{}", addr.port()),
             Duration::from_millis(200),
         );
         let params = create_test_quote_params();
@@ -732,10 +730,8 @@ mod tests {
         // Test 2: Client with long timeout (1 second) - should wait and receive response
         // Note: With retry logic, we may need multiple attempts if the response is malformed,
         // so we need a longer timeout to account for retries
-        let client_long_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client_long_timeout =
+            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
 
         // This should wait for the response (500ms)
         let result = client_long_timeout
@@ -801,10 +797,8 @@ mod tests {
     async fn test_hashflow_quote_retry_on_bad_response() {
         let (addr, request_count) = create_retry_server().await;
 
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(5),
-        );
+        let client =
+            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(5));
         let params = create_test_quote_params();
         let result = client
             .request_binding_quote(&params, "mm1".to_string())
@@ -832,7 +826,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(target.to_string());
-            if target.starts_with("/market-makers") {
+            if target.starts_with("/taker/v3/market-makers") {
                 Some(("200 OK", r#"{"marketMakers":["mm1"]}"#.to_string()))
             } else {
                 Some(("200 OK", r#"{"status":"success","levels":{"mm1":[]}}"#.to_string()))
@@ -842,10 +836,8 @@ mod tests {
         let url = server.url();
         let chain_id = Chain::Arbitrum.id();
         let client = HashflowClient::new(
+            Some(&url),
             chain_id,
-            format!("{url}/rfq"),
-            format!("{url}/price-levels"),
-            format!("{url}/market-makers"),
             "test_user".to_string(),
             "test_key".to_string(),
             Duration::from_secs(5),
@@ -879,10 +871,8 @@ mod tests {
         let source = std::env::var("HASHFLOW_USER").expect("HASHFLOW_USER not set");
         let auth_key = std::env::var("HASHFLOW_KEY").expect("HASHFLOW_KEY not set");
         let client = HashflowClient::new(
+            None,
             Chain::Unichain.id(),
-            "https://api.hashflow.com/taker/v3/rfq".to_string(),
-            "https://api.hashflow.com/taker/v3/price-levels".to_string(),
-            "https://api.hashflow.com/taker/v3/market-makers".to_string(),
             source,
             auth_key,
             Duration::from_secs(10),
@@ -915,10 +905,8 @@ mod tests {
         let server = spawn_http_server(move |_| Some(("400 Bad Request", body.to_string()))).await;
         let url = server.url();
         let client = HashflowClient::new(
+            Some(&url),
             Chain::Unichain.id(),
-            format!("{url}/rfq"),
-            format!("{url}/price-levels"),
-            format!("{url}/market-makers"),
             "test_user".to_string(),
             "test_key".to_string(),
             Duration::from_secs(5),
@@ -951,10 +939,8 @@ mod tests {
         let server = spawn_http_server(move |_| Some(("200 OK", body.to_string()))).await;
         let url = server.url();
         let client = HashflowClient::new(
+            Some(&url),
             Chain::Unichain.id(),
-            format!("{url}/rfq"),
-            format!("{url}/price-levels"),
-            format!("{url}/market-makers"),
             "test_user".to_string(),
             "test_key".to_string(),
             Duration::from_secs(5),

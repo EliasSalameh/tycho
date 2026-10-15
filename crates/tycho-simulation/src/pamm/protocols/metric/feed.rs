@@ -20,9 +20,6 @@ use crate::{
     },
 };
 
-/// Metric's public API; [`MetricFeedBuilder::base_url`] points the feed elsewhere.
-const METRIC_API_URL: &str = "https://api.metric.xyz";
-
 /// Metric's book feed: polls the metadata and per-pool bid/ask endpoints and publishes every poll
 /// as a complete [`BookSnapshot`]. Built through [`MetricFeedBuilder`]. `Debug` output omits the
 /// API key.
@@ -37,7 +34,7 @@ pub struct MetricFeed {
 pub struct MetricFeedBuilder {
     protocol_system: &'static str,
     book_config: BookFeedConfig,
-    base_url: String,
+    base_url: Option<String>,
     api_key: String,
     bid_ask_concurrency: NonZeroUsize,
     feed_config: HttpFeedConfig,
@@ -49,7 +46,7 @@ impl MetricFeedBuilder {
     pub fn new(book_config: BookFeedConfig, api_key: String) -> Self {
         Self {
             book_config,
-            base_url: METRIC_API_URL.to_string(),
+            base_url: None,
             api_key,
             bid_ask_concurrency: DEFAULT_BID_ASK_CONCURRENCY,
             feed_config: Self::default_feed_config(),
@@ -57,8 +54,9 @@ impl MetricFeedBuilder {
         }
     }
 
+    /// Serves this feed from somewhere else than Metric's own API.
     pub fn base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
+        self.base_url = Some(base_url);
         self
     }
 
@@ -127,16 +125,18 @@ impl MetricFeedBuilder {
         }
         let chain_id = self.book_config.chain_id()?;
         // A base URL that is not one fails every poll the same way, so the feed does not start.
-        let base_url = Url::parse(&self.base_url).map_err(|error| {
-            FeedError::InvalidInput(format!("Metric base URL {}: {error}", self.base_url))
-        })?;
+        if let Some(base_url) = &self.base_url {
+            Url::parse(base_url).map_err(|error| {
+                FeedError::InvalidInput(format!("Metric base URL {base_url}: {error}"))
+            })?;
+        }
         Ok(MetricFeed {
             feed_config: self.feed_config,
             source: MetricBookSource {
                 protocol_system: self.protocol_system,
                 book_config: self.book_config,
                 client: MetricClient::new(
-                    &base_url,
+                    self.base_url.as_deref(),
                     chain_id,
                     self.api_key,
                     self.bid_ask_concurrency,

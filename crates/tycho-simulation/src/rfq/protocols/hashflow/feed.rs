@@ -121,10 +121,8 @@ impl HashflowFeedBuilder {
                 component_layout: self.component_layout,
                 protocol_system: self.protocol_system,
                 client: Arc::new(HashflowClient::new(
+                    None,
                     chain_id,
-                    "https://api.hashflow.com/taker/v3/rfq".to_string(),
-                    "https://api.hashflow.com/taker/v3/price-levels".to_string(),
-                    "https://api.hashflow.com/taker/v3/market-makers".to_string(),
                     self.auth_user,
                     self.auth_key,
                     self.quote_timeout,

@@ -288,8 +288,8 @@ mod tests {
             },
             usd_quote_tokens: Arc::new(usd_quote_tokens),
             client: Arc::new(NativeClient::new(
+                Some(&endpoint),
                 NativeSupportedChain::Ethereum,
-                endpoint,
                 "test-api-key".to_string(),
                 Duration::from_secs(5),
             )),

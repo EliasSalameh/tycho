@@ -21,9 +21,6 @@ use crate::{
     },
 };
 
-/// Native Relay's swap API; the orderbook and firm-quote paths are appended per request.
-const NATIVE_API_URL: &str = "https://v2.api.native.org/swap-api-v2/v1";
-
 /// Native Relay's book feed: polls the aggregated orderbook and publishes every poll as a
 /// complete [`BookSnapshot`]. Built through [`NativeFeedBuilder`].
 #[derive(Clone, Debug)]
@@ -105,12 +102,7 @@ impl NativeFeedBuilder {
             feed_config: self.feed_config,
             source: NativeBookSource {
                 component_layout: self.component_layout,
-                client: Arc::new(NativeClient::new(
-                    chain,
-                    NATIVE_API_URL.to_string(),
-                    self.api_key,
-                    self.quote_timeout,
-                )),
+                client: Arc::new(NativeClient::new(None, chain, self.api_key, self.quote_timeout)),
                 book_config: self.book_config,
                 usd_quote_tokens: self.usd_quote_tokens,
             },

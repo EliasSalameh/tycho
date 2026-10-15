@@ -393,8 +393,8 @@ mod tests {
             },
         };
         let client = Arc::new(NativeClient::new(
+            None,
             NativeSupportedChain::Ethereum,
-            "https://native.example".to_string(),
             String::new(),
             Duration::from_secs(5),
         ));

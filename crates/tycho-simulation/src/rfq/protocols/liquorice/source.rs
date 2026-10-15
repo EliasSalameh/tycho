@@ -183,9 +183,8 @@ mod tests {
             },
             usd_quote_tokens: Arc::new(usd_quote_tokens),
             client: Arc::new(LiquoriceClient::new(
+                Some(endpoint),
                 Chain::Ethereum.id(),
-                "https://api.liquorice.tech/v1/solver/rfq".to_string(),
-                format!("{endpoint}/price-levels"),
                 "test_solver".to_string(),
                 "test_key".to_string(),
                 Duration::from_secs(5),

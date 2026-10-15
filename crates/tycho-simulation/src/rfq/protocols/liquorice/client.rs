@@ -32,6 +32,9 @@ fn refuses_the_chain(body: &str) -> bool {
     body.contains("chainId: invalid value")
 }
 
+/// Liquorice's public solver API, where a client talks unless it is given another.
+const LIQUORICE_API_URL: &str = "https://api.liquorice.tech";
+
 /// Requests binding Liquorice quotes. One instance is shared (via `Arc`) by every state a
 /// [`LiquoriceFeed`](super::feed::LiquoriceFeed) emits, so all of them reuse the same HTTP
 /// connection pool.
@@ -60,19 +63,23 @@ pub struct LiquoriceClient {
 }
 
 impl LiquoriceClient {
+    /// A client for Liquorice's solver API, whose quote and price-level endpoints share the
+    /// version's own path. `base_url` points it somewhere else than the venue, which is how a
+    /// test reaches a server of its own.
     pub fn new(
+        base_url: Option<&str>,
         chain_id: u64,
-        quote_endpoint: String,
-        price_levels_endpoint: String,
         auth_solver: String,
         auth_key: String,
         quote_timeout: Duration,
         quote_expiry_secs: u64,
     ) -> Self {
+        let base_url = base_url.unwrap_or(LIQUORICE_API_URL);
+        let solver = format!("{}/v1/solver", base_url.trim_end_matches('/'));
         LiquoriceClient {
             chain_id,
-            quote_endpoint,
-            price_levels_endpoint,
+            quote_endpoint: format!("{solver}/rfq"),
+            price_levels_endpoint: format!("{solver}/price-levels"),
             auth_solver,
             auth_key,
             quote_timeout,
@@ -437,11 +444,10 @@ mod tests {
         addr
     }
 
-    fn create_test_client(quote_endpoint: String, quote_timeout: Duration) -> LiquoriceClient {
+    fn create_test_client(base_url: String, quote_timeout: Duration) -> LiquoriceClient {
         LiquoriceClient::new(
+            Some(&base_url),
             Chain::Ethereum.id(),
-            quote_endpoint,
-            "https://api.liquorice.tech/v1/solver/price-levels".to_string(),
             "test_solver".to_string(),
             "test_key".to_string(),
             quote_timeout,
@@ -470,9 +476,8 @@ mod tests {
         })
         .await;
         let client = LiquoriceClient::new(
+            Some(&server.url()),
             Chain::Ethereum.id(),
-            "https://liquorice.example/quote".to_string(),
-            format!("{}/price-levels", server.url()),
             "test_solver".to_string(),
             "test_key".to_string(),
             Duration::from_secs(1),
@@ -832,9 +837,8 @@ mod tests {
         .await;
         let chain_id = Chain::Arbitrum.id();
         let client = LiquoriceClient::new(
+            Some(&server.url()),
             chain_id,
-            "https://liquorice.example/rfq".to_string(),
-            format!("{}/price-levels", server.url()),
             "solver".to_string(),
             "key".to_string(),
             Duration::from_secs(5),
@@ -859,15 +863,8 @@ mod tests {
         dotenv().ok();
         let auth_solver = std::env::var("LIQUORICE_USER").expect("LIQUORICE_USER not set");
         let auth_key = std::env::var("LIQUORICE_KEY").expect("LIQUORICE_KEY not set");
-        let client = LiquoriceClient::new(
-            10,
-            "https://api.liquorice.tech/v1/solver/rfq".to_string(),
-            "https://api.liquorice.tech/v1/solver/price-levels".to_string(),
-            auth_solver,
-            auth_key,
-            Duration::from_secs(10),
-            60,
-        );
+        let client =
+            LiquoriceClient::new(None, 10, auth_solver, auth_key, Duration::from_secs(10), 60);
 
         let error = client
             .fetch_price_levels()
@@ -895,9 +892,8 @@ mod tests {
     ) {
         let server = spawn_http_server(move |_| Some(("400 Bad Request", body.to_string()))).await;
         let client = LiquoriceClient::new(
+            Some(&server.url()),
             10,
-            "https://liquorice.example/rfq".to_string(),
-            format!("{}/price-levels", server.url()),
             "solver".to_string(),
             "key".to_string(),
             Duration::from_secs(5),

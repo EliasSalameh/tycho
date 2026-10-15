@@ -38,6 +38,10 @@ enum QuoteAttemptError {
     Fatal(RFQError),
 }
 
+/// Native Relay's swap API, where a client talks unless it is given another. The orderbook and
+/// firm-quote paths are appended per request.
+const NATIVE_API_URL: &str = "https://v2.api.native.org/swap-api-v2/v1";
+
 /// Requests binding Native Relay quotes. One instance is shared (via `Arc`) by every state a
 /// [`NativeFeed`](super::feed::NativeFeed) emits, so all of them reuse the same HTTP connection
 /// pool.
@@ -53,12 +57,18 @@ pub struct NativeClient {
 }
 
 impl NativeClient {
+    /// A client for Native Relay's swap API. `base_url` points it somewhere else than the
+    /// venue, which is how a test reaches a server of its own.
     pub fn new(
+        base_url: Option<&str>,
         chain: NativeSupportedChain,
-        endpoint: String,
         api_key: String,
         quote_timeout: Duration,
     ) -> Self {
+        let endpoint = base_url
+            .unwrap_or(NATIVE_API_URL)
+            .trim_end_matches('/')
+            .to_string();
         NativeClient { chain, endpoint, api_key, quote_timeout, http: Client::new() }
     }
 
@@ -575,8 +585,8 @@ mod tests {
 
     fn create_test_client(endpoint: String) -> NativeClient {
         NativeClient::new(
+            Some(&endpoint),
             NativeSupportedChain::Ethereum,
-            endpoint,
             "secret_key".to_string(),
             Duration::from_secs(5),
         )
@@ -1014,8 +1024,8 @@ mod tests {
     async fn times_out_when_quote_response_stalls() {
         let server = create_hanging_quote_server().await;
         let client = NativeClient::new(
+            Some(&server.url()),
             NativeSupportedChain::Ethereum,
-            server.url(),
             "secret_key".to_string(),
             Duration::from_millis(50),
         );
@@ -1057,8 +1067,8 @@ mod tests {
         .await;
 
         let client = NativeClient::new(
+            Some(&server.url()),
             NativeSupportedChain::Ethereum,
-            server.url(),
             "secret_key".to_string(),
             quote_timeout,
         );
@@ -1108,8 +1118,8 @@ mod tests {
         dotenv::dotenv().ok();
         let api_key = std::env::var("NATIVE_API_KEY").expect("NATIVE_API_KEY not set");
         let client = NativeClient::new(
+            None,
             NativeSupportedChain::try_from(chain).unwrap(),
-            "https://v2.api.native.org/swap-api-v2/v1".to_string(),
             api_key,
             Duration::from_secs(10),
         );

@@ -115,9 +115,8 @@ impl LiquoriceFeedBuilder {
             source: LiquoriceBookSource {
                 component_layout: self.component_layout,
                 client: Arc::new(LiquoriceClient::new(
+                    None,
                     chain_id,
-                    "https://api.liquorice.tech/v1/solver/rfq".to_string(),
-                    "https://api.liquorice.tech/v1/solver/price-levels".to_string(),
                     self.auth_solver,
                     self.auth_key,
                     self.quote_timeout,
