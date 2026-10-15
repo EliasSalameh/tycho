@@ -87,7 +87,7 @@ impl LiquoriceFeedBuilder {
     /// as if the first had not happened, or once for the venue where that independence is not
     /// worth relying on.
     ///
-    /// One component per pair otherwise, holding every maker that prices it.
+    /// One component per market maker and pair otherwise.
     pub fn all_pairs(mut self, rule: QuoteRule) -> Self {
         self.component_layout = ComponentLayout::AllPairs(rule);
         self

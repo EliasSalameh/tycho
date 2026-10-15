@@ -24,6 +24,18 @@ pub fn pair_component_id(protocol_system: &str, base: &Bytes, quote: &Bytes) -> 
     Bytes::from([protocol_system.as_bytes(), base, quote].concat())
 }
 
+/// The id of `market_maker`'s book on that pair: its [`pair_component_id`] followed by the
+/// maker's name, for a venue whose quote comes from the one maker it is asked of.
+pub(crate) fn maker_component_id(
+    protocol_system: &str,
+    base: &Bytes,
+    quote: &Bytes,
+    market_maker: &str,
+) -> Bytes {
+    let pair = pair_component_id(protocol_system, base, quote);
+    Bytes::from([pair.as_ref(), market_maker.as_bytes()].concat())
+}
+
 /// A book's component: no contracts, no static attributes, the two tokens in the book's
 /// orientation. `id` is the pair's identity (see [`pair_component_id`]) or the pool's address.
 pub fn pair_component(
@@ -82,6 +94,20 @@ mod tests {
     /// A 20-byte address of repeated `byte`.
     fn addr(byte: u8) -> Bytes {
         Bytes::from(vec![byte; 20])
+    }
+
+    #[test]
+    fn a_makers_id_is_the_pair_id_followed_by_the_maker_name() {
+        let id = maker_component_id("rfq:venue", &addr(0x11), &addr(0x22), "mm1");
+
+        // "rfq:venue", the twenty bytes of each address, then "mm1", all in ASCII.
+        assert_eq!(
+            id.to_string(),
+            "0x7266713a76656e7565\
+             1111111111111111111111111111111111111111\
+             2222222222222222222222222222222222222222\
+             6d6d31"
+        );
     }
 
     #[test]

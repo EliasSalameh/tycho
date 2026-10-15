@@ -18,7 +18,6 @@ use crate::{
     book::{
         all_pairs::{AllPairs, AllPairsState, QuoteRule, VenueBook},
         component::PairState,
-        levels::Fill,
         sim::{self, SwapDirection},
     },
     rfq::protocols::liquorice::{client::LiquoriceClient, models::LiquoriceTokenPairPrice},
@@ -31,9 +30,9 @@ const LIQUORICE_SWAP_GAS: u64 = 134_000;
 pub struct LiquoriceState {
     pub(super) base_token: Token,
     pub(super) quote_token: Token,
-    /// Printed as the makers' names only; the ladders are too long for a log line.
-    #[debug("{:?}", prices_by_mm.keys().collect::<Vec<_>>())]
-    pub(super) prices_by_mm: HashMap<String, LiquoriceTokenPairPrice>,
+    #[debug(skip)]
+    pub(super) book: LiquoriceTokenPairPrice,
+    pub(super) market_maker: String,
     #[debug(skip)]
     pub(super) client: Arc<LiquoriceClient>,
 }
@@ -52,31 +51,6 @@ impl LiquoriceState {
             token_address_out,
         )
     }
-
-    /// The market makers' ladders that carry liquidity.
-    fn populated_books(&self) -> impl Iterator<Item = &LiquoriceTokenPairPrice> {
-        self.prices_by_mm
-            .values()
-            .filter(|price| !price.levels.is_empty())
-    }
-
-    /// The maker paying the most for `amount_in` whole base tokens, and what it pays. The quote
-    /// goes to this maker, so the swap is signed by the one whose ladder priced it.
-    fn best_fill(&self, amount_in: f64) -> Option<(&str, Fill)> {
-        self.prices_by_mm
-            .iter()
-            .filter_map(|(maker, price)| {
-                if price.levels.is_empty() {
-                    return None;
-                }
-                Some((maker.as_str(), price.levels.fill(amount_in)))
-            })
-            .max_by(|(_, a), (_, b)| {
-                a.amount_out
-                    .partial_cmp(&b.amount_out)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-    }
 }
 
 impl PairState for LiquoriceState {
@@ -88,15 +62,10 @@ impl PairState for LiquoriceState {
         &self.quote_token
     }
 
-    /// Liquorice's levels price the pair one way, and the venue publishes the other way round
-    /// as its own book.
+    /// A maker's ladder prices the pair one way — a taker sells the base token it was published
+    /// under — and the venue publishes the other way round as its own book.
     fn directions(&self) -> Vec<(Bytes, Bytes)> {
-        sim::directions(
-            &self.base_token,
-            &self.quote_token,
-            self.populated_books().next().is_some(),
-            false,
-        )
+        sim::directions(&self.base_token, &self.quote_token, !self.book.levels.is_empty(), false)
     }
 }
 
@@ -106,13 +75,11 @@ impl ProtocolSim for LiquoriceState {
         todo!()
     }
 
-    /// Returns the best available price across all market makers
+    /// What the maker pays on average over the whole of its ladder.
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
         self.valid_direction_guard(&base.address, &quote.address)?;
-        self.prices_by_mm
-            .values()
-            .filter_map(|price| price.average_price())
-            .reduce(f64::max)
+        self.book
+            .average_price()
             .ok_or(SimulationError::RecoverableError("No liquidity".into()))
     }
 
@@ -128,9 +95,8 @@ impl ProtocolSim for LiquoriceState {
 
         self.valid_direction_guard(&token_in.address, &token_out.address)?;
         let amount_in = sim::to_human(&amount_in, token_in.decimals);
-        let fill = self
-            .best_fill(amount_in)
-            .map_or(Fill { amount_out: 0.0, remaining_in: amount_in }, |(_, fill)| fill);
+        let fill = self.book.levels.fill(amount_in);
+        // The state doesn't change after a swap.
         sim::fill_result(fill, amount_in, token_out.decimals, LIQUORICE_SWAP_GAS, self)
     }
 
@@ -140,17 +106,11 @@ impl ProtocolSim for LiquoriceState {
         buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
         self.valid_direction_guard(&sell_token, &buy_token)?;
-        // The limits are those of the deepest market maker's ladder.
-        let Some(deepest) = self.populated_books().max_by(|a, b| {
-            a.levels
-                .notional()
-                .partial_cmp(&b.levels.notional())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }) else {
-            // Nothing on this side is no swap at any size, so there is no limit to report.
+        // Nothing on this side is no swap at any size, so there is no limit to report.
+        if self.book.levels.is_empty() {
             return Err(SimulationError::RecoverableError("No liquidity".into()));
-        };
-        sim::limits(&deepest.levels, self.base_token.decimals, self.quote_token.decimals)
+        }
+        sim::limits(&self.book.levels, self.base_token.decimals, self.quote_token.decimals)
     }
 
     fn as_indicatively_priced(&self) -> Result<&dyn IndicativelyPriced, SimulationError> {
@@ -185,7 +145,8 @@ impl ProtocolSim for LiquoriceState {
         {
             self.base_token == other_state.base_token &&
                 self.quote_token == other_state.quote_token &&
-                self.prices_by_mm == other_state.prices_by_mm
+                self.market_maker == other_state.market_maker &&
+                self.book == other_state.book
         } else {
             false
         }
@@ -198,14 +159,9 @@ impl IndicativelyPriced for LiquoriceState {
         &self,
         params: GetAmountOutParams,
     ) -> Result<SignedQuote, SimulationError> {
-        // Liquorice prices base into quote only, so the amount is always in base units.
-        let amount_in = sim::to_human(&params.amount_in, self.base_token.decimals);
-        let (market_maker, _) = self
-            .best_fill(amount_in)
-            .ok_or(SimulationError::RecoverableError("No liquidity".into()))?;
         Ok(self
             .client
-            .request_binding_quote(&params, market_maker)
+            .request_binding_quote(&params, &self.market_maker)
             .await?)
     }
 }
@@ -373,12 +329,12 @@ mod tests {
     fn create_test_liquorice_state() -> LiquoriceState {
         let base_addr = Bytes::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
         let quote_addr = Bytes::from_str("0xa0b86991c6218a76c1d19d4a2e9eb0ce3606eb48").unwrap();
-        let mut prices_by_mm = HashMap::new();
-        prices_by_mm.insert(
-            "test_mm".to_string(),
-            LiquoriceTokenPairPrice {
-                base_token: base_addr.clone(),
-                quote_token: quote_addr.clone(),
+        LiquoriceState {
+            base_token: weth(),
+            quote_token: usdc(),
+            book: LiquoriceTokenPairPrice {
+                base_token: base_addr,
+                quote_token: quote_addr,
                 levels: Levels::new(vec![
                     PriceLevel { quantity: 0.5, price: 3000.0 },
                     PriceLevel { quantity: 1.5, price: 3000.0 },
@@ -387,20 +343,7 @@ mod tests {
                 .unwrap(),
                 updated_at: None,
             },
-        );
-        prices_by_mm.insert(
-            "test_mm_2".to_string(),
-            LiquoriceTokenPairPrice {
-                base_token: base_addr.clone(),
-                quote_token: quote_addr.clone(),
-                levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 2998.0 }]).unwrap(),
-                updated_at: None,
-            },
-        );
-        LiquoriceState {
-            base_token: weth(),
-            quote_token: usdc(),
-            prices_by_mm,
+            market_maker: "test_mm".to_string(),
             client: empty_client(),
         }
     }
@@ -443,8 +386,10 @@ mod tests {
     mod spot_price {
         use super::*;
 
+        /// 0.5 and 1.5 WETH at 3000 USDC and 5 more at 2999 is 20 995 USDC for the 7 WETH the
+        /// ladder holds.
         #[test]
-        fn returns_best_price() {
+        fn is_what_the_whole_ladder_pays_per_token() {
             let state = create_test_liquorice_state();
             let price = state
                 .spot_price(&state.base_token, &state.quote_token)
@@ -452,14 +397,11 @@ mod tests {
             assert!((price - 20995.0 / 7.0).abs() < 1e-10);
         }
 
-        /// Makers quoting nothing leave no price to report, and no depth either.
+        /// A maker quoting nothing leaves no price to report, and no depth either.
         #[test]
         fn an_empty_book_has_nothing_to_offer() {
             let mut state = create_test_liquorice_state();
-            state
-                .prices_by_mm
-                .values_mut()
-                .for_each(|price| price.levels = Levels::default());
+            state.book.levels = Levels::default();
 
             let result = state.spot_price(&state.base_token, &state.quote_token);
             assert!(
@@ -495,7 +437,7 @@ mod tests {
         fn insufficient_liquidity() {
             let state = create_test_liquorice_state();
 
-            // Best single maker (test_mm) has 7.0 capacity, so 8 WETH exceeds it
+            // The maker's ladder holds 7 WETH, so 8 exceeds it.
             let result = state.get_amount_out(
                 BigUint::from_str("8000000000000000000").unwrap(),
                 &weth(),

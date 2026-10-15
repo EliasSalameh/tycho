@@ -10,7 +10,7 @@ use tycho_common::Bytes;
 use crate::{
     book::{
         all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
-        component::{pair_book, pair_component_id},
+        component::{maker_component_id, pair_book},
         tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },
     rfq::protocols::liquorice::{
@@ -22,9 +22,10 @@ use crate::{
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
-/// Fetches one complete Liquorice book per poll: for each pair between the configured tokens,
-/// the market makers whose normalized TVL clears the threshold, grouped into one simulate-ready
-/// pair.
+/// Fetches one complete Liquorice book per poll: one simulate-ready book per market maker and
+/// pair between the configured tokens, for every maker whose normalized TVL clears the
+/// threshold. A binding quote comes from the maker it is asked of, so a maker's ladder is as
+/// far as one swap can fill.
 #[derive(Clone, Debug)]
 pub struct LiquoriceBookSource {
     pub book_config: BookFeedConfig,
@@ -64,97 +65,62 @@ impl HttpSource for LiquoriceBookSource {
         let prices_by_mm = self.client.fetch_price_levels().await?;
         debug!(market_makers = prices_by_mm.len(), "fetched price levels");
 
-        // Group qualifying MMs by token pair
-        let mut pair_mm_prices: HashMap<(Bytes, Bytes), HashMap<String, LiquoriceTokenPairPrice>> =
-            HashMap::new();
+        let mut books = Books::new();
+        let mut venue_books = Vec::new();
         for (mm_name, token_pair_prices) in prices_by_mm.iter() {
             for token_pair_price in token_pair_prices {
-                let base_token = &token_pair_price.base_token;
-                let quote_token = &token_pair_price.quote_token;
-                if self
+                let base_bytes = &token_pair_price.base_token;
+                let quote_bytes = &token_pair_price.quote_token;
+                let Some((base_token, quote_token)) = self
                     .book_config
-                    .pair_tokens(base_token, quote_token)
-                    .is_none()
-                {
+                    .pair_tokens(base_bytes, quote_bytes)
+                else {
                     continue;
-                }
+                };
 
                 let tvl = token_pair_price.levels.notional();
-                let Some(normalized_tvl) = self.normalize_tvl(tvl, quote_token, &prices_by_mm)
+                let Some(normalized_tvl) = self.normalize_tvl(tvl, quote_bytes, &prices_by_mm)
                 else {
                     debug!(
                         market_maker = %mm_name,
-                        base = %base_token,
-                        quote = %quote_token,
+                        base = %base_bytes,
+                        quote = %quote_bytes,
                         "skipping pair, no levels price its quote token in a USD quote token"
                     );
                     continue;
                 };
                 if !self.book_config.clears_min_tvl(
                     normalized_tvl,
-                    format!("MM {mm_name} for pair {base_token}/{quote_token}"),
+                    format!("MM {mm_name} for pair {base_bytes}/{quote_bytes}"),
                 ) {
                     continue;
                 }
 
-                pair_mm_prices
-                    .entry((base_token.clone(), quote_token.clone()))
-                    .or_default()
-                    .insert(mm_name.clone(), token_pair_price.clone());
-            }
-        }
-
-        let mut books = Books::new();
-        let mut venue_books = Vec::new();
-        for ((base_bytes, quote_bytes), mm_prices) in pair_mm_prices {
-            let Some((base_token, quote_token)) = self
-                .book_config
-                .pair_tokens(&base_bytes, &quote_bytes)
-            else {
-                continue;
-            };
-            // Liquorice's levels price one direction, so the reverse pair is a different book.
-            let component_id = pair_component_id(PROTOCOL_SYSTEM, &base_bytes, &quote_bytes);
-
-            // Liquorice reports `updatedAt` per market maker in milliseconds; the book is as
-            // fresh as its most recently updated maker.
-            let updated_at = mm_prices
-                .values()
-                .filter_map(|price| price.updated_at)
-                .max()
-                .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
-            match self.component_layout {
-                ComponentLayout::PerPair => {
-                    let state = LiquoriceState {
-                        base_token: base_token.clone(),
-                        quote_token: quote_token.clone(),
-                        prices_by_mm: mm_prices,
-                        client: Arc::clone(&self.client),
-                    };
-                    books.insert(pair_book(
+                // Liquorice reports `updatedAt` per market maker, in milliseconds.
+                let updated_at = token_pair_price
+                    .updated_at
+                    .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
+                let state = LiquoriceState {
+                    base_token: base_token.clone(),
+                    quote_token: quote_token.clone(),
+                    book: token_pair_price.clone(),
+                    market_maker: mm_name.clone(),
+                    client: Arc::clone(&self.client),
+                };
+                match self.component_layout {
+                    ComponentLayout::PerPair => books.insert(pair_book(
                         PROTOCOL_SYSTEM,
                         PROTOCOL_TYPE,
                         self.book_config.chain,
-                        component_id,
+                        maker_component_id(PROTOCOL_SYSTEM, base_bytes, quote_bytes, mm_name),
                         state,
                         updated_at,
-                    ));
-                }
-                // One book per maker, which is what a quote is asked of and what the venue's
-                // rule is counted in.
-                ComponentLayout::AllPairs(_) => {
-                    for (maker, price) in mm_prices {
-                        let updated_at = price
-                            .updated_at
-                            .and_then(|millis| DateTime::from_timestamp_millis(millis as i64));
-                        let state = LiquoriceState {
-                            base_token: base_token.clone(),
-                            quote_token: quote_token.clone(),
-                            prices_by_mm: HashMap::from([(maker.clone(), price)]),
-                            client: Arc::clone(&self.client),
-                        };
-                        venue_books.push(VenueBook { maker: Some(maker), updated_at, state });
-                    }
+                    )),
+                    ComponentLayout::AllPairs(_) => venue_books.push(VenueBook {
+                        maker: Some(mm_name.clone()),
+                        updated_at,
+                        state,
+                    }),
                 }
             }
         }
@@ -269,10 +235,10 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    /// The makers pricing one pair above the floor form one directed book whose `updated_at` is
-    /// the newest maker's `updatedAt` (milliseconds); a maker below the floor is left out.
+    /// Each maker pricing a pair above the floor is a book of its own, carrying that maker's
+    /// own `updatedAt` (milliseconds); a maker below the floor is left out.
     #[tokio::test]
-    async fn fetch_books_groups_makers_per_pair_and_stamps_newest_update() {
+    async fn fetch_books_publishes_one_book_per_maker_and_pair() {
         let weth = Bytes::from_str(WETH).unwrap();
         let usdc = Bytes::from_str(USDC).unwrap();
         let newest_ms: u64 = 1_769_707_860_675;
@@ -291,26 +257,39 @@ mod tests {
 
         let books = source.fetch().await.unwrap().books;
 
-        let component_id = pair_component_id(PROTOCOL_SYSTEM, &weth, &usdc);
-        assert_eq!(books.len(), 1, "one book for the one pair: {:?}", books.keys());
-        let book = &books[&component_id.to_string()];
-        assert_eq!(book.updated_at, DateTime::from_timestamp_millis(newest_ms as i64));
-        let level = |price: f64, updated_at: u64| LiquoriceTokenPairPrice {
-            base_token: weth.clone(),
-            quote_token: usdc.clone(),
-            levels: Levels::new(vec![PriceLevel { quantity: 1.0, price }]).unwrap(),
-            updated_at: Some(updated_at),
-        };
+        let id = |maker: &str| maker_component_id(PROTOCOL_SYSTEM, &weth, &usdc, maker).to_string();
+        let mut ids = books
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, vec![id("fresh_mm"), id("old_mm")]);
+        assert_eq!(
+            books[&id("fresh_mm")].updated_at,
+            DateTime::from_timestamp_millis(newest_ms as i64)
+        );
+        assert_eq!(
+            books[&id("old_mm")].updated_at,
+            DateTime::from_timestamp_millis((newest_ms - 60_000) as i64)
+        );
         let expected = LiquoriceState {
             base_token: source.book_config.tokens[&weth].clone(),
             quote_token: source.book_config.tokens[&usdc].clone(),
-            prices_by_mm: HashMap::from([
-                ("fresh_mm".to_string(), level(3000.0, newest_ms)),
-                ("old_mm".to_string(), level(2999.0, newest_ms - 60_000)),
-            ]),
+            book: LiquoriceTokenPairPrice {
+                base_token: weth.clone(),
+                quote_token: usdc.clone(),
+                levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 3000.0 }]).unwrap(),
+                updated_at: Some(newest_ms),
+            },
+            market_maker: "fresh_mm".to_string(),
             client: Arc::clone(&source.client),
         };
-        assert!(book.state.eq(&expected), "state must hold exactly fresh_mm and old_mm");
+        assert!(
+            books[&id("fresh_mm")]
+                .state
+                .eq(&expected),
+            "the book holds fresh_mm's own ladder"
+        );
     }
 
     /// Published as one component, each market maker pricing a pair becomes its own book: a

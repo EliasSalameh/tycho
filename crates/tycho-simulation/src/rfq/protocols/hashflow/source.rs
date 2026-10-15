@@ -9,7 +9,7 @@ use tycho_common::Bytes;
 use crate::{
     book::{
         all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
-        component::pair_book,
+        component::{maker_component_id, pair_book},
         tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },
     rfq::protocols::hashflow::{
@@ -59,19 +59,6 @@ impl HashflowBookSource {
                 }),
         )
     }
-}
-
-/// The id of `market_maker`'s book from `base` into `quote`: the pair's id (see
-/// [`pair_component_id`](crate::book::component::pair_component_id)) followed by the maker's
-/// name. Each maker's ladder is its own component because a binding quote comes from the one
-/// maker it is requested from, so a swap can fill against one maker's depth only.
-fn maker_component_id(
-    protocol_system: &str,
-    base: &Bytes,
-    quote: &Bytes,
-    market_maker: &str,
-) -> Bytes {
-    Bytes::from([protocol_system.as_bytes(), base, quote, market_maker.as_bytes()].concat())
 }
 
 impl HttpSource for HashflowBookSource {
@@ -302,25 +289,6 @@ mod tests {
             .expect("a Hashflow state");
         assert_eq!(state.base_token().address, wbtc);
         assert_eq!(state.quote_token().address, weth);
-    }
-
-    #[test]
-    fn the_maker_id_is_the_pair_id_followed_by_the_maker_name() {
-        let id = maker_component_id(
-            PROTOCOL_SYSTEM,
-            &Bytes::from(vec![0x11; 20]),
-            &Bytes::from(vec![0x22; 20]),
-            "mm1",
-        );
-
-        // "rfq:hashflow", the twenty bytes of each address, then "mm1", all in ASCII.
-        assert_eq!(
-            id.to_string(),
-            "0x7266713a68617368666c6f77\
-             1111111111111111111111111111111111111111\
-             2222222222222222222222222222222222222222\
-             6d6d31"
-        );
     }
 
     /// Two makers quoting the same pair are two books, each with its own maker and ladder.
