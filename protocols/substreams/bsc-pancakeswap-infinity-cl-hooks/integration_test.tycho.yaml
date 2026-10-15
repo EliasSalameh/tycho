@@ -33,3 +33,24 @@ tests:
         creation_tx: "0xdd24b39e9b2ee1f643952fd77b99f2e3097ebf018b88a8b8a25b5403e42a19d7"
         skip_simulation: false
         skip_execution: false
+  # NES/USDT on CLAlphaHook v3 (0xb0bb…), the version that sets the start time inside
+  # `initializePool`: its `PoolStartedAtUpdated` precedes `Initialize` in the same transaction.
+  # - 120893102: `initializePool`, start 2026-09-10 08:00 UTC; liquidity is added before it.
+  # - 121034428 (08:00:00): the first block at the start time, and the first swap.
+  # - The stop block is about 40 minutes of trading later.
+  - name: test_nes_usdt_alpha_pool_initialized_with_start_time
+    start_block: 120893000
+    stop_block: 121040000
+    expected_components:
+      - id: "0x24993d0e8ef738b3bac36a753c00b39793e416e05db87c2bafbb25c4351b34fd"
+        tokens:
+          - "0x097acf27503753e77bca940277806156c5925b81" # NES
+          - "0x55d398326f99059ff775485246999027b3197955" # USDT
+        static_attributes:
+          key_lp_fee: "0x43"
+          tick_spacing: "0x02"
+          hooks: "0xb0bb171d333569cfd28a37f5c5dddaaa90ad46af"
+          hook_address: "0xb0bb171d333569cfd28a37f5c5dddaaa90ad46af"
+        creation_tx: "0xf2ef0937e73cd33b15afcfa737c3bbf34fb2f48985dc562e4dfd69555804f39f"
+        skip_simulation: false
+        skip_execution: false
