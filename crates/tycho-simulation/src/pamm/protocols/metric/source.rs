@@ -247,17 +247,20 @@ mod tests {
             ],
             None,
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/public/v1/evm/1/metadata?") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
                 return Some(("200 OK", page.clone()));
             }
-            if target == bid_ask_target(HEALTHY) {
+            if request.target == bid_ask_target(HEALTHY) {
                 return Some(("200 OK", bid_ask_json(SERVER_TS, false)));
             }
-            if target == bid_ask_target(FAILING) {
+            if request.target == bid_ask_target(FAILING) {
                 return Some(("500 Internal Server Error", "boom".to_string()));
             }
-            if target == bid_ask_target(UNQUOTABLE) {
+            if request.target == bid_ask_target(UNQUOTABLE) {
                 return Some(("200 OK", bid_ask_json(SERVER_TS, true)));
             }
             // Pools filtered out on metadata must never get here; answering them as healthy
@@ -315,12 +318,18 @@ mod tests {
             &[pool_json(FIRST_POOL, Some(1_000.0)), pool_json(SECOND_POOL, Some(1_000.0))],
             None,
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/public/v1/evm/1/metadata?") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
                 return Some(("200 OK", page.clone()));
             }
-            let (status, body) =
-                if target == bid_ask_target(FIRST_POOL) { first_answer } else { second_answer };
+            let (status, body) = if request.target == bid_ask_target(FIRST_POOL) {
+                first_answer
+            } else {
+                second_answer
+            };
             Some((status, body.to_string()))
         })
         .await;

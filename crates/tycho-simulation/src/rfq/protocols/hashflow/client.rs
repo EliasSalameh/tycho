@@ -421,7 +421,10 @@ impl HashflowClient {
 mod tests {
     use std::{
         str::FromStr,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
     };
 
     use dotenv::dotenv;
@@ -429,42 +432,15 @@ mod tests {
     use tycho_common::models::Chain;
 
     use super::*;
-    use crate::snapshot_feed::http::test_support::spawn_http_server;
+    use crate::snapshot_feed::http::test_support::{
+        spawn_http_server, MockHttpServer, MockResponse,
+    };
 
     /// Response template; the mock server replaces `{{EFFECTIVE_TRADER}}` with the address the
     /// request carried, echoing it like the real API.
     const QUOTE_RESPONSE: &str = r#"{"status":"success","error":null,"rfqId":"test-rfq-id","internalRfqIds":null,"quotes":[{"quoteData":{"pool":"0x71D9750ECF0c5081FAE4E3EDC4253E52024b0B59","externalAccount":null,"trader":"0xfD0b31d2E955fA55e3fa641Fe90e08b677188d35","effectiveTrader":"{{EFFECTIVE_TRADER}}","baseToken":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","baseTokenAmount":"1000000000000000000","quoteToken":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","quoteTokenAmount":"3329502","quoteExpiry":1707847360,"nonce":1707844960943648659,"txid":"0x0000000000000000000000000000000000000000000000000000000000000001"},"signature":"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"}]}"#;
 
     const QUOTE_RESPONSE_WITHOUT_EFFECTIVE_TRADER: &str = r#"{"status":"success","error":null,"rfqId":"test-rfq-id","internalRfqIds":null,"quotes":[{"quoteData":{"pool":"0x71D9750ECF0c5081FAE4E3EDC4253E52024b0B59","externalAccount":null,"trader":"0xfD0b31d2E955fA55e3fa641Fe90e08b677188d35","baseToken":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","baseTokenAmount":"1000000000000000000","quoteToken":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","quoteTokenAmount":"3329502","quoteExpiry":1707847360,"nonce":1707844960943648659,"txid":"0x0000000000000000000000000000000000000000000000000000000000000001"},"signature":"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"}]}"#;
-
-    /// Reads one HTTP request off the stream and returns its body.
-    async fn read_request_body(stream: &mut tokio::net::TcpStream) -> String {
-        use tokio::io::AsyncReadExt;
-
-        let mut raw = Vec::new();
-        let mut buf = [0u8; 1024];
-        loop {
-            let n = stream.read(&mut buf).await.unwrap();
-            raw.extend_from_slice(&buf[..n]);
-            let text = String::from_utf8_lossy(&raw);
-            if let Some(header_end) = text.find("\r\n\r\n") {
-                let content_length: usize = text
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .map(|v| v.trim().parse().unwrap())
-                    })
-                    .unwrap_or(0);
-                if raw.len() >= header_end + 4 + content_length {
-                    return text[header_end + 4..].to_string();
-                }
-            }
-            if n == 0 {
-                return String::new();
-            }
-        }
-    }
 
     /// Extracts the effectiveTrader value from a request body.
     fn effective_trader_of(request_body: &str) -> String {
@@ -475,50 +451,29 @@ mod tests {
         request_body[start..start + request_body[start..].find('"').unwrap()].to_string()
     }
 
-    /// Creates a mock server that answers with `json_response` after a delay, substituting the
-    /// request's effectiveTrader for `{{EFFECTIVE_TRADER}}`. Returns the address and a log of
-    /// the received request bodies.
-    async fn create_delayed_response_server(
-        delay_ms: u64,
+    /// A server answering every quote request with `json_response`, after `delay`, with the
+    /// request's own `effectiveTrader` put where the response names one. The bodies it was
+    /// asked with are recorded in the returned log.
+    async fn quote_server(
+        delay: Duration,
         json_response: &'static str,
-    ) -> (std::net::SocketAddr, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-        use std::sync::{Arc, Mutex};
-
-        use tokio::{io::AsyncWriteExt, net::TcpListener};
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
+    ) -> (MockHttpServer, Arc<Mutex<Vec<String>>>) {
         let request_log: Arc<Mutex<Vec<String>>> = Arc::default();
-        let request_log_server = request_log.clone();
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let json_response_clone = json_response.to_owned();
-                let request_log = request_log_server.clone();
-                tokio::spawn(async move {
-                    let body = read_request_body(&mut stream).await;
-                    let json_response_clone = json_response_clone
-                        .replace("{{EFFECTIVE_TRADER}}", &effective_trader_of(&body));
-                    request_log.lock().unwrap().push(body);
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                        json_response_clone.len(),
-                        json_response_clone
-                    );
-                    let _ = stream
-                        .write_all(response.as_bytes())
-                        .await;
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        (addr, request_log)
+        let recorded = Arc::clone(&request_log);
+        let server = spawn_http_server(move |request| {
+            recorded
+                .lock()
+                .unwrap()
+                .push(request.body.clone());
+            Some(MockResponse {
+                status: "200 OK",
+                body: json_response
+                    .replace("{{EFFECTIVE_TRADER}}", &effective_trader_of(&request.body)),
+                delay,
+            })
+        })
+        .await;
+        (server, request_log)
     }
 
     fn create_test_client(base_url: String, quote_timeout: Duration) -> HashflowClient {
@@ -580,10 +535,9 @@ mod tests {
     async fn test_request_binding_quote_without_effective_trader() {
         // A response that drops the requested effectiveTrader would leave the quote in the
         // trader's shared nonce scope, so the client rejects it.
-        let (addr, _) =
-            create_delayed_response_server(0, QUOTE_RESPONSE_WITHOUT_EFFECTIVE_TRADER).await;
-        let client =
-            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
+        let (server, _) =
+            quote_server(Duration::ZERO, QUOTE_RESPONSE_WITHOUT_EFFECTIVE_TRADER).await;
+        let client = create_test_client(server.url(), Duration::from_secs(1));
         let params = create_test_quote_params();
 
         let err = client
@@ -625,9 +579,8 @@ mod tests {
         #[case] declined: bool,
         #[case] says: &str,
     ) {
-        let (addr, _) = create_delayed_response_server(0, body).await;
-        let client =
-            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
+        let (server, _) = quote_server(Duration::ZERO, body).await;
+        let client = create_test_client(server.url(), Duration::from_secs(1));
 
         let error = client
             .request_binding_quote(&create_test_quote_params(), "mm1".to_string())
@@ -649,9 +602,8 @@ mod tests {
     async fn test_request_binding_quote_field_mapping() {
         // The wire request carries the receiver as Hashflow's trader, a fresh random address as
         // the effectiveTrader — a new one per quote request — and the one maker it goes to.
-        let (addr, request_log) = create_delayed_response_server(0, QUOTE_RESPONSE).await;
-        let client =
-            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
+        let (server, request_log) = quote_server(Duration::ZERO, QUOTE_RESPONSE).await;
+        let client = create_test_client(server.url(), Duration::from_secs(1));
         let params = create_test_quote_params();
 
         let first_quote = client
@@ -695,13 +647,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_hashflow_quote_timeout() {
-        let (addr, _) = create_delayed_response_server(500, QUOTE_RESPONSE).await;
+        let (server, _) = quote_server(Duration::from_millis(500), QUOTE_RESPONSE).await;
 
         // Test 1: Client with short timeout (200ms) - should timeout
-        let client_short_timeout = create_test_client(
-            format!("http://127.0.0.1:{}", addr.port()),
-            Duration::from_millis(200),
-        );
+        let client_short_timeout = create_test_client(server.url(), Duration::from_millis(200));
         let params = create_test_quote_params();
 
         // This should timeout after 200ms
@@ -730,8 +679,7 @@ mod tests {
         // Test 2: Client with long timeout (1 second) - should wait and receive response
         // Note: With retry logic, we may need multiple attempts if the response is malformed,
         // so we need a longer timeout to account for retries
-        let client_long_timeout =
-            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(1));
+        let client_long_timeout = create_test_client(server.url(), Duration::from_secs(1));
 
         // This should wait for the response (500ms)
         let result = client_long_timeout
@@ -742,63 +690,26 @@ mod tests {
         assert!(result.is_ok(), "Expected success, got: {:?}", result);
     }
 
-    /// Helper function to create a mock server that fails twice, then succeeds
-    async fn create_retry_server() -> (std::net::SocketAddr, std::sync::Arc<std::sync::Mutex<u32>>)
-    {
-        use std::sync::{Arc, Mutex};
-
-        use tokio::{io::AsyncWriteExt, net::TcpListener};
-
-        let request_count = Arc::new(Mutex::new(0u32));
-        let request_count_clone = request_count.clone();
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let count_clone = request_count_clone.clone();
-                tokio::spawn(async move {
-                    *count_clone.lock().unwrap() += 1;
-                    let count = *count_clone.lock().unwrap();
-                    println!("Mock server: Received request #{count}");
-
-                    let body = read_request_body(&mut stream).await;
-                    if count <= 2 {
-                        let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error";
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    } else {
-                        let json_response = QUOTE_RESPONSE
-                            .replace("{{EFFECTIVE_TRADER}}", &effective_trader_of(&body));
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                            json_response.len(),
-                            json_response
-                        );
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    }
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        (addr, request_count)
-    }
-
     #[tokio::test]
     async fn test_hashflow_quote_retry_on_bad_response() {
-        let (addr, request_count) = create_retry_server().await;
+        // The venue answers the first two attempts with a server error and the third with a
+        // quote.
+        // The route counts its own attempts, so one test's retries never reach another's.
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let server = spawn_http_server(move |request| {
+            Some(if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                ("500 Internal Server Error", "Internal Server Error".to_string())
+            } else {
+                (
+                    "200 OK",
+                    QUOTE_RESPONSE
+                        .replace("{{EFFECTIVE_TRADER}}", &effective_trader_of(&request.body)),
+                )
+            })
+        })
+        .await;
 
-        let client =
-            create_test_client(format!("http://127.0.0.1:{}", addr.port()), Duration::from_secs(5));
+        let client = create_test_client(server.url(), Duration::from_secs(5));
         let params = create_test_quote_params();
         let result = client
             .request_binding_quote(&params, "mm1".to_string())
@@ -812,8 +723,7 @@ mod tests {
         assert_eq!(quote.amount_out, BigUint::from(3329502u64));
 
         // Verify exactly 3 requests were made (2 failures + 1 success)
-        let final_count = *request_count.lock().unwrap();
-        assert_eq!(final_count, 3, "Expected 3 requests, got {}", final_count);
+        assert_eq!(server.request_count(), 3);
     }
 
     /// Both book endpoints ask about the chain under the parameter Hashflow reads it from.
@@ -821,12 +731,15 @@ mod tests {
     async fn the_book_requests_carry_the_chain_id() {
         let targets = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&targets);
-        let server = spawn_http_server(move |target| {
+        let server = spawn_http_server(move |request| {
             recorded
                 .lock()
                 .unwrap()
-                .push(target.to_string());
-            if target.starts_with("/taker/v3/market-makers") {
+                .push(request.target.to_string());
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
                 Some(("200 OK", r#"{"marketMakers":["mm1"]}"#.to_string()))
             } else {
                 Some(("200 OK", r#"{"status":"success","levels":{"mm1":[]}}"#.to_string()))

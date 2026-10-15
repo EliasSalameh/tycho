@@ -402,47 +402,20 @@ impl LiquoriceClient {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
 
     use dotenv::dotenv;
     use rstest::rstest;
     use tycho_common::models::Chain;
 
     use super::*;
-    use crate::snapshot_feed::http::test_support::spawn_http_server;
+    use crate::snapshot_feed::http::test_support::{spawn_http_server, MockResponse};
 
-    async fn create_delayed_response_server(delay_ms: u64) -> std::net::SocketAddr {
-        use tokio::{io::AsyncWriteExt, net::TcpListener};
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let json_response = r#"{"rfqId":"test-rfq-id","liquidityAvailable":true,"levels":[{"makerRfqId":"maker-rfq-1","maker":"test-maker","nonce":"0x0000000000000000000000000000000000000000000000000000000000000001","expiry":1707847360,"tx":{"to":"0x71D9750ECF0c5081FAE4E3EDC4253E52024b0B59","data":"0xdeadbeef"},"baseToken":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","quoteToken":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","baseTokenAmount":"1000000000000000000","quoteTokenAmount":"3329502","partialFill":null,"allowances":[]}]}"#;
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let json_response_clone = json_response.to_owned();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                        json_response_clone.len(),
-                        json_response_clone
-                    );
-                    let _ = stream
-                        .write_all(response.as_bytes())
-                        .await;
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        addr
-    }
+    /// A binding quote as Liquorice answers one, recorded from its API.
+    const BINDING_QUOTE: &str = r#"{"rfqId":"test-rfq-id","liquidityAvailable":true,"levels":[{"makerRfqId":"maker-rfq-1","maker":"test-maker","nonce":"0x0000000000000000000000000000000000000000000000000000000000000001","expiry":1707847360,"tx":{"to":"0x71D9750ECF0c5081FAE4E3EDC4253E52024b0B59","data":"0xdeadbeef"},"baseToken":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","quoteToken":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","baseTokenAmount":"1000000000000000000","quoteTokenAmount":"3329502","partialFill":null,"allowances":[]}]}"#;
 
     fn create_test_client(base_url: String, quote_timeout: Duration) -> LiquoriceClient {
         LiquoriceClient::new(
@@ -710,12 +683,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_liquorice_quote_timeout() {
-        let addr = create_delayed_response_server(500).await;
+        let server = spawn_http_server(|_| {
+            Some(MockResponse {
+                status: "200 OK",
+                body: BINDING_QUOTE.to_string(),
+                delay: Duration::from_millis(500),
+            })
+        })
+        .await;
 
-        let client_short_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_millis(200),
-        );
+        let client_short_timeout =
+            create_test_client(format!("{}/rfq", server.url()), Duration::from_millis(200));
         let params = create_test_quote_params();
 
         let start = std::time::Instant::now();
@@ -738,10 +716,8 @@ mod tests {
             elapsed
         );
 
-        let client_long_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client_long_timeout =
+            create_test_client(format!("{}/rfq", server.url()), Duration::from_secs(1));
 
         let result = client_long_timeout
             .request_binding_quote(&params, "test-maker")
@@ -749,64 +725,22 @@ mod tests {
         assert!(result.is_ok(), "Expected success, got: {:?}", result);
     }
 
-    async fn create_retry_server() -> (std::net::SocketAddr, std::sync::Arc<std::sync::Mutex<u32>>)
-    {
-        use std::sync::{Arc, Mutex};
-
-        use tokio::{io::AsyncWriteExt, net::TcpListener};
-
-        let request_count = Arc::new(Mutex::new(0u32));
-        let request_count_clone = request_count.clone();
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let json_response = r#"{"rfqId":"test-rfq-id","liquidityAvailable":true,"levels":[{"makerRfqId":"maker-rfq-1","maker":"test-maker","nonce":"0x0000000000000000000000000000000000000000000000000000000000000001","expiry":1707847360,"tx":{"to":"0x71D9750ECF0c5081FAE4E3EDC4253E52024b0B59","data":"0xdeadbeef"},"baseToken":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","quoteToken":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","baseTokenAmount":"1000000000000000000","quoteTokenAmount":"3329502","partialFill":null,"allowances":[]}]}"#;
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let count_clone = request_count_clone.clone();
-                let json_response_clone = json_response.to_owned();
-                tokio::spawn(async move {
-                    *count_clone.lock().unwrap() += 1;
-                    let count = *count_clone.lock().unwrap();
-                    println!("Mock server: Received request #{count}");
-
-                    if count <= 2 {
-                        let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error";
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    } else {
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                            json_response_clone.len(),
-                            json_response_clone
-                        );
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    }
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        (addr, request_count)
-    }
-
     #[tokio::test]
     async fn test_liquorice_quote_retry_on_bad_response() {
-        let (addr, request_count) = create_retry_server().await;
+        // The venue answers the first two attempts with a server error and the third with a
+        // quote.
+        // The route counts its own attempts, so one test's retries never reach another's.
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let server = spawn_http_server(move |_| {
+            Some(if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                ("500 Internal Server Error", "Internal Server Error".to_string())
+            } else {
+                ("200 OK", BINDING_QUOTE.to_string())
+            })
+        })
+        .await;
 
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/rfq", addr.port()),
-            Duration::from_secs(5),
-        );
+        let client = create_test_client(format!("{}/rfq", server.url()), Duration::from_secs(5));
         let params = create_test_quote_params();
         let result = client
             .request_binding_quote(&params, "test-maker")
@@ -818,8 +752,7 @@ mod tests {
         assert_eq!(quote.amount_in, BigUint::from(1_000000000000000000u64));
         assert_eq!(quote.amount_out, BigUint::from(3329502u64));
 
-        let final_count = *request_count.lock().unwrap();
-        assert_eq!(final_count, 3, "Expected 3 requests, got {}", final_count);
+        assert_eq!(server.request_count(), 3);
     }
 
     /// The book request asks about the chain under the parameter Liquorice reads it from.
@@ -827,11 +760,11 @@ mod tests {
     async fn the_book_request_carries_the_chain_id() {
         let targets = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&targets);
-        let server = spawn_http_server(move |target| {
+        let server = spawn_http_server(move |request| {
             recorded
                 .lock()
                 .unwrap()
-                .push(target.to_string());
+                .push(request.target.to_string());
             Some(("200 OK", r#"{"prices":{}}"#.to_string()))
         })
         .await;

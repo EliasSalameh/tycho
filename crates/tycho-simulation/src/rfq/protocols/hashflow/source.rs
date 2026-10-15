@@ -238,8 +238,11 @@ mod tests {
                 ]
             }}}}"#
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/taker/v3/market-makers") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -291,8 +294,11 @@ mod tests {
                 "mm2":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"2","p":"2990"}}]}}]
             }}}}"#
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/taker/v3/market-makers") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -386,8 +392,11 @@ mod tests {
                 "mm2":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"2999"}}]}}]
             }}}}"#
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/taker/v3/market-makers") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))
@@ -450,8 +459,11 @@ mod tests {
                 "small_mm":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"2999"}}]}}]
             }}}}"#
         );
-        let server = spawn_http_server(move |target| {
-            if target.starts_with("/taker/v3/market-makers") {
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
                 Some(("200 OK", market_makers.clone()))
             } else {
                 Some(("200 OK", price_levels.clone()))

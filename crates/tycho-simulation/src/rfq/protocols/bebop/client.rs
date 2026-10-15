@@ -337,15 +337,20 @@ impl BebopClient {
 mod tests {
     use std::{
         str::FromStr,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
     };
 
     use rstest::rstest;
-    use tokio::net::TcpListener;
     use tycho_common::models::protocol::GetAmountOutParams;
 
     use super::*;
-    use crate::{rfq::errors::RFQError, snapshot_feed::http::test_support::spawn_http_server};
+    use crate::{
+        rfq::errors::RFQError,
+        snapshot_feed::http::test_support::{spawn_http_server, MockResponse},
+    };
 
     /// Quote responses recorded from Bebop's API.
     const AGGREGATE_ORDER: &str = include_str!("test_responses/aggregate_order.json");
@@ -482,37 +487,6 @@ mod tests {
         );
     }
 
-    /// Helper function to create a mock server that responds after a delay
-    async fn create_delayed_response_server(delay_ms: u64) -> std::net::SocketAddr {
-        use tokio::io::AsyncWriteExt;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay_ms)).await;
-
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                        AGGREGATE_ORDER.len(),
-                        AGGREGATE_ORDER
-                    );
-                    let _ = stream
-                        .write_all(response.as_bytes())
-                        .await;
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-
-        addr
-    }
-
     /// A client whose quotes go to a server of the test's own, with everything else as
     /// [`BebopClient::new`] builds it for Ethereum.
     fn create_test_client(quote_endpoint: String, quote_timeout: Duration) -> BebopClient {
@@ -639,13 +613,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_bebop_quote_timeout() {
-        let addr = create_delayed_response_server(500).await;
+        let server = spawn_http_server(|_| {
+            Some(MockResponse {
+                status: "200 OK",
+                body: AGGREGATE_ORDER.to_string(),
+                delay: Duration::from_millis(500),
+            })
+        })
+        .await;
 
         // Test 1: Client with short timeout (200ms) - should timeout
-        let client_short_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/quote", addr.port()),
-            Duration::from_millis(200),
-        );
+        let client_short_timeout =
+            create_test_client(format!("{}/quote", server.url()), Duration::from_millis(200));
         let params = create_test_quote_params();
 
         let start = std::time::Instant::now();
@@ -671,10 +650,8 @@ mod tests {
         // Test 2: Client with long timeout (1 seconds) - should wait and receive response
         // Note: With retry logic, we may need multiple attempts if the response is malformed,
         // so we need a longer timeout to account for retries
-        let client_long_timeout = create_test_client(
-            format!("http://127.0.0.1:{}/quote", addr.port()),
-            Duration::from_secs(1),
-        );
+        let client_long_timeout =
+            create_test_client(format!("{}/quote", server.url()), Duration::from_secs(1));
 
         let result = client_long_timeout
             .request_binding_quote(&params)
@@ -689,60 +666,22 @@ mod tests {
         assert_eq!(quote.quote_token, params.token_out);
     }
 
-    /// Helper function to create a mock server that fails twice, then succeeds with
-    /// aggregate_order.json
-    async fn create_retry_server() -> (std::net::SocketAddr, Arc<Mutex<u32>>) {
-        use std::sync::{Arc, Mutex};
-
-        use tokio::io::AsyncWriteExt;
-
-        let request_count = Arc::new(Mutex::new(0u32));
-        let request_count_clone = request_count.clone();
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let count_clone = request_count_clone.clone();
-                tokio::spawn(async move {
-                    *count_clone.lock().unwrap() += 1;
-                    let count = *count_clone.lock().unwrap();
-                    println!("Mock server: Received request #{count}");
-
-                    if count <= 2 {
-                        let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error";
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    } else {
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                            AGGREGATE_ORDER.len(),
-                            AGGREGATE_ORDER
-                        );
-                        let _ = stream
-                            .write_all(response.as_bytes())
-                            .await;
-                    }
-                    let _ = stream.flush().await;
-                    let _ = stream.shutdown().await;
-                });
-            }
-        });
-        (addr, request_count)
-    }
-
     #[tokio::test]
     async fn test_bebop_quote_retry_on_bad_response() {
-        let (addr, request_count) = create_retry_server().await;
+        // The venue answers the first two attempts with a server error and the third with a
+        // quote.
+        // The route counts its own attempts, so one test's retries never reach another's.
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let server = spawn_http_server(move |_| {
+            Some(if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                ("500 Internal Server Error", "Internal Server Error".to_string())
+            } else {
+                ("200 OK", AGGREGATE_ORDER.to_string())
+            })
+        })
+        .await;
 
-        let client = create_test_client(
-            format!("http://127.0.0.1:{}/quote", addr.port()),
-            Duration::from_secs(5),
-        );
+        let client = create_test_client(format!("{}/quote", server.url()), Duration::from_secs(5));
         let params = create_test_quote_params();
         let result = client
             .request_binding_quote(&params)
@@ -756,8 +695,7 @@ mod tests {
         assert_eq!(quote.amount_out, BigUint::from_str("52571055094221715780641").unwrap());
 
         // Verify exactly 3 requests were made (2 failures + 1 success)
-        let final_count = *request_count.lock().unwrap();
-        assert_eq!(final_count, 3, "Expected 3 requests, got {}", final_count);
+        assert_eq!(server.request_count(), 3);
     }
 
     #[test]

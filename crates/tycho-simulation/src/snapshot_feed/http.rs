@@ -316,7 +316,7 @@ pub(crate) mod test_support {
     };
 
     use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
         net::TcpListener,
     };
 
@@ -332,6 +332,15 @@ pub(crate) mod test_support {
         fn from((status, body): (&'static str, String)) -> Self {
             MockResponse { status, body, delay: Duration::ZERO }
         }
+    }
+
+    /// One request as the mock server read it.
+    pub struct MockRequest {
+        /// Path and query string, as the request line carries them.
+        pub target: String,
+        /// The body, empty where the request had none. Read in full, so a client that sends one
+        /// is not left writing into a socket nobody drains.
+        pub body: String,
     }
 
     /// A running mock server: where it listens and how many requests it has answered.
@@ -350,12 +359,40 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Serves HTTP/1.1 requests until the runtime drops it. `route` maps the request target
-    /// (path plus query string) to a response; a target it returns `None` for gets a 404. Each
-    /// request is counted before `route` runs, so a route closure holding its own counter can
-    /// answer per attempt.
+    /// The headers and however many bytes of body `Content-Length` announced. A request that
+    /// announces none has none: nothing here speaks chunked transfer encoding.
+    async fn read_body(reader: &mut BufReader<tokio::net::TcpStream>) -> String {
+        let mut length = 0;
+        loop {
+            let mut header = String::new();
+            match reader.read_line(&mut header).await {
+                Ok(0) => break,
+                Err(_) => break,
+                Ok(_) if header.trim().is_empty() => break,
+                Ok(_) => {}
+            }
+            if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        let mut body = vec![0; length];
+        if length > 0 {
+            let _ = reader.read_exact(&mut body).await;
+        }
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// Serves HTTP/1.1 requests until the runtime drops it. `route` maps a request to a
+    /// response; a request it returns `None` for gets a 404. Each request is counted before
+    /// `route` runs, so a route closure holding its own counter can answer per attempt.
+    ///
+    /// Each connection is served by its own task, so a response that waits out its `delay` holds
+    /// up nobody else: a client that retries gets its second answer a delay after it asked, not
+    /// a delay after the first one finished.
     pub async fn spawn_http_server<R: Into<MockResponse>>(
-        route: impl Fn(&str) -> Option<R> + Send + 'static,
+        route: impl Fn(&MockRequest) -> Option<R> + Send + Sync + 'static,
     ) -> MockHttpServer {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -363,40 +400,51 @@ pub(crate) mod test_support {
         let address = listener.local_addr().unwrap();
         let requests = Arc::new(AtomicUsize::new(0));
         let served = Arc::clone(&requests);
+        let route = Arc::new(route);
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let mut reader = BufReader::new(stream);
-                let mut request_line = String::new();
-                if reader
-                    .read_line(&mut request_line)
-                    .await
-                    .is_err()
-                {
-                    continue;
-                }
-                served.fetch_add(1, Ordering::SeqCst);
-                let target = request_line
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default();
-                let response = route(target)
-                    .map(Into::into)
-                    .unwrap_or_else(|| {
-                        MockResponse::from(("404 Not Found", format!("no route for {target}")))
-                    });
+                let (served, route) = (Arc::clone(&served), Arc::clone(&route));
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(stream);
+                    let mut request_line = String::new();
+                    if reader
+                        .read_line(&mut request_line)
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    served.fetch_add(1, Ordering::SeqCst);
+                    let request = MockRequest {
+                        target: request_line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or_default()
+                            .to_string(),
+                        body: read_body(&mut reader).await,
+                    };
+                    let response = route(&request)
+                        .map(Into::into)
+                        .unwrap_or_else(|| {
+                            MockResponse::from((
+                                "404 Not Found",
+                                format!("no route for {}", request.target),
+                            ))
+                        });
 
-                tokio::time::sleep(response.delay).await;
+                    tokio::time::sleep(response.delay).await;
 
-                let MockResponse { status, body, .. } = response;
-                let payload = format!(
+                    let MockResponse { status, body, .. } = response;
+                    let payload = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
-                let mut stream = reader.into_inner();
-                let _ = stream
-                    .write_all(payload.as_bytes())
-                    .await;
-                let _ = stream.shutdown().await;
+                    let mut stream = reader.into_inner();
+                    let _ = stream
+                        .write_all(payload.as_bytes())
+                        .await;
+                    let _ = stream.shutdown().await;
+                });
             }
         });
         MockHttpServer { address, requests }

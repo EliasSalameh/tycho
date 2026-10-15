@@ -620,8 +620,8 @@ mod tests {
     async fn requests_native_token_orderbooks() {
         let seen_target = Arc::new(Mutex::new(None));
         let record = Arc::clone(&seen_target);
-        let server = spawn_http_server(move |target| {
-            *record.lock().unwrap() = Some(target.to_string());
+        let server = spawn_http_server(move |request| {
+            *record.lock().unwrap() = Some(request.target.to_string());
             Some(("200 OK", "[]".to_string()))
         })
         .await;

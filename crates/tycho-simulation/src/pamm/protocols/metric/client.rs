@@ -213,8 +213,9 @@ mod tests {
             .iter()
             .map(|(pools, next_offset)| metadata_page(*pools, *next_offset))
             .collect();
-        let server = spawn_http_server(move |target| {
-            let offset: usize = target
+        let server = spawn_http_server(move |request| {
+            let offset: usize = request
+                .target
                 .split("offset=")
                 .nth(1)?
                 .split('&')
