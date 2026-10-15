@@ -4,10 +4,7 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{
-        all_pairs::{ComponentLayout, QuoteRule},
-        BookFeedConfig, BookSnapshot, ReceivedAt,
-    },
+    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::native::{
@@ -32,7 +29,7 @@ pub struct NativeFeed {
 /// Builds a [`NativeFeed`] from the shared [`BookFeedConfig`] and Native's API key.
 pub struct NativeFeedBuilder {
     book_config: BookFeedConfig,
-    component_layout: ComponentLayout,
+    all_pairs: bool,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     api_key: String,
     feed_config: HttpFeedConfig,
@@ -51,7 +48,7 @@ impl NativeFeedBuilder {
             api_key,
             feed_config: Self::default_feed_config(),
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
-            component_layout: ComponentLayout::PerPair,
+            all_pairs: false,
         }
     }
 
@@ -84,7 +81,7 @@ impl NativeFeedBuilder {
     ///
     /// One component per pair otherwise.
     pub fn all_pairs(mut self) -> Self {
-        self.component_layout = ComponentLayout::AllPairs(QuoteRule::OncePerVenue);
+        self.all_pairs = true;
         self
     }
 
@@ -101,7 +98,7 @@ impl NativeFeedBuilder {
         Ok(NativeFeed {
             feed_config: self.feed_config,
             source: NativeBookSource {
-                component_layout: self.component_layout,
+                all_pairs: self.all_pairs,
                 client: Arc::new(NativeClient::new(None, chain, self.api_key, self.quote_timeout)),
                 book_config: self.book_config,
                 usd_quote_tokens: self.usd_quote_tokens,

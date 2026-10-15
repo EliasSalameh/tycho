@@ -8,7 +8,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        all_pairs::{BookCollector, QuoteRule, VenueBook},
         component::pair_component_id,
         BookFeedConfig, BookSnapshot, ReceivedAt,
     },
@@ -31,8 +31,9 @@ pub struct NativeBookSource {
     /// Requests binding quotes; shared with every state this source emits. Its key also
     /// authenticates the orderbook poll.
     pub client: Arc<NativeClient>,
-    /// Whether the venue's pairs are published as one component or one each.
-    pub component_layout: ComponentLayout,
+    /// Whether Native's pairs are published as one component or one each. Native names no
+    /// market maker, so that component is quoted once per venue.
+    pub all_pairs: bool,
 }
 
 impl NativeBookSource {
@@ -195,7 +196,8 @@ impl HttpSource for NativeBookSource {
             PROTOCOL_SYSTEM,
             PROTOCOL_TYPE,
             self.book_config.chain,
-            self.component_layout,
+            self.all_pairs
+                .then_some(QuoteRule::OncePerVenue),
         );
         for (component_id, book) in grouped {
             // Only requested markets become components.
@@ -243,7 +245,6 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::QuoteRule,
             decode_swap_directions,
             levels::{Levels, PriceLevel},
             test_token_map,
@@ -263,7 +264,7 @@ mod tests {
             .map(|address| (*address, "T", 18))
             .collect();
         NativeBookSource {
-            component_layout: ComponentLayout::PerPair,
+            all_pairs: false,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
                 tokens: Arc::new(test_token_map(&entries)),
@@ -775,7 +776,7 @@ mod tests {
         .unwrap();
         let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
         let source = NativeBookSource {
-            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerVenue),
+            all_pairs: true,
             ..test_source(server.url(), &[&weth, &wbtc, &usdt], HashSet::from([usdt.clone()]), 0.0)
         };
 

@@ -44,6 +44,14 @@ pub(crate) enum ComponentLayout {
     AllPairs(QuoteRule),
 }
 
+impl From<Option<QuoteRule>> for ComponentLayout {
+    /// One component for all of a venue's pairs, quoted under the rule its feed was built with;
+    /// one per pair where it was not built for that.
+    fn from(rule: Option<QuoteRule>) -> Self {
+        rule.map_or(ComponentLayout::PerPair, ComponentLayout::AllPairs)
+    }
+}
+
 /// How often one route may take a quote from a venue published as [`ComponentLayout::AllPairs`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QuoteRule {
@@ -733,13 +741,13 @@ impl<W: AllPairsState> BookCollector<W> {
         protocol_system: &'static str,
         protocol_type: &'static str,
         chain: Chain,
-        layout: ComponentLayout,
+        layout: impl Into<ComponentLayout>,
     ) -> Self {
         BookCollector {
             protocol_system,
             protocol_type,
             chain,
-            layout,
+            layout: layout.into(),
             books: Books::new(),
             venue_books: Vec::new(),
         }

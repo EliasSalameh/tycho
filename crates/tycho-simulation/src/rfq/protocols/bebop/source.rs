@@ -9,7 +9,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        all_pairs::{BookCollector, QuoteRule, VenueBook},
         component::pair_component_id,
         wire::EntryReader,
         BookFeedConfig, BookSnapshot, Books, ReceivedAt,
@@ -40,8 +40,9 @@ pub struct BebopBookSource {
     // Requests binding quotes; shared with every state this source emits. Its key also
     // authenticates the pricing WebSocket.
     pub client: Arc<BebopClient>,
-    /// Whether the venue's pairs are published as one component or one each.
-    pub component_layout: ComponentLayout,
+    /// Whether Bebop's pairs are published as one component or one each. Bebop names no
+    /// market maker, so that component is quoted once per venue.
+    pub all_pairs: bool,
 }
 
 impl BebopBookSource {
@@ -123,7 +124,8 @@ impl BebopBookSource {
             self.protocol_system,
             PROTOCOL_TYPE,
             self.book_config.chain,
-            self.component_layout,
+            self.all_pairs
+                .then_some(QuoteRule::OncePerVenue),
         );
         for (book, (base_token, quote_token, tvl, usd_per_quote_token)) in pairs
             .into_iter()
@@ -193,9 +195,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::{
-            all_pairs::QuoteRule, decode_swap_directions, test_token_map, SWAP_DIRECTIONS_ATTRIBUTE,
-        },
+        book::{decode_swap_directions, test_token_map, SWAP_DIRECTIONS_ATTRIBUTE},
         rfq::protocols::bebop::{
             models::{BebopPriceData, BebopSupportedChain},
             PROTOCOL_SYSTEM,
@@ -223,7 +223,7 @@ mod tests {
             .unwrap();
         let tokens = crate::book::test_token_map(&[(&weth, "WETH", 18), (&usdc, "USDC", 6)]);
         BebopBookSource {
-            component_layout: ComponentLayout::PerPair,
+            all_pairs: false,
             protocol_system: PROTOCOL_SYSTEM,
             book_config: BookFeedConfig {
                 chain: tycho_common::models::Chain::Ethereum,
@@ -365,7 +365,7 @@ mod tests {
         let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
         let tokens = test_token_map(&[(&weth, "WETH", 18), (&wbtc, "WBTC", 8)]);
         let source = BebopBookSource {
-            component_layout: ComponentLayout::PerPair,
+            all_pairs: false,
             protocol_system: PROTOCOL_SYSTEM,
             book_config: BookFeedConfig {
                 chain: Chain::Ethereum,
@@ -420,10 +420,7 @@ mod tests {
     /// each of them, and the venue signs one quote for the route.
     #[test]
     fn build_books_publishes_every_pair_under_one_component() {
-        let source = BebopBookSource {
-            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerVenue),
-            ..test_source(0.0)
-        };
+        let source = BebopBookSource { all_pairs: true, ..test_source(0.0) };
         let update = BebopPricingUpdate { pairs: vec![weth_usdc_price_data(3000.0)] };
 
         let books = source.build_books(update).unwrap();

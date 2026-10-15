@@ -4,10 +4,7 @@ use tokio::time::Duration;
 use tycho_common::Bytes;
 
 use crate::{
-    book::{
-        all_pairs::{ComponentLayout, QuoteRule},
-        BookFeedConfig, BookSnapshot, ReceivedAt,
-    },
+    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::bebop::{
@@ -46,7 +43,7 @@ pub struct BebopFeedBuilder {
     origin_target: Option<Bytes>,
     origin_source: Option<String>,
     feed_config: WsFeedConfig,
-    component_layout: ComponentLayout,
+    all_pairs: bool,
 }
 
 impl BebopFeedBuilder {
@@ -65,7 +62,7 @@ impl BebopFeedBuilder {
             origin_source: None,
             feed_config: Self::default_feed_config(),
             protocol_system: PROTOCOL_SYSTEM,
-            component_layout: ComponentLayout::PerPair,
+            all_pairs: false,
         }
     }
 
@@ -75,7 +72,7 @@ impl BebopFeedBuilder {
     ///
     /// One component per pair otherwise, in each orientation Bebop publishes it.
     pub fn all_pairs(mut self) -> Self {
-        self.component_layout = ComponentLayout::AllPairs(QuoteRule::OncePerVenue);
+        self.all_pairs = true;
         self
     }
 
@@ -155,7 +152,7 @@ impl BebopFeedBuilder {
                     self.origin_target,
                     self.origin_source,
                 )),
-                component_layout: self.component_layout,
+                all_pairs: self.all_pairs,
             },
         })
     }
