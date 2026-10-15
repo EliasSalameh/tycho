@@ -40,7 +40,7 @@ impl NativeBookSource {
     /// The most liquid book that prices `quote_address` in a USD quote token, for normalizing the
     /// TVL of books quoted in some other token. A book is oriented by address order, so the USD
     /// token sits on either side; `get_mid_price` prices `quote_address` from the side it is on.
-    fn select_tvl_conversion_book<'a>(
+    fn conversion_book<'a>(
         &self,
         quote_address: &Bytes,
         books: &'a HashMap<Bytes, NativePriceData>,
@@ -85,7 +85,7 @@ impl NativeBookSource {
         {
             None
         } else {
-            Some(self.select_tvl_conversion_book(&book.quote_address, grouped)?)
+            Some(self.conversion_book(&book.quote_address, grouped)?)
         };
         book.calculate_tvl(conversion_book)
     }
@@ -280,7 +280,7 @@ mod tests {
         }
     }
 
-    fn conversion_book(
+    fn bid_book(
         base_address: Bytes,
         quote_address: Bytes,
         quantity: f64,
@@ -298,7 +298,7 @@ mod tests {
         }
     }
 
-    /// The grouped books as `select_tvl_conversion_book` sees them: keyed by component id.
+    /// The grouped books as `conversion_book` sees them: keyed by component id.
     fn books_by_id(
         books: impl IntoIterator<Item = NativePriceData>,
     ) -> HashMap<Bytes, NativePriceData> {
@@ -324,14 +324,14 @@ mod tests {
             0.0,
         );
         let books = books_by_id([
-            conversion_book(weth.clone(), usdc.clone(), 1.0, 100.0),
-            conversion_book(weth.clone(), usdt.clone(), 2.0, 100.0),
-            conversion_book(wbtc, usdc, 1_000.0, 100.0),
-            conversion_book(weth.clone(), unapproved, 2_000.0, 100.0),
+            bid_book(weth.clone(), usdc.clone(), 1.0, 100.0),
+            bid_book(weth.clone(), usdt.clone(), 2.0, 100.0),
+            bid_book(wbtc, usdc, 1_000.0, 100.0),
+            bid_book(weth.clone(), unapproved, 2_000.0, 100.0),
         ]);
 
         let selected = source
-            .select_tvl_conversion_book(&weth, &books)
+            .conversion_book(&weth, &books)
             .expect("one conversion book");
 
         assert_eq!(selected.quote_address, usdt);
@@ -349,13 +349,13 @@ mod tests {
         );
         let books = books_by_id([
             // 100 USDC of liquidity, USDC on the quote side.
-            conversion_book(weth.clone(), usdc.clone(), 1.0, 100.0),
+            bid_book(weth.clone(), usdc.clone(), 1.0, 100.0),
             // 1 WETH of liquidity at 2000 USDC per WETH, USDC on the base side.
-            conversion_book(usdc.clone(), weth.clone(), 2_000.0, 0.0005),
+            bid_book(usdc.clone(), weth.clone(), 2_000.0, 0.0005),
         ]);
 
         let selected = source
-            .select_tvl_conversion_book(&weth, &books)
+            .conversion_book(&weth, &books)
             .expect("one conversion book");
 
         assert_eq!(selected.base_address, usdc);
@@ -373,12 +373,12 @@ mod tests {
             0.0,
         );
         let books = books_by_id([
-            conversion_book(weth.clone(), higher_quote, 2.0, 100.0),
-            conversion_book(weth.clone(), lower_quote.clone(), 1.0, 200.0),
+            bid_book(weth.clone(), higher_quote, 2.0, 100.0),
+            bid_book(weth.clone(), lower_quote.clone(), 1.0, 200.0),
         ]);
 
         let selected = source
-            .select_tvl_conversion_book(&weth, &books)
+            .conversion_book(&weth, &books)
             .expect("one conversion book");
 
         assert_eq!(selected.quote_address, lower_quote);

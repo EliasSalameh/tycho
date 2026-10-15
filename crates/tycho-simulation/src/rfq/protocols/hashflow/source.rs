@@ -41,7 +41,7 @@ pub struct HashflowBookSource {
 impl HashflowBookSource {
     /// The TVL in USD quote-token units, converted through every pair the response priced —
     /// each market maker's level set is one such pair.
-    fn normalize_tvl(
+    fn normalized_tvl(
         &self,
         raw_tvl: f64,
         quote_token: &Bytes,
@@ -97,7 +97,7 @@ impl HttpSource for HashflowBookSource {
                 let component_id =
                     maker_component_id(self.protocol_system, base_bytes, quote_bytes, mm_name);
                 let tvl = mm_level.levels.notional();
-                let Some(normalized_tvl) = self.normalize_tvl(tvl, quote_bytes, &levels_by_mm)
+                let Some(normalized_tvl) = self.normalized_tvl(tvl, quote_bytes, &levels_by_mm)
                 else {
                     debug!(
                         %component_id,
@@ -196,7 +196,7 @@ mod tests {
     #[case::usd_quote_token_is_taken_as_is(USDC, 1000.0, Some(1000.0))]
     #[case::other_quote_token_is_converted_through_its_usd_level(WETH, 2.0, Some(6000.0))]
     #[case::quote_token_without_usd_level_has_no_tvl(UNPRICED, 1000.0, None)]
-    fn normalize_tvl_converts_into_usd_quote_tokens(
+    fn normalized_tvl_converts_into_usd_quote_tokens(
         #[case] quote_token: &str,
         #[case] raw_tvl: f64,
         #[case] expected: Option<f64>,
@@ -211,7 +211,8 @@ mod tests {
         };
         let levels = HashMap::from([("test_mm".to_string(), vec![weth_usdc])]);
 
-        let result = source.normalize_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
+        let result =
+            source.normalized_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
 
         assert_eq!(result, expected);
     }

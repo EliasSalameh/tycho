@@ -407,9 +407,9 @@ mod tests {
         };
         let overflowing_book = book(weth.clone(), usdc.clone(), 1e308, 2.0);
         let finite_book = book(weth, tamara.clone(), 1.0, 2.0);
-        let overflowing_conversion_book = book(tamara, usdc, 2.0, 1e308);
+        let overflowing_conversion = book(tamara, usdc, 2.0, 1e308);
 
         assert_eq!(overflowing_book.calculate_tvl(None), None);
-        assert_eq!(finite_book.calculate_tvl(Some(&overflowing_conversion_book)), None);
+        assert_eq!(finite_book.calculate_tvl(Some(&overflowing_conversion)), None);
     }
 }

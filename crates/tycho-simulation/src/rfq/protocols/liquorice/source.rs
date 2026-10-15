@@ -40,7 +40,7 @@ pub struct LiquoriceBookSource {
 impl LiquoriceBookSource {
     /// The TVL in USD quote-token units, converted through every pair the response priced —
     /// each market maker quotes one such pair per entry.
-    fn normalize_tvl(
+    fn normalized_tvl(
         &self,
         raw_tvl: f64,
         quote_token: &Bytes,
@@ -83,7 +83,7 @@ impl HttpSource for LiquoriceBookSource {
                 };
 
                 let tvl = token_pair_price.levels.notional();
-                let Some(normalized_tvl) = self.normalize_tvl(tvl, quote_bytes, &prices_by_mm)
+                let Some(normalized_tvl) = self.normalized_tvl(tvl, quote_bytes, &prices_by_mm)
                 else {
                     debug!(
                         market_maker = %mm_name,
@@ -191,7 +191,7 @@ mod tests {
         Some(3_000_000.0)
     )]
     #[case::no_conversion_pair_available("0x1234567890123456789012345678901234567890", true, None)]
-    fn normalize_tvl(
+    fn normalized_tvl(
         #[case] quote_token: &str,
         #[case] with_weth_usdc_levels: bool,
         #[case] expected: Option<f64>,
@@ -213,7 +213,7 @@ mod tests {
             );
         }
 
-        let result = source.normalize_tvl(1000.0, &Bytes::from_str(quote_token).unwrap(), &prices);
+        let result = source.normalized_tvl(1000.0, &Bytes::from_str(quote_token).unwrap(), &prices);
 
         assert_eq!(result, expected);
     }
