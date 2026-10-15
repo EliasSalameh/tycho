@@ -421,7 +421,9 @@ mod tests {
         },
         simulation::{
             errors::SimulationError,
-            protocol_sim::{Balances, BlockContext},
+            protocol_sim::{
+                Balances, BlockContext, PoolSwap, Price, QueryPoolSwapParams, SwapConstraint,
+            },
         },
     };
 
@@ -750,6 +752,24 @@ mod tests {
         .await
     }
 
+    /// Moves the pool to 1% below its starting price of 1.
+    fn query_one_percent_move(
+        state: &UniswapV4State,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<PoolSwap, SimulationError> {
+        state.query_pool_swap(&QueryPoolSwapParams::new(
+            token_in.clone(),
+            token_out.clone(),
+            SwapConstraint::PoolTargetPrice {
+                target: Price::new(BigUint::from(990_u64), BigUint::from(1_000_u64)),
+                tolerance: 0f64,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        ))
+    }
+
     /// Once open, a CLAlphaHook pool quotes exactly like the same pool without a hook, plus the
     /// gas of the `beforeSwap` call and of the pool manager dispatching it.
     #[tokio::test]
@@ -783,6 +803,11 @@ mod tests {
                 from_decoded.gas,
                 from_reference.gas + BigUint::from(CLALPHA_BEFORE_SWAP_GAS)
             );
+
+            let queried = query_one_percent_move(&decoded, token_in, token_out).unwrap();
+            let reference_query = query_one_percent_move(&reference, token_in, token_out).unwrap();
+            assert_eq!(queried.amount_in(), reference_query.amount_in());
+            assert_eq!(queried.amount_out(), reference_query.amount_out());
         }
     }
 
@@ -818,6 +843,8 @@ mod tests {
                 matches!(&err, SimulationError::InvalidInput(message, _) if message.contains("PoolNotStarted")),
                 "{err:?}"
             );
+            let err = query_one_percent_move(&decoded, token_in, token_out).unwrap_err();
+            assert!(matches!(err, SimulationError::InvalidInput(..)), "{err:?}");
         }
     }
 

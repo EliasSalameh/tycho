@@ -1097,8 +1097,17 @@ impl ProtocolSim for UniswapV4State {
     /// fees and dynamic LP fees.
     ///
     /// Note: This implementation does not invoke hooks, as it is a query-only operation meant to
-    /// determine available liquidity at a given price without executing an actual swap.
+    /// determine available liquidity at a given price without executing an actual swap. It only
+    /// asks the hook whether swaps are enabled, and returns `InvalidInput` when they are not.
     fn query_pool_swap(&self, params: &QueryPoolSwapParams) -> Result<PoolSwap, SimulationError> {
+        if let Some(hook) = &self.hook {
+            if !hook.swaps_enabled() {
+                return Err(SimulationError::InvalidInput(
+                    format!("hook {} does not allow swaps in the execution block", hook.address()),
+                    None,
+                ));
+            }
+        }
         if self.liquidity == 0 {
             return Err(SimulationError::FatalError("No liquidity".to_string()));
         }

@@ -50,8 +50,8 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
         false
     }
 
-    /// Whether the hook lets the pool swap at all in the current execution block. `get_limits`
-    /// reports no capacity while this is `false`.
+    /// Whether the hook lets the pool swap at all in the current execution block. While this is
+    /// `false` the pool offers no liquidity.
     fn swaps_enabled(&self) -> bool {
         true
     }
