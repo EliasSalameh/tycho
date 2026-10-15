@@ -28,8 +28,8 @@ use tycho_test::execution::encoding::USER_ADDR;
 
 use crate::stream_processor::{StreamUpdate, StreamUpdatePayload};
 
-/// The venues that take credentials, which is every one that signs binding quotes. Metric
-/// is the pAMM of the family and is configured on its own.
+/// The venues that sign binding quotes. Metric is the pAMM of the family and is configured on
+/// its own.
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum RfqVenue {
     Bebop,
@@ -155,7 +155,7 @@ impl BookStreamProcessor {
                             .expect("each provider is added once");
                     }
                     Err(e) => {
-                        warn!("Metric not supported on chain {:?}, skipping: {e}", self.chain);
+                        warn!("Failed to build Metric feed, skipping: {e}");
                     }
                 },
                 Err(_) => {
@@ -294,7 +294,7 @@ impl BookStreamProcessor {
         let mut next_stream_times: HashMap<String, tokio::time::Instant> = HashMap::new();
 
         let handle = tokio::spawn(async move {
-            info!("RFQ stream processor started");
+            info!("book stream processor started");
             while let Some((protocol_system, event)) = feeds.next().await {
                 let snapshot = match event {
                     BookFeedEvent::Published(snapshot) => Ok(snapshot),
@@ -377,9 +377,9 @@ impl BookStreamProcessor {
                     break;
                 }
             }
-            // Either every feed terminated (each already reported above) or the receiver
-            // dropped; dropping the JoinSet aborts any feed task still running.
-            info!("RFQ stream processor stopping");
+            // Either every feed ended (each reported above) or the receiver dropped; dropping
+            // the BookFeedStreams aborts any feed task still running.
+            info!("book stream processor stopping");
         });
         Ok(handle)
     }

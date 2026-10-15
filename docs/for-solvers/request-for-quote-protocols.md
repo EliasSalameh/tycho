@@ -130,7 +130,7 @@ while let Some((provider, event)) = feeds.next().await {
             // the feed gave up and is gone for good; `error` says why
         }
         BookFeedEvent::Ended(outcome) => {
-            // it ran out of books to serve, or its task died of a bug
+            // it ran out of books to serve, or its task panicked
         }
     }
 }
@@ -139,7 +139,7 @@ while let Some((provider, event)) = feeds.next().await {
 
 A single feed reads the same way through `BookFeedStream::spawn(provider, feed)`. Dropping a `BookFeedStreams` or a `BookFeedStream` aborts the feed tasks it holds.
 
-If you price on demand rather than reacting to every update, read the feed as a `BookFeedWatch` instead: `BookFeedWatch::spawn(provider, feed)` runs it the same way and `receiver()` hands out `watch::Receiver` clones you read with `borrow()`, without awaiting and without slowing the venue's connection. `None` in the channel means nothing is servable — nothing yet, gone stale, or the feed is over — and since those look alike to a reader, `ended()` is what tells the last one apart: it resolves when the feed stops, with a `BookFeedOutcome` saying whether it gave up (and why), ran out, or died of a bug. Until then the venue is only quiet. The outcome is reported once; afterwards `ended()` stays pending, so it sits in a `select!` loop beside your other work without ever firing twice.
+If you price on demand rather than reacting to every update, read the feed as a `BookFeedWatch` instead: `BookFeedWatch::spawn(provider, feed)` runs it the same way and `receiver()` hands out `watch::Receiver` clones you read with `borrow()`, without awaiting and without slowing the venue's connection. `None` in the channel means nothing is servable — nothing yet, gone stale, or the feed is over — and since those look alike to a reader, `ended()` is what tells the last one apart: it resolves when the feed stops, with a `BookFeedOutcome` saying whether it gave up (and why), ran out, or panicked. Until then the venue is only quiet. The outcome is reported once; afterwards `ended()` stays pending, so it sits in a `select!` loop beside your other work without ever firing twice.
 
 Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is the feed's receipt time (`ReceivedAt`) and each `Book` carries the provider's `updated_at` where the provider reports one (Bebop, Liquorice, Metric). Every snapshot is the provider's full current state, so a pair missing from the current snapshot is one the provider has stopped serving. Because a watch channel only keeps the latest value, a consumer that falls behind skips straight to the freshest prices instead of working through a backlog. To track additions and removals, compare the snapshot's book ids against your previous view.
 

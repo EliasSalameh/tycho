@@ -4,7 +4,7 @@ This quickstart guide enables you to:
 
 1. Open a live feed per off-chain book venue — the RFQ market makers and the pAMMs — and read
    each venue's complete current book.
-2. Leverage Tycho Simulation to get the best quoted prices across them.
+2. Use Tycho Simulation to find the best quoted price across them.
 
 ## How to run
 
@@ -17,8 +17,8 @@ export TYCHO_API_KEY=<your-tycho-api-key>
 
 export BEBOP_KEY=<your-bebop-api-key>
 
-export HASHFLOW_USER=<your-ws-hashflow-username>
-export HASHFLOW_KEY=<your-ws-hashflow-key>
+export HASHFLOW_USER=<your-hashflow-username>
+export HASHFLOW_KEY=<your-hashflow-key>
 
 export LIQUORICE_USER=<your-liquorice-solver>
 export LIQUORICE_KEY=<your-liquorice-key>
@@ -51,13 +51,12 @@ is the layout a router uses to hold a route to the quotes a venue will sign for 
 cargo run --release --example book_quickstart -- --all-pairs
 ```
 
-By default, the example will request price levels for 10 USDC -> WETH on Ethereum Mainnet.
-If we choose a different chain, by default, price levels for USDC -> WETH will be requested on that chain.
-If you want a different trade and chain, you can use the following command, replacing the values with the token and
-chain that you'd like:
+By default, the example requests price levels for 10 USDC -> WETH. Where it knows no default tokens for a chain it
+says so and stops, so pass `--sell-token` and `--buy-token` there. To pick your own trade and chain, replace the values
+below with the tokens and chain you want:
 
 ```bash
-cargo run --release --example book_quickstart -- --sell-token "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" --buy-token "0x4200000000000000000000000000000000000006" --sell-amount 10 --chain "base"
+cargo run --release --example book_quickstart -- --sell-token "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" --buy-token "0x4200000000000000000000000000000000000006" --sell-amount 10 --chain "base"
 ```
 
 for 10 USDC -> WETH on Base.
@@ -68,6 +67,7 @@ running the quickstart. Be sure not to save it to your terminal history:
 ```bash
 unset HISTFILE
 export PRIVATE_KEY=<your-private-key>
+export RPC_URL=<your-rpc-url>
 ...
 ```
 
@@ -86,6 +86,5 @@ The example will:
 3. Display the best available quotes with pricing information
 4. Allow you to simulate or execute swaps when a private key is provided
 
-TODO: update this once docs are merged
-See [here](https://docs.propellerheads.xyz/tycho/for-solvers/tycho-quickstart) a complete guide on how to run the
-Quickstart example.
+See [here](https://docs.propellerheads.xyz/tycho/for-solvers/request-for-quote-protocols) a complete guide to the
+book feeds.

@@ -185,7 +185,7 @@ impl BookFeedConfig {
 ///         BookFeedEvent::Withdrawn => { /* stop quoting `provider` until it publishes again */ }
 ///         // `provider` is out of the set now, whichever of the three ended it.
 ///         BookFeedEvent::Ended(BookFeedOutcome::Failed(error)) => { /* it gave up */ }
-///         BookFeedEvent::Ended(outcome) => { /* ran out, or died of a bug */ }
+///         BookFeedEvent::Ended(outcome) => { /* ran out, or panicked */ }
 ///     }
 /// }
 /// # }

@@ -96,7 +96,11 @@ impl Cli {
                 Chain::Ethereum => "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
                 Chain::Base => "0x4200000000000000000000000000000000000006".to_string(),
                 _ => {
-                    panic!("RFQ quickstart does not yet support chain {chain}", chain = self.chain)
+                    panic!(
+                        "The book quickstart knows no default tokens on {chain}: pass \
+                         --sell-token and --buy-token",
+                        chain = self.chain
+                    )
                 }
             });
         }
@@ -106,7 +110,11 @@ impl Cli {
                 Chain::Ethereum => "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
                 Chain::Base => "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913".to_string(),
                 _ => {
-                    panic!("RFQ quickstart does not yet support chain {chain}", chain = self.chain)
+                    panic!(
+                        "The book quickstart knows no default tokens on {chain}: pass \
+                         --sell-token and --buy-token",
+                        chain = self.chain
+                    )
                 }
             });
         }
@@ -192,7 +200,7 @@ async fn main() {
         BigUint::from((cli.sell_amount * 10f64.powi(sell_token.decimals as i32)) as u128);
 
     println!(
-        "Looking for RFQ quotes for {amount} {sell_symbol} -> {buy_symbol} on {chain:?}",
+        "Looking for quotes for {amount} {sell_symbol} -> {buy_symbol} on {chain:?}",
         amount = cli.sell_amount,
         sell_symbol = sell_token.symbol,
         buy_symbol = buy_token.symbol
@@ -321,7 +329,7 @@ async fn main() {
         }
     }
 
-    println!("Connected to RFQs! Streaming live price levels...\n");
+    println!("Connected to the book feeds! Streaming live price levels...\n");
 
     while let Some((protocol_system, event)) = feeds.next().await {
         let BookSnapshot { anchor, books } = match event {
@@ -337,7 +345,7 @@ async fn main() {
                 continue;
             }
             BookFeedEvent::Ended(BookFeedOutcome::Panicked(error)) => {
-                eprintln!("Book feed {protocol_system} died of a bug: {error}");
+                eprintln!("Book feed {protocol_system} panicked: {error}");
                 continue;
             }
             BookFeedEvent::Ended(BookFeedOutcome::RanOut) => {
@@ -353,7 +361,7 @@ async fn main() {
             .filter_map(|book| book.updated_at)
             .min();
         println!(
-            "Received {protocol_system} RFQ price levels with {} books at {}{}",
+            "Received {protocol_system} price levels with {} books at {}{}",
             books.len(),
             anchor.0,
             match oldest_update {
@@ -812,7 +820,7 @@ async fn main() {
 
         println!("\nWaiting for more price levels... (Press Ctrl+C to exit)");
     }
-    eprintln!("All RFQ providers terminated, exiting.");
+    eprintln!("Every book feed has ended, exiting.");
 }
 
 // Format token amounts to human-readable values
