@@ -35,16 +35,10 @@ use tycho_execution::encoding::evm::{
     utils::bytes_to_address, FALLBACK_PREFIX, PRICE_LEVEL_STREAM_PREFIX,
 };
 use tycho_simulation::{
-    book::all_pairs::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE},
+    book::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE},
     evm::protocol::cowamm::constants::PROTOCOL_SYSTEM as COWAMM_PROTOCOL_SYSTEM,
     protocol::models::ProtocolComponent,
-    rfq::protocols::{
-        hashflow::{
-            self,
-            state::{HashflowAllPairsState, HashflowState},
-        },
-        liquorice,
-    },
+    rfq::protocols::hashflow::state::{HashflowAllPairsState, HashflowState},
     tycho_common::models::{chain_config::TvlThresholdTier, token::Token, Chain},
     utils::load_all_tokens,
 };
@@ -298,7 +292,7 @@ fn book_swap_directions(
     Ok(directions)
 }
 
-/// A random sample of at most `most` of them. A venue-wide component carries hundreds of
+/// A random sample of at most `most` of them. An all-pairs component carries hundreds of
 /// directions, and each one simulated is a swap.
 fn sample_swap_directions(mut directions: Vec<(Token, Token)>, most: usize) -> Vec<(Token, Token)> {
     directions.shuffle(&mut rand::rng());
@@ -1740,7 +1734,9 @@ async fn process_state(
         .static_attributes
         .get(SWAP_DIRECTIONS_ATTRIBUTE)
     {
-        // A venue-wide component prices a set of pairs its token list cannot be read as.
+        // A component whose token list does not say which way round it trades names its
+        // directions: an all-pairs component prices a set of pairs, and a one-way book quotes
+        // one of the two orderings of its tokens.
         Some(attribute) => match book_swap_directions(attribute, &component.tokens) {
             Ok(directions) => sample_swap_directions(directions, max_swap_directions),
             Err(e) => {
@@ -1748,13 +1744,6 @@ async fn process_state(
                 return HashMap::new();
             }
         },
-        // Hashflow and Liquorice price one direction, which a book's component carries as the
-        // order of its two tokens.
-        None if [hashflow::PROTOCOL_SYSTEM, liquorice::PROTOCOL_SYSTEM]
-            .contains(&component.protocol_system.as_str()) =>
-        {
-            vec![(component.tokens[0].clone(), component.tokens[1].clone())]
-        }
         None => component
             .tokens
             .iter()
@@ -2398,7 +2387,7 @@ mod tests {
         assert_eq!(cli.test_every_n_updates, 10);
     }
 
-    /// A venue-wide component says which pairs it prices; the run reads them rather than
+    /// An all-pairs component says which pairs it prices; the run reads them rather than
     /// pairing up its token list.
     #[test]
     fn the_advertised_directions_name_the_components_tokens() {

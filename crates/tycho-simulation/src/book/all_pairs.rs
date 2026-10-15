@@ -27,12 +27,12 @@ use tycho_common::{
 };
 
 use crate::{
-    book::{component::PairState, Book},
+    book::{
+        component::{encode_swap_directions, PairState, SWAP_DIRECTIONS_ATTRIBUTE},
+        Book,
+    },
     protocol::models::ProtocolComponent,
 };
-
-/// Static attribute: the directions the venue quotes, 40 bytes each, the token sold first.
-pub const SWAP_DIRECTIONS_ATTRIBUTE: &str = "swap_directions";
 
 /// Which components a feed publishes for its venue, as its builder settled it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -462,30 +462,6 @@ pub(crate) fn all_pairs_component_id(protocol_system: &str) -> Bytes {
     Bytes::from(protocol_system.as_bytes())
 }
 
-pub(crate) fn encode_swap_directions(directions: &BTreeSet<(Bytes, Bytes)>) -> Bytes {
-    let mut encoded = Vec::with_capacity(directions.len() * 40);
-    for (token_in, token_out) in directions {
-        encoded.extend_from_slice(token_in);
-        encoded.extend_from_slice(token_out);
-    }
-    encoded.into()
-}
-
-/// The directions a component advertises in its [`SWAP_DIRECTIONS_ATTRIBUTE`].
-pub fn decode_swap_directions(attribute: &[u8]) -> Result<Vec<(Bytes, Bytes)>, String> {
-    let (directions, rest) = attribute.as_chunks::<40>();
-    if !rest.is_empty() {
-        return Err(format!(
-            "Swap directions attribute holds {} bytes, not a multiple of 40",
-            attribute.len()
-        ));
-    }
-    Ok(directions
-        .iter()
-        .map(|direction| (Bytes::from(&direction[..20]), Bytes::from(&direction[20..])))
-        .collect())
-}
-
 /// The venue's one book, priced by `state`: every token its books name, the directions they
 /// price and the rule they are quoted under.
 pub(crate) fn all_pairs_book<W: AllPairsState>(
@@ -531,7 +507,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::book::{sim, test_token_map};
+    use crate::book::{decode_swap_directions, sim, test_token_map};
 
     /// A book that pays `out_per_in` for every whole token up to `depth` of them, and stops
     /// there. Both its tokens have 18 decimals, so a whole token is `1e18` either side.

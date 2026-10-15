@@ -82,16 +82,17 @@ for any protocol indexed by Tycho.
     `notional`, `average_price`), the direction/scaling/limit pieces every such `ProtocolSim`
     impl needs, the component ids and builders (per pair, and per maker and pair), and pricing a
     book's notional in USD through the other pairs the same response carried. `PairState` is what
-    a book's state answers with: its two tokens and the directions it has levels on.
+    a book's state answers with: its two tokens and the directions it has levels on, which every
+    component carries as its `swap_directions` static attribute (`book::{SWAP_DIRECTIONS_ATTRIBUTE,
+    decode_swap_directions}`) because a token list says nothing about which way round it trades.
     `all_pairs` is the opt-in layout (`all_pairs()` on the four RFQ builders, taking the
     `QuoteRule` on the two that name their makers) that publishes a venue as one component for
     every pair it prices: `AllPairs<S>` holds the per-pair states the
     other layout would publish, picks the best book still allowed to quote under the component's
     `QuoteRule` (`once_per_maker`, `once_per_venue`), and records it as spent in the state the
     swap returns. A venue's `<Venue>AllPairsState` is a wrapper implementing `AllPairsState`,
-    because `#[typetag::serde]` registers concrete types; the component advertises its
-    directions as the `swap_directions` static attribute, since its token list is not the pairs,
-    and a book reporting no direction is left out so the two agree
+    because `#[typetag::serde]` registers concrete types; a book reporting no direction is left
+    out of it, so its tokens and its directions agree
   - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the

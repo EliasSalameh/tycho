@@ -145,6 +145,8 @@ Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is 
 
 ### Venue components
 
+A component names the directions it quotes in its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. It carries one where its token list does not already say which way round it trades: a book with levels on one side only quotes one direction, and one the venue has stopped pricing quotes none. Build your graph edges from that attribute where a component has it and from both orderings of its two tokens where it does not, and rebuild them when a snapshot changes it. `tycho_simulation::book::{SWAP_DIRECTIONS_ATTRIBUTE, decode_swap_directions}` read it.
+
 By default a feed publishes a component per book — per pair, or per market maker and pair on the two venues that name their makers — and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only the two venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
 
 ```rust
@@ -154,7 +156,7 @@ let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key
     .expect("Failed to create Hashflow feed");
 ```
 
-Such a component carries every token the venue quotes, and the pairs it prices are not every pair of those tokens: the directions it quotes are its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. A direction appears there only where a book has levels on that side, so a venue quoting a pair one way round advertises it one way round. Add graph edges from that attribute, and rebuild them when the component's tokens change between snapshots. Its state prices and quotes exactly as the per-pair states do — the books behind it are the same ones.
+Such a component carries every token the venue quotes, and the pairs it prices are far fewer than every pair of those tokens, which is what makes `swap_directions` worth reading on it. Its state prices and quotes exactly as the per-pair states do — the books behind it are the same ones.
 
 A swap records the book it used in the `new_state` it returns, and how often one route may quote the venue is its quote rule, carried as the `quote_rule` static attribute:
 

@@ -261,7 +261,8 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::{decode_swap_directions, QuoteRule},
+            all_pairs::QuoteRule,
+            decode_swap_directions,
             levels::{Levels, PriceLevel},
             test_token_map,
         },

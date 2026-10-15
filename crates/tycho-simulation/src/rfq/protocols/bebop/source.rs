@@ -212,8 +212,7 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::{decode_swap_directions, QuoteRule},
-            test_token_map,
+            all_pairs::QuoteRule, decode_swap_directions, test_token_map, SWAP_DIRECTIONS_ATTRIBUTE,
         },
         rfq::protocols::bebop::{
             models::{BebopPriceData, BebopSupportedChain},
@@ -364,6 +363,15 @@ mod tests {
         let reverse = &books[&pair_component_id(PROTOCOL_SYSTEM, &usdc, &weth).to_string()];
         assert_eq!(reverse.component.tokens[0].symbol, "USDC");
         assert_eq!(reverse.component.tokens[1].symbol, "WETH");
+        for book in [forward, reverse] {
+            assert!(
+                !book
+                    .component
+                    .static_attributes
+                    .contains_key(SWAP_DIRECTIONS_ATTRIBUTE),
+                "both sides of the book have levels, so its two tokens are the directions"
+            );
+        }
     }
 
     #[test]

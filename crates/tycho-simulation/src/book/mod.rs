@@ -24,6 +24,7 @@ use crate::{
 
 pub mod all_pairs;
 pub(crate) mod component;
+pub use component::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE};
 pub(crate) mod levels;
 pub mod quote_tokens;
 pub(crate) mod sim;

@@ -159,8 +159,9 @@ mod tests {
     use super::*;
     use crate::{
         book::{
-            all_pairs::{decode_swap_directions, QuoteRule},
+            all_pairs::QuoteRule,
             component::PairState,
+            decode_swap_directions,
             levels::{Levels, PriceLevel},
             test_token_map,
         },
@@ -287,6 +288,11 @@ mod tests {
             .expect("a Hashflow state");
         assert_eq!(state.base_token().address, wbtc);
         assert_eq!(state.quote_token().address, weth);
+        assert_eq!(
+            decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
+            vec![(wbtc.clone(), weth.clone())],
+            "a maker's levels sell the base token only, which the component has to say"
+        );
     }
 
     /// Two makers quoting the same pair are two books, each with its own maker and ladder.
