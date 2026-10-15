@@ -82,21 +82,22 @@ impl HttpSource for LiquoriceBookSource {
                     continue;
                 };
 
+                let component_id =
+                    maker_component_id(PROTOCOL_SYSTEM, base_bytes, quote_bytes, mm_name);
                 let tvl = token_pair_price.levels.notional();
                 let Some(normalized_tvl) = self.normalized_tvl(tvl, quote_bytes, &prices_by_mm)
                 else {
                     debug!(
+                        %component_id,
                         market_maker = %mm_name,
-                        base = %base_bytes,
-                        quote = %quote_bytes,
                         "skipping pair, no levels price its quote token in a USD quote token"
                     );
                     continue;
                 };
-                if !self.book_config.clears_min_tvl(
-                    normalized_tvl,
-                    format!("MM {mm_name} for pair {base_bytes}/{quote_bytes}"),
-                ) {
+                if !self
+                    .book_config
+                    .clears_min_tvl(normalized_tvl, &component_id)
+                {
                     continue;
                 }
 
@@ -112,7 +113,7 @@ impl HttpSource for LiquoriceBookSource {
                     Arc::clone(&self.client),
                 );
                 collector.push(
-                    maker_component_id(PROTOCOL_SYSTEM, base_bytes, quote_bytes, mm_name),
+                    component_id,
                     VenueBook { maker: Some(mm_name.clone()), updated_at, state },
                 );
             }

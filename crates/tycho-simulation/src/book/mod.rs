@@ -2,7 +2,6 @@
 
 use std::{
     collections::{hash_map::Entry, HashMap},
-    fmt,
     sync::Arc,
 };
 
@@ -150,13 +149,13 @@ impl BookFeedConfig {
         Some((self.tokens.get(a)?, self.tokens.get(b)?))
     }
 
-    /// Whether a book with `tvl_usd` clears the floor; names `book_label` in the log line when
-    /// it does not.
-    pub(crate) fn clears_min_tvl(&self, tvl_usd: f64, book_label: impl fmt::Display) -> bool {
+    /// Whether a book with `tvl_usd` clears the floor; names the component it would be
+    /// published under in the log line when it does not.
+    pub(crate) fn clears_min_tvl(&self, tvl_usd: f64, component_id: &Bytes) -> bool {
         let clears = tvl_usd >= self.min_tvl_usd;
         if !clears {
             debug!(
-                book = %book_label,
+                book = %component_id,
                 tvl_usd,
                 min_tvl_usd = self.min_tvl_usd,
                 "filtering out book below the TVL floor"
