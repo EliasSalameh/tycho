@@ -197,6 +197,7 @@ mod tests {
     use crate::{
         book::{decode_swap_directions, test_token_map, SWAP_DIRECTIONS_ATTRIBUTE},
         rfq::protocols::bebop::{
+            client::QuoteOrigin,
             models::{BebopPriceData, BebopSupportedChain},
             PROTOCOL_SYSTEM,
         },
@@ -207,9 +208,7 @@ mod tests {
             BebopSupportedChain::Ethereum,
             "test_key".to_string(),
             std::time::Duration::from_secs(5),
-            None,
-            None,
-            None,
+            QuoteOrigin::default(),
         ))
     }
 

@@ -34,13 +34,24 @@ pub struct BebopClient {
     #[debug(skip)]
     key: String,
     quote_timeout: Duration,
-    /// The real end-user's EOA when the taker is not the end-user's own wallet.
-    origin_address: Option<Bytes>,
-    /// The `to` address of the resulting transaction when a contract executes the swap.
-    origin_target: Option<Bytes>,
-    /// Stable identifier for the upstream flow source when aggregating multiple sources.
-    origin_source: Option<String>,
+    origin: QuoteOrigin,
     http: Client,
+}
+
+/// Who a binding quote is for, which Bebop screens the request by. Every field it has is sent
+/// with the request and every field it has not is left out of it.
+///
+/// Bebop uses these for abuse prevention and address screening, and can configure an API
+/// account to require them, refusing a quote request that leaves a required one out. See
+/// <https://docs.bebop.xyz/rfq-api/guides/best-practices#6-pass-origin-so-we-can-identify-legitimate-flow>.
+#[derive(Clone, Debug, Default)]
+pub struct QuoteOrigin {
+    /// The real end-user's EOA when the taker is not the end-user's own wallet.
+    pub address: Option<Bytes>,
+    /// The `to` address of the resulting transaction when a contract executes the swap.
+    pub target: Option<Bytes>,
+    /// Stable identifier for the upstream flow source when aggregating multiple sources.
+    pub source: Option<String>,
 }
 
 impl BebopClient {
@@ -50,9 +61,7 @@ impl BebopClient {
         chain: BebopSupportedChain,
         key: String,
         quote_timeout: Duration,
-        origin_address: Option<Bytes>,
-        origin_target: Option<Bytes>,
-        origin_source: Option<String>,
+        origin: QuoteOrigin,
     ) -> Self {
         let chain_path = format!("{BEBOP_API_HOST}/pmm/{}/v3", chain.as_str());
         BebopClient {
@@ -60,9 +69,7 @@ impl BebopClient {
             pricing_ws_endpoint: format!("wss://{chain_path}/pricing?format=protobuf"),
             key,
             quote_timeout,
-            origin_address,
-            origin_target,
-            origin_source,
+            origin,
             http: Client::new(),
         }
     }
@@ -124,7 +131,7 @@ impl BebopClient {
         if let Some(origin_address) = params
             .origin
             .as_ref()
-            .or(self.origin_address.as_ref())
+            .or(self.origin.address.as_ref())
         {
             query.push((
                 "origin_address",
@@ -133,7 +140,7 @@ impl BebopClient {
                     .to_string(),
             ));
         }
-        if let Some(origin_target) = &self.origin_target {
+        if let Some(origin_target) = &self.origin.target {
             query.push((
                 "origin_target",
                 bytes_to_address(origin_target)
@@ -141,7 +148,7 @@ impl BebopClient {
                     .to_string(),
             ));
         }
-        if let Some(origin_source) = &self.origin_source {
+        if let Some(origin_source) = &self.origin.source {
             query.push(("origin_source", origin_source.clone()));
         }
 
@@ -360,9 +367,7 @@ mod tests {
             BebopSupportedChain::Ethereum,
             "secret_key".to_string(),
             Duration::from_secs(30),
-            None,
-            None,
-            None,
+            QuoteOrigin::default(),
         )
     }
 
@@ -517,9 +522,7 @@ mod tests {
                 BebopSupportedChain::Ethereum,
                 "test_key".to_string(),
                 quote_timeout,
-                None,
-                None,
-                None,
+                QuoteOrigin::default(),
             )
         }
     }
@@ -544,7 +547,7 @@ mod tests {
             .create_async()
             .await;
         let client = BebopClient {
-            origin_address: client_origin,
+            origin: QuoteOrigin { address: client_origin, ..Default::default() },
             ..create_test_client(server.url(), Duration::from_secs(5))
         };
         let params = GetAmountOutParams { origin: request_origin, ..create_test_quote_params() };
@@ -797,9 +800,7 @@ mod tests {
             BebopSupportedChain::Base,
             "secret_key".to_string(),
             Duration::from_secs(30),
-            None,
-            None,
-            None,
+            QuoteOrigin::default(),
         );
 
         assert_eq!(client.quote_endpoint, "https://api.bebop.xyz/pmm/base/v3/quote");

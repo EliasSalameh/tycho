@@ -251,7 +251,10 @@ mod tests {
     use tycho_common::models::Chain;
 
     use super::*;
-    use crate::rfq::protocols::bebop::models::{BebopPriceData, BebopSupportedChain};
+    use crate::rfq::protocols::bebop::{
+        client::QuoteOrigin,
+        models::{BebopPriceData, BebopSupportedChain},
+    };
 
     fn wbtc() -> Token {
         Token::new(
@@ -298,9 +301,7 @@ mod tests {
             BebopSupportedChain::Ethereum,
             String::new(),
             Duration::from_secs(30),
-            None,
-            None,
-            None,
+            QuoteOrigin::default(),
         ))
     }
 

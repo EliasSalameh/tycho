@@ -8,7 +8,9 @@ use crate::{
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::bebop::{
-            client::BebopClient, models::BebopSupportedChain, source::BebopBookSource,
+            client::{BebopClient, QuoteOrigin},
+            models::BebopSupportedChain,
+            source::BebopBookSource,
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     },
@@ -28,20 +30,13 @@ pub struct BebopFeed {
 }
 
 /// Builds a [`BebopFeed`] from the shared [`BookFeedConfig`] and Bebop's API key.
-///
-/// The `origin_*` fields identify the flow behind binding quote requests. Bebop uses them for
-/// abuse prevention and address screening, and can configure API accounts to require them,
-/// rejecting quote requests in which a required field is missing. See
-/// <https://docs.bebop.xyz/rfq-api/guides/best-practices#6-pass-origin-so-we-can-identify-legitimate-flow>.
 pub struct BebopFeedBuilder {
     protocol_system: &'static str,
     book_config: BookFeedConfig,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     ws_key: String,
     quote_timeout: Duration,
-    origin_address: Option<Bytes>,
-    origin_target: Option<Bytes>,
-    origin_source: Option<String>,
+    origin: QuoteOrigin,
     feed_config: WsFeedConfig,
     all_pairs: bool,
 }
@@ -57,9 +52,7 @@ impl BebopFeedBuilder {
             usd_quote_tokens: usd_quote_tokens.into(),
             ws_key,
             quote_timeout: DEFAULT_QUOTE_TIMEOUT,
-            origin_address: None,
-            origin_target: None,
-            origin_source: None,
+            origin: QuoteOrigin::default(),
             feed_config: Self::default_feed_config(),
             protocol_system: PROTOCOL_SYSTEM,
             all_pairs: false,
@@ -82,23 +75,30 @@ impl BebopFeedBuilder {
         self
     }
 
-    /// Set the real end-user's EOA, sent as `origin_address` with binding quote requests
+    /// Set the real end-user's EOA, for a taker that is not the end-user's own wallet, sent as
+    /// `origin_address` with binding quote requests.
+    ///
+    /// Bebop screens quote requests by these three, and can configure an API account to require
+    /// one and refuse a request that leaves it out. See
+    /// <https://docs.bebop.xyz/rfq-api/guides/best-practices#6-pass-origin-so-we-can-identify-legitimate-flow>.
     pub fn origin_address(mut self, origin_address: Bytes) -> Self {
-        self.origin_address = Some(origin_address);
+        self.origin.address = Some(origin_address);
         self
     }
 
-    /// Set the `to` address of the resulting transaction (e.g. the router contract), sent as
-    /// `origin_target` with binding quote requests
+    /// Set the `to` address of the resulting transaction, where a contract executes the swap,
+    /// sent as `origin_target` with binding quote requests. See
+    /// [`origin_address`](Self::origin_address) for what Bebop does with it.
     pub fn origin_target(mut self, origin_target: Bytes) -> Self {
-        self.origin_target = Some(origin_target);
+        self.origin.target = Some(origin_target);
         self
     }
 
-    /// Set a stable identifier for the upstream flow source, sent as `origin_source` with
-    /// binding quote requests
+    /// Set a stable identifier for the upstream flow source, where a solver aggregates several,
+    /// sent as `origin_source` with binding quote requests. See
+    /// [`origin_address`](Self::origin_address) for what Bebop does with it.
     pub fn origin_source(mut self, origin_source: String) -> Self {
-        self.origin_source = Some(origin_source);
+        self.origin.source = Some(origin_source);
         self
     }
 
@@ -148,9 +148,7 @@ impl BebopFeedBuilder {
                     chain,
                     self.ws_key,
                     self.quote_timeout,
-                    self.origin_address,
-                    self.origin_target,
-                    self.origin_source,
+                    self.origin,
                 )),
                 all_pairs: self.all_pairs,
             },
