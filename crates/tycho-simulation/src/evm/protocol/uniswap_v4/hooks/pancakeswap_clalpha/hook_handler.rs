@@ -33,9 +33,19 @@ pub const CLALPHA_HOOKS_BSC: [Address; 4] = [
     address!("b0bb171d333569cfd28a37f5c5dddaaa90ad46af"),
 ];
 
-/// Gas `beforeSwap` adds to a swap: the call into the hook, one cold `SLOAD` of
-/// `poolStartedTimestamp[id]` and hashing the pool key into its id.
-pub const CLALPHA_BEFORE_SWAP_GAS: u64 = 8_000;
+/// The first `CLAlphaHook` version, deployed twice. It is built without the optimizer, so its
+/// `beforeSwap` costs more than the later versions'.
+pub const CLALPHA_V1_HOOKS_BSC: [Address; 2] = [CLALPHA_HOOKS_BSC[0], CLALPHA_HOOKS_BSC[1]];
+
+/// Gas a first-version `CLAlphaHook` adds to a swap, end to end: the pool manager encoding the
+/// call, the cold call into the hook, its `poolStartedTimestamp[id]` lookup and decoding the
+/// result. Measured on a BSC fork at block 127744000 as `CLPoolManager.swap` with the call minus
+/// the same swap with the call skipped: 11068 on both deployments.
+pub const CLALPHA_V1_BEFORE_SWAP_GAS: u64 = 11_100;
+
+/// The same end-to-end gas for the later `CLAlphaHook` versions, measured the same way: 7536 on
+/// `0xb0ba…` and 7580 on `0xb0bb…`.
+pub const CLALPHA_BEFORE_SWAP_GAS: u64 = 7_600;
 
 /// A PancakeSwap Infinity `CLAlphaHook`: a start-time gate in front of an otherwise ordinary
 /// concentrated-liquidity pool.
@@ -67,6 +77,14 @@ impl PancakeswapClAlphaHookHandler {
     pub fn is_open(&self) -> bool {
         self.start_timestamp > 0 && self.start_timestamp <= self.execution_timestamp
     }
+
+    fn before_swap_gas(&self) -> u64 {
+        if CLALPHA_V1_HOOKS_BSC.contains(&self.address) {
+            CLALPHA_V1_BEFORE_SWAP_GAS
+        } else {
+            CLALPHA_BEFORE_SWAP_GAS
+        }
+    }
 }
 
 impl HookHandler for PancakeswapClAlphaHookHandler {
@@ -90,6 +108,11 @@ impl HookHandler for PancakeswapClAlphaHookHandler {
         self.is_open()
     }
 
+    /// The `beforeSwap` gas estimate is measured end to end and already includes the dispatch.
+    fn pool_manager_call_overhead(&self) -> u64 {
+        0
+    }
+
     /// Rejects the swap while the pool is closed, as `_beforeSwap` does with `PoolNotStarted`;
     /// otherwise lets it through untouched.
     fn before_swap(
@@ -108,7 +131,7 @@ impl HookHandler for PancakeswapClAlphaHookHandler {
             ));
         }
         Ok(WithGasEstimate {
-            gas_estimate: CLALPHA_BEFORE_SWAP_GAS,
+            gas_estimate: self.before_swap_gas(),
             result: BeforeSwapOutput {
                 amount_delta: BeforeSwapDelta(I256::ZERO),
                 fee: U24::ZERO,
@@ -285,15 +308,20 @@ mod tests {
         assert!(message.contains("PoolNotStarted"), "{message}");
     }
 
-    #[test]
-    fn before_swap_passes_an_open_pool_through_untouched() {
-        let handler = PancakeswapClAlphaHookHandler::new(HOOK, 2_000, 2_000);
+    #[rstest]
+    #[case::v1(CLALPHA_HOOKS_BSC[0], CLALPHA_V1_BEFORE_SWAP_GAS)]
+    #[case::v1_second_deployment(CLALPHA_HOOKS_BSC[1], CLALPHA_V1_BEFORE_SWAP_GAS)]
+    #[case::v2(CLALPHA_HOOKS_BSC[2], CLALPHA_BEFORE_SWAP_GAS)]
+    #[case::v3(CLALPHA_HOOKS_BSC[3], CLALPHA_BEFORE_SWAP_GAS)]
+    fn before_swap_passes_an_open_pool_through_untouched(#[case] hook: Address, #[case] gas: u64) {
+        let handler = PancakeswapClAlphaHookHandler::new(hook, 2_000, 2_000);
 
         let out = handler
             .before_swap(before_swap_params(), None, None)
             .unwrap();
 
-        assert_eq!(out.gas_estimate, CLALPHA_BEFORE_SWAP_GAS);
+        assert_eq!(out.gas_estimate, gas);
+        assert_eq!(handler.pool_manager_call_overhead(), 0, "the estimate covers the dispatch");
         assert_eq!(out.result.amount_delta.as_i256(), I256::ZERO);
         assert_eq!(out.result.fee, U24::ZERO, "no LP fee override");
         assert!(out.result.overwrites.is_empty());

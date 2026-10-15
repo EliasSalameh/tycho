@@ -20,7 +20,7 @@ use crate::evm::{
             },
             utils::{has_permission, HookOptions},
         },
-        state::UniswapV4State,
+        state::{UniswapV4State, PM_PER_HOOK_CALL_OVERHEAD},
     },
     simulation::PendingOverrides,
 };
@@ -54,6 +54,15 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
     /// reports no capacity while this is `false`.
     fn swaps_enabled(&self) -> bool {
         true
+    }
+
+    /// Gas the pool manager spends on each call to this hook beyond what the hook's own gas
+    /// estimates cover: encoding the call, the call itself and decoding the result.
+    ///
+    /// The default is the overhead measured for the Uniswap V4 PoolManager dispatching to a
+    /// VM-simulated hook. A hook whose estimates already cover the whole call returns zero.
+    fn pool_manager_call_overhead(&self) -> u64 {
+        PM_PER_HOOK_CALL_OVERHEAD
     }
 
     /// Simulates the beforeSwap Solidity behaviour

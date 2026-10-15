@@ -428,10 +428,7 @@ mod tests {
     use super::*;
     use crate::evm::protocol::{
         test_utils::try_decode_snapshot_with_defaults,
-        uniswap_v4::{
-            hooks::pancakeswap_clalpha::hook_handler::CLALPHA_BEFORE_SWAP_GAS,
-            state::PM_PER_HOOK_CALL_OVERHEAD,
-        },
+        uniswap_v4::hooks::pancakeswap_clalpha::hook_handler::CLALPHA_BEFORE_SWAP_GAS,
     };
 
     fn usv4_component() -> ProtocolComponent {
@@ -784,8 +781,7 @@ mod tests {
             assert_eq!(from_decoded.amount, from_reference.amount);
             assert_eq!(
                 from_decoded.gas,
-                from_reference.gas +
-                    BigUint::from(CLALPHA_BEFORE_SWAP_GAS + PM_PER_HOOK_CALL_OVERHEAD)
+                from_reference.gas + BigUint::from(CLALPHA_BEFORE_SWAP_GAS)
             );
         }
     }

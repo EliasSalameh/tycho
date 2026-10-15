@@ -842,15 +842,13 @@ impl ProtocolSim for UniswapV4State {
 
         // Add hook gas costs to baseline swap cost.
         // before_swap_gas / after_swap_gas capture the hook contract's internal
-        // logic (from VM simulation). PM_PER_HOOK_CALL_OVERHEAD accounts for the
-        // PoolManager's Hooks.sol dispatch wrapper that is not captured by either
-        // the native swap constants or the VM simulation.
+        // logic. The hook's pool_manager_call_overhead accounts for the pool
+        // manager's dispatch wrapper that is not captured by either the native swap
+        // constants or the hook's own estimates.
         let mut hook_overhead = before_swap_gas + after_swap_gas;
-        if before_swap_gas > 0 {
-            hook_overhead += PM_PER_HOOK_CALL_OVERHEAD;
-        }
-        if after_swap_gas > 0 {
-            hook_overhead += PM_PER_HOOK_CALL_OVERHEAD;
+        if let Some(hook) = &self.hook {
+            let hook_calls = u64::from(before_swap_gas > 0) + u64::from(after_swap_gas > 0);
+            hook_overhead += hook_calls * hook.pool_manager_call_overhead();
         }
         let total_gas_used = result.gas_used + U256::from(hook_overhead);
         Ok(GetAmountOutResult::new(
