@@ -15,7 +15,7 @@ Two kinds share that shape, and the difference shows at execution:
 | `native`    | RFQ  | 0.4 µs          | Required    | Ethereum, Base, Arbitrum, BSC, Robinhood          | `rfq:native`     |
 | `metric`    | pAMM | -               | Required    | Ethereum, BSC, Polygon, Base, Arbitrum, Robinhood | `rfq:metric`     |
 
-A feed runs wherever its venue prices, which is what the table lists. Settling a swap against one additionally needs a Tycho executor for that venue on that chain: today Ethereum and Base for Bebop, Ethereum for Hashflow and Liquorice, every listed chain for Native, and Base, Arbitrum and Robinhood for Metric.
+A feed runs wherever its venue prices, which is what the table lists. Settling a swap against one additionally needs a Tycho executor for that venue on that chain; `config/executor_addresses.json` in tycho-execution lists the deployments.
 
 On Ethereum, Metric is also available as a pAMM venue on the [pAMM price level stream](#pamm-price-level-stream).
 
@@ -23,7 +23,7 @@ On Ethereum, Metric is also available as a pAMM venue on the [pAMM price level s
 
 The book-feed quickstart is similar to the other protocols [quickstart](../).
 
-See the code <a href="https://github.com/propeller-heads/tycho-indexer/tree/main/crates/tycho-simulation/examples/book_quickstart" target="_blank" rel="noopener noreferrer">here</a>. As of now, <a href="https://docs.bebop.xyz/bebop/bebop-api-pmm-rfq/pmm-rfq-api-intro" target="_blank" rel="noopener noreferrer">Bebop</a>, <a href="https://docs.hashflow.com/hashflow/taker/getting-started-api-v3" target="_blank" rel="noopener noreferrer">Hashflow</a>, <a href="https://liquorice.tech/" target="_blank" rel="noopener noreferrer">Liquorice</a>, <a href="https://docs.native.org/" target="_blank" rel="noopener noreferrer">Native</a> and Metric are the only supported providers.
+See the code <a href="https://github.com/propeller-heads/tycho-indexer/tree/main/crates/tycho-simulation/examples/book_quickstart" target="_blank" rel="noopener noreferrer">here</a>. As of now, <a href="https://docs.bebop.xyz/bebop/bebop-api-pmm-rfq/pmm-rfq-api-intro" target="_blank" rel="noopener noreferrer">Bebop</a>, <a href="https://docs.hashflow.com/hashflow/taker/getting-started-api-v3" target="_blank" rel="noopener noreferrer">Hashflow</a>, <a href="https://liquorice.tech/" target="_blank" rel="noopener noreferrer">Liquorice</a>, <a href="https://docs.native.org/" target="_blank" rel="noopener noreferrer">Native</a> and <a href="https://docs.metric.xyz/" target="_blank" rel="noopener noreferrer">Metric</a> are the only supported providers.
 
 The feed builders take credentials as plain arguments; how you obtain them is up to your application. The example reads them from the environment, so set the ones for the providers you want, plus your private key if you wish to execute against the Tycho Router:
 
@@ -80,7 +80,7 @@ To get token information from Tycho Indexer RPC please use [load\_all\_tokens](s
 
 ### Book feeds
 
-Each venue has its own feed type (`BebopFeed`, `HashflowFeed`, `LiquoriceFeed`, `NativeFeed`, `MetricFeed`), built from a shared `BookFeedConfig` plus provider-specific credentials and options. Every feed implements the `SnapshotFeed` trait — a live price feed that publishes the provider's latest complete set of books, or withdraws when nothing is servable (before the first set arrives, and after one goes stale). You read it through `BookFeedStreams`, which owns the channels and the feed tasks: each feed runs in its own task and you are handed the newest set through a watch channel, so falling behind costs you skipped snapshots rather than a stalled venue connection. Binding quotes are not part of the feed — for the RFQ venues, the states it emits request them at encoding time through their embedded client.
+Each venue has its own feed type (`BebopFeed`, `HashflowFeed`, `LiquoriceFeed`, `NativeFeed`, `MetricFeed`), built from a shared `BookFeedConfig` plus provider-specific credentials and options. Every feed implements the `SnapshotFeed` trait — a live price feed that publishes the provider's latest complete set of books, or withdraws when nothing is servable (before the first set arrives, and after one goes stale). You read it through `BookFeedStreams`, which owns the channels and the feed tasks: each feed runs in its own task and hands you the newest set through a watch channel, so falling behind costs you skipped snapshots rather than a stalled venue connection. Binding quotes are not part of the feed — for the RFQ venues, the states it emits request them at encoding time through their embedded client.
 
 Example setup for Bebop:
 
@@ -95,9 +95,9 @@ let bebop_feed = BebopFeedBuilder::new(config.clone(), usd_quote_tokens.clone(),
 
 `BookFeedConfig` carries what every book feed needs whatever transport it runs on — the chain, the tradable tokens with their metadata, and the minimum book TVL in USD. Each feed builder takes it by value (clone it when building several feeds); the builders' own setters cover only provider-specific options such as credentials, poll cadence, or Bebop's origin fields. To give one provider a different token set or threshold, build it from a different `BookFeedConfig`.
 
-**Minimum TVL** (`min_tvl_usd`) is specified in USD. This setting filters out token pairs whose book is thin on the venue's side, helping avoid illiquid quotes.
+**Minimum TVL** (`min_tvl_usd`) counts in USD. This setting filters out token pairs whose book is thin on the venue's side, helping avoid illiquid quotes.
 
-**USD quote tokens:** The Bebop, Hashflow, Liquorice and Native builders take a set of USD-priced tokens that their feeds normalize book TVL into before applying `min_tvl_usd`. The set is used exclusively for TVL filtering, never for quote requests or trade execution. Metric's API reports USD TVL directly, so its builder takes none.
+**USD quote tokens:** The Bebop, Hashflow, Liquorice and Native builders take a set of USD-priced tokens that their feeds normalize book TVL into before applying `min_tvl_usd`. The feeds use the set only to filter by TVL, never for quote requests or trade execution. Metric's API reports USD TVL directly, so its builder takes none.
 
 You should specify USD-priced stablecoins (e.g., USDC, USDT, DAI) as quote tokens, since the supported venues price most of their liquidity in USD stablecoins. This ensures the feed calculates TVL accurately when comparing pairs with different quote tokens. For instance, if you receive price levels for an ETH/WBTC pair where WBTC is the quote token, the feed will look up the WBTC price in one of your approved quote tokens (USD stablecoins) to properly calculate the TVL in dollar terms. `usd_stablecoins_for_chain` returns the curated set for a chain Tycho has one for, and `None` for the rest; an empty set filters out every pair, so always pass a non-empty one.
 
@@ -105,9 +105,9 @@ You should specify USD-priced stablecoins (e.g., USDC, USDT, DAI) as quote token
 
 ### Stream: Real-Time Price Updates
 
-Each feed publishes its complete set of books as a `BookSnapshot` over a `tokio::sync::watch` channel: one `Book` — a component, the state that prices it and the provider's `updated_at` where it reports one — for each book the venue publishes, anchored by the feed's receipt time (`anchor: ReceivedAt`, a `DateTime<Utc>`). What a book is depends on the venue: a pair for Bebop, Native and Metric, a pair and one market maker for Hashflow and Liquorice, since a firm quote comes from the maker it is asked of and so fills against that maker's depth alone.
+Each feed publishes its complete set of books as a `BookSnapshot` over a `tokio::sync::watch` channel: one `Book` — a component, the state that prices it and the provider's `updated_at` where it reports one — for each book the venue publishes, anchored by the feed's receipt time (`anchor: ReceivedAt`, a `DateTime<Utc>`). What a book is depends on the venue: a pair for Bebop, Native and Metric, a pair and one market maker for Hashflow and Liquorice, since a firm quote comes from the maker you ask it of and so fills against that maker's depth alone.
 
-**A feed withdraws its snapshot** — the watch goes back to `None` — when nobody is refreshing it: once the published book is older than `max_snapshot_age`, and whenever the feed itself ends, because it gave up or because you dropped the stream or watch running it. So `None` means "nothing servable right now", not only "nothing yet", and you should stop quoting a provider whose snapshot has gone away. The knob lives on both feed configs, and `None` keeps the last snapshot until the feed ends. Setting it above the poll interval keeps a book servable from one poll to the next; setting it below turns it into a duty cycle — the book is servable for `max_snapshot_age` and gone until the next poll — which is what you want when a venue's rate limit fixes the cadence and you would rather decline than quote an old book. Only zero is rejected. While a provider keeps failing its feed retries with growing gaps rather than hammering it, so a book that a long outage withdrew can take a while to come back after the provider recovers.
+**A feed withdraws its snapshot** — the watch goes back to `None` — when nobody is refreshing it: once the published book is older than `max_snapshot_age`, and whenever the feed itself ends, because it gave up or because you dropped the stream or watch running it. So `None` means "nothing servable right now", not only "nothing yet", and you should stop quoting a provider whose snapshot has gone away. The knob lives on both feed configs, and `None` keeps the last snapshot until the feed ends. Setting it above the poll interval keeps a book servable from one poll to the next; setting it below turns it into a duty cycle — the book is servable for `max_snapshot_age` and gone until the next poll — which is what you want when a venue's rate limit fixes the cadence and you would rather decline than quote an old book. Zero is the one value no feed takes: it ends with `FeedError::InvalidInput` as soon as it runs, which reaches you as `BookFeedOutcome::Failed`. While a provider keeps failing its feed retries with growing gaps rather than hammering it, so a book that a long outage withdrew can take a while to come back after the provider recovers.
 
 The feed configs have no `Default`: start from the builder's `default_feed_config()`, whose documentation states the values it begins with, and change fields with struct-update syntax.
 
@@ -126,7 +126,7 @@ while let Some((provider, event)) = feeds.next().await {
         BookFeedEvent::Withdrawn => {
             // the provider has nothing servable: stop quoting it until it publishes again
         }
-        BookFeedEvent::Ended(SnapshotFeedOutcome::Failed(error)) => {
+        BookFeedEvent::Ended(BookFeedOutcome::Failed(error)) => {
             // the feed gave up and is gone for good; `error` says why
         }
         BookFeedEvent::Ended(outcome) => {
@@ -139,7 +139,7 @@ while let Some((provider, event)) = feeds.next().await {
 
 A single feed reads the same way through `BookFeedStream::spawn(provider, feed)`. Dropping a `BookFeedStreams` or a `BookFeedStream` aborts the feed tasks it holds.
 
-If you price on demand rather than reacting to every update, read the feed as a `BookFeedWatch` instead: `BookFeedWatch::spawn(provider, feed)` runs it the same way and `receiver()` hands out `watch::Receiver` clones you read with `borrow()`, without awaiting and without slowing the venue's connection. `None` in the channel means nothing is servable — nothing yet, gone stale, or the feed is over — and since those look alike to a reader, `ended()` is what tells the last one apart: it resolves when the feed stops, with a `BookFeedOutcome` saying whether it gave up (and why), ran out, or panicked. Until then the venue is only quiet. The outcome is reported once; afterwards `ended()` stays pending, so it sits in a `select!` loop beside your other work without ever firing twice.
+If you price on demand rather than reacting to every update, read the feed as a `BookFeedWatch` instead: `BookFeedWatch::spawn(provider, feed)` runs it the same way and `receiver()` hands out `watch::Receiver` clones you read with `borrow()`, without awaiting and without slowing the venue's connection. `None` in the channel means nothing is servable — nothing yet, gone stale, or the feed is over — and since those look alike to a reader, `ended()` is what tells the last one apart: it resolves when the feed stops, with a `BookFeedOutcome` saying whether it gave up (and why), ran out, or panicked. Until then the venue is only quiet. `ended()` reports the outcome once and then stays pending, so it sits in a `select!` loop beside your other work without ever firing twice.
 
 Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is the feed's receipt time (`ReceivedAt`) and each `Book` carries the provider's `updated_at` where the provider reports one (Bebop, Liquorice, Metric). Every snapshot is the provider's full current state, so a pair missing from the current snapshot is one the provider has stopped serving. Because a watch channel only keeps the latest value, a consumer that falls behind skips straight to the freshest prices instead of working through a backlog. To track additions and removals, compare the snapshot's book ids against your previous view.
 
@@ -147,7 +147,7 @@ Book snapshots are **timestamped**, not block-based: the snapshot's `anchor` is 
 
 A component names the directions it quotes in its `swap_directions` static attribute, 40 bytes each, the token sold followed by the token bought. It carries one where its token list does not already say which way round it trades: a book with levels on one side only quotes one direction, and one the venue has stopped pricing quotes none. Build your graph edges from that attribute where a component has it and from both orderings of its two tokens where it does not, and rebuild them when a snapshot changes it. `tycho_simulation::book::{SWAP_DIRECTIONS_ATTRIBUTE, decode_swap_directions}` read it.
 
-By default a feed publishes a component per book — per pair, or per market maker and pair on the two venues that name their makers — and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only the two venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
+By default a feed publishes a component per book — per pair, or per market maker and pair on the two venues that name their makers — and a swap against it leaves the state unchanged. `.all_pairs()` on the Bebop and Native builders, and `.all_pairs(rule)` on Hashflow's and Liquorice's, publishes the venue as a single component covering every pair it prices instead, which is what lets a route stay within the number of quotes the venue will sign for it. Only venues that name their market makers take a rule, because only there is there a choice to make; `QuoteRule` lives in `tycho_simulation::book::all_pairs`. Metric has no quote to sign and keeps one component per pool.
 
 ```rust
 let hashflow_feed = HashflowFeedBuilder::new(config, usd_quote_tokens, user, key)
@@ -165,7 +165,7 @@ A swap records the book it used in the `new_state` it returns, and how often one
 
 The rule takes effect wherever your algorithm threads `new_state` from one use of the component to the next; a swap it refuses returns a recoverable error saying every book pricing it has already quoted in this route.
 
-Request the firm quote on the state the swap was simulated on, with the simulated amount: that state picks the same book the swap went to, and asks the market maker behind it. On the `new_state` the swap returned, that book's turn is spent.
+Request the firm quote on the state you simulated the swap on, with the simulated amount: that state picks the same book the swap went to, and asks the market maker behind it. On the `new_state` the swap returned, that book's turn is spent.
 
 ### Simulation
 
@@ -212,7 +212,7 @@ let min_amount_out = &expected_amount * BigUint::from(9975u64) / BigUint::from(1
     .with_user_transfer_type(UserTransferType::TransferFromPermit2);
 </code></pre>
 
-For the RFQ venues, two fields are **required** in Swap (Metric needs neither — its encoder works from the component and the tokens alone, because there is no quote to request):
+For the RFQ venues, Swap **requires** two fields (Metric needs neither — its encoder works from the component and the tokens alone, because there is no quote to request):
 
 *   `protocol_state`: This is needed to enable the runtime generation of a binding quote at encoding time—for example:
 
