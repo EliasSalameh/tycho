@@ -232,14 +232,7 @@ impl HttpSource for NativeBookSource {
                     None,
                 )),
                 ComponentLayout::AllPairs(_) => {
-                    // A Native book holds both sides, so it prices both directions of its pair.
-                    let (base, quote) = (base_token.address.clone(), quote_token.address.clone());
-                    venue_books.push(VenueBook {
-                        maker: None,
-                        directions: vec![(base.clone(), quote.clone()), (quote, base)],
-                        updated_at: None,
-                        state,
-                    })
+                    venue_books.push(VenueBook { maker: None, updated_at: None, state })
                 }
             }
         }
@@ -774,24 +767,33 @@ mod tests {
         }
     }
 
-    /// Published as one component, Native's pairs are one book advertising both directions of
-    /// each of them.
+    /// Published as one component, Native's pairs are one book advertising the directions its
+    /// makers quote: both of a pair they quote on both sides, and only the one they quote where
+    /// a pair reaches the venue as a single entry.
     #[tokio::test]
     async fn fetch_publishes_every_pair_under_one_component() {
         let weth = Bytes::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+        let wbtc = Bytes::from_str("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599").unwrap();
         let usdt = Bytes::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7").unwrap();
-        let body = serde_json::to_string(&vec![serde_json::json!({
-            "base_address": weth.to_string(),
-            "quote_address": usdt.to_string(),
-            "minimum_in_base": 0.0,
-            "side": "bid",
-            "levels": [[2.0, 100.0]]
-        })])
+        let entry = |base: &Bytes, side: &str, price: f64| {
+            serde_json::json!({
+                "base_address": base.to_string(),
+                "quote_address": usdt.to_string(),
+                "minimum_in_base": 0.0,
+                "side": side,
+                "levels": [[2.0, price]]
+            })
+        };
+        let body = serde_json::to_string(&vec![
+            entry(&weth, "bid", 100.0),
+            entry(&wbtc, "bid", 1_000.0),
+            entry(&wbtc, "ask", 1_010.0),
+        ])
         .unwrap();
         let server = spawn_http_server(move |_| Some(("200 OK", body.clone()))).await;
         let source = NativeBookSource {
             component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerVenue),
-            ..test_source(server.url(), &[&weth, &usdt], HashSet::from([usdt.clone()]), 0.0)
+            ..test_source(server.url(), &[&weth, &wbtc, &usdt], HashSet::from([usdt.clone()]), 0.0)
         };
 
         let books = source.fetch().await.unwrap().books;
@@ -802,7 +804,12 @@ mod tests {
         assert_eq!(book.component.id.to_string(), "0x7266713a6e6174697665");
         assert_eq!(
             decode_swap_directions(&book.component.static_attributes["swap_directions"]).unwrap(),
-            vec![(weth.clone(), usdt.clone()), (usdt.clone(), weth.clone())]
+            vec![
+                (wbtc.clone(), usdt.clone()),
+                (weth.clone(), usdt.clone()),
+                (usdt.clone(), wbtc.clone()),
+            ],
+            "nobody asks for WETH, so no amount of USDT buys any"
         );
         assert_eq!(
             book.component.static_attributes["quote_rule"],

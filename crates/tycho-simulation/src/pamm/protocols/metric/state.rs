@@ -118,6 +118,17 @@ impl PairState for MetricState {
     fn quote_token(&self) -> &Token {
         &self.quote_token
     }
+
+    fn directions(&self) -> Vec<(Bytes, Bytes)> {
+        let priced =
+            |direction| matches!(self.quoted_price(direction), Ok(Some(price)) if price > 0.0);
+        sim::directions(
+            &self.base_token,
+            &self.quote_token,
+            priced(MetricDirection::ZeroForOne),
+            priced(MetricDirection::OneForZero),
+        )
+    }
 }
 
 #[typetag::serde]

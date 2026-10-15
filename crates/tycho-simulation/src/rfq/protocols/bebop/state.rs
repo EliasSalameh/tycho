@@ -66,6 +66,15 @@ impl PairState for BebopState {
     fn quote_token(&self) -> &Token {
         &self.quote_token
     }
+
+    fn directions(&self) -> Vec<(Bytes, Bytes)> {
+        sim::directions(
+            &self.base_token,
+            &self.quote_token,
+            !self.book.bids.is_empty(),
+            !self.book.asks.is_empty(),
+        )
+    }
 }
 
 #[typetag::serde]

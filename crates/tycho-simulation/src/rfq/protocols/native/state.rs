@@ -92,6 +92,15 @@ impl PairState for NativeState {
     fn quote_token(&self) -> &Token {
         &self.quote_token
     }
+
+    fn directions(&self) -> Vec<(Bytes, Bytes)> {
+        sim::directions(
+            &self.base_token,
+            &self.quote_token,
+            !self.book.bids.levels.is_empty(),
+            !self.book.asks.levels.is_empty(),
+        )
+    }
 }
 
 #[typetag::serde]

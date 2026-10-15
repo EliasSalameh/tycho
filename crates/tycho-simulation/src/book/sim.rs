@@ -85,6 +85,20 @@ impl SwapDirection {
     }
 }
 
+/// The directions of a book that quotes both ways round, as `(token sold, token bought)`: it
+/// buys base where it bids and sells base where it asks, and a side with nothing on it prices
+/// neither way.
+pub fn directions(base: &Token, quote: &Token, bids: bool, asks: bool) -> Vec<(Bytes, Bytes)> {
+    let mut directions = Vec::with_capacity(2);
+    if bids {
+        directions.push((base.address.clone(), quote.address.clone()));
+    }
+    if asks {
+        directions.push((quote.address.clone(), base.address.clone()));
+    }
+    directions
+}
+
 /// An atomic amount in human units, the units price levels are quoted in. An amount past
 /// `f64::MAX` becomes infinity, which no ladder absorbs, so its fill reports the whole amount as
 /// unfilled.

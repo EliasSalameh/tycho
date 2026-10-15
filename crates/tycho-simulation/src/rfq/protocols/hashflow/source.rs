@@ -142,7 +142,6 @@ impl HttpSource for HashflowBookSource {
                     )),
                     ComponentLayout::AllPairs(_) => venue_books.push(VenueBook {
                         maker: Some(mm_name.clone()),
-                        directions: vec![(base_bytes.clone(), quote_bytes.clone())],
                         updated_at: None,
                         state,
                     }),

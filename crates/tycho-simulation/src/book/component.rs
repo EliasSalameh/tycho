@@ -52,6 +52,11 @@ pub trait PairState: ProtocolSim {
     fn base_token(&self) -> &Token;
 
     fn quote_token(&self) -> &Token;
+
+    /// The directions this book prices, as `(token sold, token bought)`. Only the state knows
+    /// which sides of it have levels, so only the state can say: a book nobody bids on buys
+    /// nothing, and one with no asks sells nothing, whatever pair it was published as.
+    fn directions(&self) -> Vec<(Bytes, Bytes)>;
 }
 
 /// The book `state` prices, under `id`: the state, the component it belongs to, and when the

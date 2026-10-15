@@ -87,6 +87,17 @@ impl PairState for LiquoriceState {
     fn quote_token(&self) -> &Token {
         &self.quote_token
     }
+
+    /// Liquorice's levels price the pair one way, and the venue publishes the other way round
+    /// as its own book.
+    fn directions(&self) -> Vec<(Bytes, Bytes)> {
+        sim::directions(
+            &self.base_token,
+            &self.quote_token,
+            self.populated_books().next().is_some(),
+            false,
+        )
+    }
 }
 
 #[typetag::serde]

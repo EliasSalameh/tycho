@@ -102,14 +102,12 @@ impl QuoteRule {
     }
 }
 
-/// One of the books a venue publishes, and the directions it prices.
+/// One of the books a venue publishes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct VenueBook<S> {
     /// The market maker whose ladders these are, where the venue names one. Books without a
     /// maker count as one and the same under [`QuoteRule::OncePerMaker`].
     pub maker: Option<String>,
-    /// The directions this book prices, as `(token sold, token bought)`.
-    pub directions: Vec<(Bytes, Bytes)>,
     /// When the venue last updated this book, as the per-pair layout would publish it.
     pub updated_at: Option<DateTime<Utc>>,
     pub state: S,
@@ -123,7 +121,7 @@ pub(crate) struct VenueBook<S> {
 /// The books are shared, so what a swap copies to hand back the state it leaves behind is a
 /// reference count and the set of books it has spent.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "S: Serialize + DeserializeOwned")]
+#[serde(bound = "S: Serialize + DeserializeOwned + PairState")]
 pub(crate) struct AllPairs<S> {
     books: Arc<Books<S>>,
     /// What [`QuoteRule::spend`] returned for every swap this state is downstream of.
@@ -136,7 +134,7 @@ pub(crate) struct AllPairs<S> {
 /// Serialized as the books alone: the index is derived from them, and is built again whenever
 /// a set of books comes from anywhere other than a source.
 #[derive(Debug, Deserialize)]
-#[serde(from = "Vec<VenueBook<S>>", bound = "S: DeserializeOwned")]
+#[serde(from = "Vec<VenueBook<S>>", bound = "S: DeserializeOwned + PairState")]
 struct Books<S> {
     books: Vec<VenueBook<S>>,
     /// Indices into `books`, by token sold and then token bought, so a swap looks only at the
@@ -150,24 +148,34 @@ impl<S: Serialize> Serialize for Books<S> {
     }
 }
 
-impl<S> From<Vec<VenueBook<S>>> for Books<S> {
+impl<S: PairState> From<Vec<VenueBook<S>>> for Books<S> {
     fn from(books: Vec<VenueBook<S>>) -> Self {
         let mut by_direction: HashMap<Bytes, HashMap<Bytes, Vec<usize>>> = HashMap::new();
-        for (index, book) in books.iter().enumerate() {
-            for (sold, bought) in &book.directions {
+        let mut kept: Vec<VenueBook<S>> = Vec::new();
+        for book in books {
+            // A book that prices nothing is left out rather than held: it would put its tokens
+            // on the component while naming no way to trade them, and a consumer routing
+            // through such a pair only learns it cannot at simulation time.
+            let directions = book.state.directions();
+            if directions.is_empty() {
+                continue;
+            }
+            let index = kept.len();
+            for (sold, bought) in directions {
                 by_direction
-                    .entry(sold.clone())
+                    .entry(sold)
                     .or_default()
-                    .entry(bought.clone())
+                    .entry(bought)
                     .or_default()
                     .push(index);
             }
+            kept.push(book);
         }
-        Books { books, by_direction }
+        Books { books: kept, by_direction }
     }
 }
 
-impl<S> AllPairs<S> {
+impl<S: PairState> AllPairs<S> {
     pub fn new(books: Vec<VenueBook<S>>, rule: QuoteRule) -> Self {
         AllPairs { books: Arc::new(books.into()), used: HashSet::new(), rule }
     }
@@ -523,7 +531,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::book::test_token_map;
+    use crate::book::{sim, test_token_map};
 
     /// A book that pays `out_per_in` for every whole token up to `depth` of them, and stops
     /// there. Both its tokens have 18 decimals, so a whole token is `1e18` either side.
@@ -542,6 +550,12 @@ mod tests {
 
         fn quote_token(&self) -> &Token {
             &self.quote
+        }
+
+        /// A book paying nothing per token has no levels and prices neither way; `depth` of
+        /// zero is a priced direction with nothing behind it.
+        fn directions(&self) -> Vec<(Bytes, Bytes)> {
+            sim::directions(&self.base, &self.quote, self.out_per_in > 0, false)
         }
     }
 
@@ -703,7 +717,6 @@ mod tests {
         let tokens = tokens();
         VenueBook {
             maker: Some(maker.to_string()),
-            directions: vec![(addr(0xaa), addr(0xbb))],
             updated_at: None,
             state: TestBook {
                 base: tokens[&addr(0xaa)].clone(),
@@ -852,7 +865,6 @@ mod tests {
         let tokens = tokens();
         let b_to_c = VenueBook {
             maker: None,
-            directions: vec![(addr(0xbb), addr(0xcc))],
             updated_at: None,
             state: TestBook {
                 base: tokens[&addr(0xbb)].clone(),
@@ -887,6 +899,56 @@ mod tests {
         assert_eq!(
             book.component.static_attributes[QuoteRule::ATTRIBUTE],
             Bytes::from("once_per_maker".as_bytes())
+        );
+    }
+
+    /// A book with nothing on it is not published at all: it would put its tokens on the
+    /// component while naming no way to trade them, which is a route that only fails once it
+    /// is simulated. What the component carries is what its directions name.
+    #[test]
+    fn a_book_that_prices_nothing_is_left_out() {
+        let tokens = tokens();
+        let silent = VenueBook {
+            maker: None,
+            updated_at: None,
+            state: TestBook {
+                base: tokens[&addr(0xbb)].clone(),
+                quote: tokens[&addr(0xcc)].clone(),
+                out_per_in: 0,
+                depth: 10,
+            },
+        };
+
+        let book = all_pairs_book(
+            "rfq:venue",
+            "venue_pool",
+            Chain::Ethereum,
+            venue(vec![book("generous", 3, 10), silent], QuoteRule::OncePerMaker),
+        );
+
+        let directions =
+            decode_swap_directions(&book.component.static_attributes[SWAP_DIRECTIONS_ATTRIBUTE])
+                .unwrap();
+        assert_eq!(directions, vec![(addr(0xaa), addr(0xbb))]);
+        assert_eq!(
+            book.component
+                .tokens
+                .iter()
+                .map(|token| token.symbol.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B"]
+        );
+        assert_eq!(
+            directions
+                .iter()
+                .flat_map(|(sold, bought)| [sold.clone(), bought.clone()])
+                .collect::<BTreeSet<_>>(),
+            book.component
+                .tokens
+                .iter()
+                .map(|token| token.address.clone())
+                .collect::<BTreeSet<_>>(),
+            "the component carries the tokens its directions name, and no others"
         );
     }
 

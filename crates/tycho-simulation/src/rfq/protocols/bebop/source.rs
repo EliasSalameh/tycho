@@ -153,13 +153,7 @@ impl BebopBookSource {
                     updated_at,
                 )),
                 ComponentLayout::AllPairs(_) => {
-                    // A Bebop book quotes both ways round, so it prices both directions of the
-                    // pair it was published as.
-                    let directions = vec![
-                        (base_token.address.clone(), quote_token.address.clone()),
-                        (quote_token.address.clone(), base_token.address.clone()),
-                    ];
-                    venue_books.push(VenueBook { maker: None, directions, updated_at, state });
+                    venue_books.push(VenueBook { maker: None, updated_at, state })
                 }
             }
         }

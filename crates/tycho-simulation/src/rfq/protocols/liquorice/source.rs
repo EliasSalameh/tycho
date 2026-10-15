@@ -153,12 +153,7 @@ impl HttpSource for LiquoriceBookSource {
                             prices_by_mm: HashMap::from([(maker.clone(), price)]),
                             client: Arc::clone(&self.client),
                         };
-                        venue_books.push(VenueBook {
-                            maker: Some(maker),
-                            directions: vec![(base_bytes.clone(), quote_bytes.clone())],
-                            updated_at,
-                            state,
-                        });
+                        venue_books.push(VenueBook { maker: Some(maker), updated_at, state });
                     }
                 }
             }

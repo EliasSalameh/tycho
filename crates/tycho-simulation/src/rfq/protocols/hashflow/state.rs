@@ -83,6 +83,12 @@ impl PairState for HashflowState {
     fn quote_token(&self) -> &Token {
         &self.quote_token
     }
+
+    /// A maker's ladder prices the pair one way — a taker sells the base token it was published
+    /// under — and the venue publishes the other way round as its own book.
+    fn directions(&self) -> Vec<(Bytes, Bytes)> {
+        sim::directions(&self.base_token, &self.quote_token, !self.levels.levels.is_empty(), false)
+    }
 }
 
 #[typetag::serde]
