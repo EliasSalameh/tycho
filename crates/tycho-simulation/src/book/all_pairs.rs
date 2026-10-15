@@ -301,40 +301,7 @@ impl<S: PairState> AllPairs<S> {
     fn spending(&self, maker: Option<&str>) -> Self {
         AllPairs { books: Arc::clone(&self.books), spent: self.spent.spending(maker) }
     }
-}
 
-impl<S: PairState> VenueBook<S> {
-    /// The book's own `Token`s for a swap that sells `token_in`. A state prices the pair it
-    /// names, so it is given that pair rather than the caller's copy of the two tokens.
-    fn tokens(&self, token_in: &Bytes) -> (&Token, &Token) {
-        let (base, quote) = (self.state.base_token(), self.state.quote_token());
-        if token_in == &base.address {
-            (base, quote)
-        } else {
-            (quote, base)
-        }
-    }
-}
-
-/// A loop over [`AllPairs::candidates`] that ranked nothing. Candidates are at least one book
-/// or an error, so this is a bug here rather than anything the venue did.
-fn no_book_ranked(what: &str) -> SimulationError {
-    SimulationError::FatalError(format!(
-        "Books were reported for this direction, and none of them was ranked to {what}"
-    ))
-}
-
-/// How good an answer to a swap is: a complete fill beats a partial one, a partial fill beats a
-/// refusal, and more bought beats less.
-fn rank(answer: &Result<GetAmountOutResult, SimulationError>) -> (u8, Option<&BigUint>) {
-    match answer {
-        Ok(result) => (2, Some(&result.amount)),
-        Err(SimulationError::InvalidInput(_, Some(partial))) => (1, Some(&partial.amount)),
-        Err(_) => (0, None),
-    }
-}
-
-impl<S: PairState> AllPairs<S> {
     /// The book that answers `amount_in` best, and its answer.
     fn best(
         &self,
@@ -402,9 +369,7 @@ impl<S: PairState> AllPairs<S> {
         }
         best.unwrap_or_else(|| Err(no_book_ranked("report its limits")))
     }
-}
 
-impl<S: PairState> AllPairs<S> {
     /// Whether these are the same books, in the same order, with the same turns spent.
     pub fn same_books(&self, other: &Self) -> bool {
         self.spent == other.spent &&
@@ -413,6 +378,37 @@ impl<S: PairState> AllPairs<S> {
                 .iter()
                 .zip(other.books().iter())
                 .all(|(ours, theirs)| ours.maker == theirs.maker && ours.state.eq(&theirs.state))
+    }
+}
+
+impl<S: PairState> VenueBook<S> {
+    /// The book's own `Token`s for a swap that sells `token_in`. A state prices the pair it
+    /// names, so it is given that pair rather than the caller's copy of the two tokens.
+    fn tokens(&self, token_in: &Bytes) -> (&Token, &Token) {
+        let (base, quote) = (self.state.base_token(), self.state.quote_token());
+        if token_in == &base.address {
+            (base, quote)
+        } else {
+            (quote, base)
+        }
+    }
+}
+
+/// A loop over [`AllPairs::candidates`] that ranked nothing. Candidates are at least one book
+/// or an error, so this is a bug here rather than anything the venue did.
+fn no_book_ranked(what: &str) -> SimulationError {
+    SimulationError::FatalError(format!(
+        "Books were reported for this direction, and none of them was ranked to {what}"
+    ))
+}
+
+/// How good an answer to a swap is: a complete fill beats a partial one, a partial fill beats a
+/// refusal, and more bought beats less.
+fn rank(answer: &Result<GetAmountOutResult, SimulationError>) -> (u8, Option<&BigUint>) {
+    match answer {
+        Ok(result) => (2, Some(&result.amount)),
+        Err(SimulationError::InvalidInput(_, Some(partial))) => (1, Some(&partial.amount)),
+        Err(_) => (0, None),
     }
 }
 
