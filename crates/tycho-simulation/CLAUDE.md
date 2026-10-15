@@ -91,8 +91,10 @@ for any protocol indexed by Tycho.
     other layout would publish, picks the best book still allowed to quote under the component's
     `QuoteRule` (`once_per_maker`, `once_per_venue`), and records it as spent in the state the
     swap returns. A venue's `<Venue>AllPairsState` is a wrapper implementing `AllPairsState`,
-    because `#[typetag::serde]` registers concrete types; a book reporting no direction is left
-    out of it, so its tokens and its directions agree
+    because `#[typetag::serde]` registers concrete types; the `all_pairs_state!` macro declares
+    it, so the four differ only in the type names and in what a venue refuses before a book is
+    picked (`check_amount`). A book reporting no direction is left out of the state, so its
+    tokens and its directions agree
   - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the

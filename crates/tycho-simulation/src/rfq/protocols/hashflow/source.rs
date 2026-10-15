@@ -8,7 +8,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_book, ComponentLayout, VenueBook},
+        all_pairs::{all_pairs_book, AllPairsState, ComponentLayout, VenueBook},
         component::{maker_component_id, pair_book},
         tvl, BookFeedConfig, BookSnapshot, Books, ReceivedAt,
     },

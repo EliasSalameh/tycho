@@ -16,7 +16,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{AllPairs, AllPairsState, QuoteRule, VenueBook},
+        all_pairs::all_pairs_state,
         component::PairState,
         levels::Levels,
         sim::{self, SwapDirection},
@@ -234,99 +234,12 @@ impl IndicativelyPriced for BebopState {
     }
 }
 
-/// Bebop's books on one chain behind one component.
-///
-/// Bebop signs its quotes itself and names no market maker, so a swap spends the venue's turn
-/// and a second swap on the state it returned finds every book spent.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BebopAllPairsState(AllPairs<BebopState>);
-
-impl BebopAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<BebopState>>, rule: QuoteRule) -> Self {
-        BebopAllPairsState(AllPairs::new(books, rule))
-    }
-}
-
-impl AllPairsState for BebopAllPairsState {
-    type Pair = BebopState;
-
-    fn pairs(&self) -> &AllPairs<BebopState> {
-        &self.0
-    }
-
-    fn with_pairs(&self, pairs: AllPairs<BebopState>) -> Self {
-        BebopAllPairsState(pairs)
-    }
-}
-
-#[typetag::serde]
-impl ProtocolSim for BebopAllPairsState {
-    fn fee(&self) -> f64 {
-        0.0
-    }
-
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        self.0
-            .spot_price(&base.address, &quote.address)
-    }
-
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        self.amount_out(amount_in, &token_in.address, &token_out.address)
-    }
-
-    fn get_limits(
-        &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
-    ) -> Result<(BigUint, BigUint), SimulationError> {
-        self.0.get_limits(sell_token, buy_token)
-    }
-
-    fn as_indicatively_priced(&self) -> Result<&dyn IndicativelyPriced, SimulationError> {
-        Ok(self)
-    }
-
-    fn delta_transition(
-        &mut self,
-        _delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError> {
-        Err(TransitionError::DecodeError("Not implemented".into()))
-    }
-
-    fn clone_box(&self) -> Box<dyn ProtocolSim> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        self.same_books(other)
-    }
-}
-
-#[async_trait]
-impl IndicativelyPriced for BebopAllPairsState {
-    async fn request_signed_quote(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<SignedQuote, SimulationError> {
-        self.quoting_book(&params.amount_in, &params.token_in, &params.token_out)?
-            .request_signed_quote(params)
-            .await
-    }
+all_pairs_state! {
+    /// Bebop's books on one chain behind one component.
+    ///
+    /// Bebop signs its quotes itself and names no market maker, so all of its books share one
+    /// turn whichever rule it is published under.
+    BebopAllPairsState(BebopState);
 }
 
 #[cfg(test)]

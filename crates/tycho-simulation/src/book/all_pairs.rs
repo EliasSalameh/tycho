@@ -391,9 +391,24 @@ pub(crate) trait AllPairsState: ProtocolSim + Clone + Sized + 'static {
     /// The per-pair state this venue's books are, the same one its `PerPair` layout publishes.
     type Pair: PairState;
 
+    /// The venue's books behind one component, quoted under `rule`.
+    fn new(books: Vec<VenueBook<Self::Pair>>, rule: QuoteRule) -> Self;
+
     fn pairs(&self) -> &AllPairs<Self::Pair>;
 
     fn with_pairs(&self, pairs: AllPairs<Self::Pair>) -> Self;
+
+    /// What the venue refuses whatever book would price it, such as a size below every maker's
+    /// floor. A venue that refuses on size alone answers it here rather than letting a book
+    /// price something the venue will not sign. Refusing nothing is the default.
+    fn check_amount(
+        &self,
+        _amount_in: &BigUint,
+        _token_in: &Bytes,
+        _token_out: &Bytes,
+    ) -> Result<(), SimulationError> {
+        Ok(())
+    }
 
     /// The swap against the best book available, returning the state that book has quoted in.
     ///
@@ -405,6 +420,7 @@ pub(crate) trait AllPairsState: ProtocolSim + Clone + Sized + 'static {
         token_in: &Bytes,
         token_out: &Bytes,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        self.check_amount(&amount_in, token_in, token_out)?;
         let (book, answer) = self
             .pairs()
             .best(&amount_in, token_in, token_out)?;
@@ -453,6 +469,173 @@ pub(crate) trait AllPairsState: ProtocolSim + Clone + Sized + 'static {
         Ok(&book.state)
     }
 }
+
+/// Declares a venue's all-pairs state: the wrapper type, its [`AllPairsState`] impl and the
+/// `ProtocolSim` and `IndicativelyPriced` impls that delegate to this module.
+///
+/// `#[typetag::serde]` registers concrete types, so each venue needs its own wrapper even
+/// though none of them holds anything of its own. The doc comments written at the invocation
+/// describe the venue's books; the rule a swap spends them under is the same everywhere and is
+/// written here. A venue with something to refuse before a book is picked adds a
+/// [`AllPairsState::check_amount`] after the semicolon.
+macro_rules! all_pairs_state {
+    (
+        $(#[$doc:meta])*
+        $wrapper:ident($pair:ty);
+        $($extra:item)*
+    ) => {
+        $(#[$doc])*
+        ///
+        /// A swap spends the turn of the book it filled against, as the [`QuoteRule`] the
+        /// component was published under counts it: under `OncePerMaker` a later swap on the
+        /// state it returned goes to another market maker, and under `OncePerVenue` it finds
+        /// every book spent.
+        ///
+        /// [`QuoteRule`]: crate::book::all_pairs::QuoteRule
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub struct $wrapper($crate::book::all_pairs::AllPairs<$pair>);
+
+        impl $crate::book::all_pairs::AllPairsState for $wrapper {
+            type Pair = $pair;
+
+            fn new(
+                books: ::std::vec::Vec<$crate::book::all_pairs::VenueBook<$pair>>,
+                rule: $crate::book::all_pairs::QuoteRule,
+            ) -> Self {
+                $wrapper($crate::book::all_pairs::AllPairs::new(books, rule))
+            }
+
+            fn pairs(&self) -> &$crate::book::all_pairs::AllPairs<$pair> {
+                &self.0
+            }
+
+            fn with_pairs(&self, pairs: $crate::book::all_pairs::AllPairs<$pair>) -> Self {
+                $wrapper(pairs)
+            }
+
+            $($extra)*
+        }
+
+        #[typetag::serde]
+        impl ::tycho_common::simulation::protocol_sim::ProtocolSim for $wrapper {
+            fn fee(&self) -> f64 {
+                0.0
+            }
+
+            fn spot_price(
+                &self,
+                base: &::tycho_common::models::token::Token,
+                quote: &::tycho_common::models::token::Token,
+            ) -> ::std::result::Result<f64, ::tycho_common::simulation::errors::SimulationError>
+            {
+                self.0
+                    .spot_price(&base.address, &quote.address)
+            }
+
+            fn get_amount_out(
+                &self,
+                amount_in: ::num_bigint::BigUint,
+                token_in: &::tycho_common::models::token::Token,
+                token_out: &::tycho_common::models::token::Token,
+            ) -> ::std::result::Result<
+                ::tycho_common::simulation::protocol_sim::GetAmountOutResult,
+                ::tycho_common::simulation::errors::SimulationError,
+            > {
+                $crate::book::all_pairs::AllPairsState::amount_out(
+                    self,
+                    amount_in,
+                    &token_in.address,
+                    &token_out.address,
+                )
+            }
+
+            fn get_limits(
+                &self,
+                sell_token: ::tycho_common::Bytes,
+                buy_token: ::tycho_common::Bytes,
+            ) -> ::std::result::Result<
+                (::num_bigint::BigUint, ::num_bigint::BigUint),
+                ::tycho_common::simulation::errors::SimulationError,
+            > {
+                self.0.get_limits(sell_token, buy_token)
+            }
+
+            fn as_indicatively_priced(
+                &self,
+            ) -> ::std::result::Result<
+                &dyn ::tycho_common::simulation::indicatively_priced::IndicativelyPriced,
+                ::tycho_common::simulation::errors::SimulationError,
+            > {
+                ::std::result::Result::Ok(self)
+            }
+
+            fn delta_transition(
+                &mut self,
+                _delta: ::tycho_common::dto::ProtocolStateDelta,
+                _tokens: &::std::collections::HashMap<
+                    ::tycho_common::Bytes,
+                    ::tycho_common::models::token::Token,
+                >,
+                _balances: &::tycho_common::simulation::protocol_sim::Balances,
+            ) -> ::std::result::Result<(), ::tycho_common::simulation::errors::TransitionError>
+            {
+                ::std::result::Result::Err(
+                    ::tycho_common::simulation::errors::TransitionError::DecodeError(
+                        "Not implemented".into(),
+                    ),
+                )
+            }
+
+            fn clone_box(
+                &self,
+            ) -> ::std::boxed::Box<dyn ::tycho_common::simulation::protocol_sim::ProtocolSim> {
+                ::std::boxed::Box::new(self.clone())
+            }
+
+            fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
+                self
+            }
+
+            fn eq(
+                &self,
+                other: &dyn ::tycho_common::simulation::protocol_sim::ProtocolSim,
+            ) -> bool {
+                $crate::book::all_pairs::AllPairsState::same_books(self, other)
+            }
+        }
+
+        #[::async_trait::async_trait]
+        impl ::tycho_common::simulation::indicatively_priced::IndicativelyPriced for $wrapper {
+            /// Asks the book that [`ProtocolSim::get_amount_out`] picks on this state, and no
+            /// other: on the state a swap returned, that book's turn is spent, so the quote
+            /// goes to another book or the state reports that there is none left.
+            async fn request_signed_quote(
+                &self,
+                params: ::tycho_common::models::protocol::GetAmountOutParams,
+            ) -> ::std::result::Result<
+                ::tycho_common::simulation::indicatively_priced::SignedQuote,
+                ::tycho_common::simulation::errors::SimulationError,
+            > {
+                ::tycho_common::simulation::indicatively_priced::IndicativelyPriced::request_signed_quote(
+                    $crate::book::all_pairs::AllPairsState::quoting_book(
+                        self,
+                        &params.amount_in,
+                        &params.token_in,
+                        &params.token_out,
+                    )?,
+                    params,
+                )
+                .await
+            }
+        }
+    };
+}
+
+pub(crate) use all_pairs_state;
 
 /// The id of a venue's component covering every pair it prices: its protocol system, which
 /// names both the venue and the path its swaps settle through. A feed serves one chain and a
@@ -610,6 +793,10 @@ mod tests {
 
     impl AllPairsState for TestVenue {
         type Pair = TestBook;
+
+        fn new(books: Vec<VenueBook<TestBook>>, rule: QuoteRule) -> Self {
+            TestVenue(AllPairs::new(books, rule))
+        }
 
         fn pairs(&self) -> &AllPairs<TestBook> {
             &self.0

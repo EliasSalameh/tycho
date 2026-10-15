@@ -17,7 +17,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{AllPairs, AllPairsState, QuoteRule, VenueBook},
+        all_pairs::all_pairs_state,
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -208,18 +208,28 @@ impl IndicativelyPriced for HashflowState {
     }
 }
 
-/// Hashflow's books on one chain behind one component: every market maker's levels on every
-/// pair it quotes.
-///
-/// A swap takes its quote from one market maker and spends that maker's turn. A maker's second
-/// quote prices as if the first had not happened, so a later swap on the state a swap returned
-/// goes to another maker.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct HashflowAllPairsState(AllPairs<HashflowState>);
+all_pairs_state! {
+    /// Hashflow's books on one chain behind one component: every market maker's levels on every
+    /// pair it quotes.
+    HashflowAllPairsState(HashflowState);
 
-impl HashflowAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<HashflowState>>, rule: QuoteRule) -> Self {
-        HashflowAllPairsState(AllPairs::new(books, rule))
+    /// Every maker declines an amount below its first level, so an amount under the smallest
+    /// of their floors is one no maker here fills, and that floor is what to raise it to.
+    fn check_amount(
+        &self,
+        amount_in: &BigUint,
+        token_in: &Bytes,
+        token_out: &Bytes,
+    ) -> Result<(), SimulationError> {
+        match self.min_amount_in(token_in, token_out) {
+            Some(minimum) if amount_in < &minimum => Err(SimulationError::RecoverableError(
+                format!(
+                    "Amount below minimum. Input amount: {amount_in}, min amount: {minimum} \
+                     (both in base units)"
+                ),
+            )),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -232,100 +242,6 @@ impl HashflowAllPairsState {
             .pricing(token_in, token_out)
             .map(|book| book.state.min_amount_in())
             .min()
-    }
-}
-
-impl AllPairsState for HashflowAllPairsState {
-    type Pair = HashflowState;
-
-    fn pairs(&self) -> &AllPairs<HashflowState> {
-        &self.0
-    }
-
-    fn with_pairs(&self, pairs: AllPairs<HashflowState>) -> Self {
-        HashflowAllPairsState(pairs)
-    }
-}
-
-#[typetag::serde]
-impl ProtocolSim for HashflowAllPairsState {
-    fn fee(&self) -> f64 {
-        0.0
-    }
-
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        self.0
-            .spot_price(&base.address, &quote.address)
-    }
-
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        // Every maker declines an amount below its first level, so an amount under the smallest
-        // of their floors is one no maker here fills, and that floor is what to raise it to.
-        if let Some(minimum) = self.min_amount_in(&token_in.address, &token_out.address) {
-            if amount_in < minimum {
-                return Err(SimulationError::RecoverableError(format!(
-                    "Amount below minimum. Input amount: {amount_in}, min amount: {minimum} (both in base units)"
-                )));
-            }
-        }
-        self.amount_out(amount_in, &token_in.address, &token_out.address)
-    }
-
-    fn get_limits(
-        &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
-    ) -> Result<(BigUint, BigUint), SimulationError> {
-        self.0.get_limits(sell_token, buy_token)
-    }
-
-    fn as_indicatively_priced(&self) -> Result<&dyn IndicativelyPriced, SimulationError> {
-        Ok(self)
-    }
-
-    fn delta_transition(
-        &mut self,
-        _delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError> {
-        Err(TransitionError::DecodeError("Not implemented".into()))
-    }
-
-    fn clone_box(&self) -> Box<dyn ProtocolSim> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        self.same_books(other)
-    }
-}
-
-#[async_trait]
-impl IndicativelyPriced for HashflowAllPairsState {
-    /// Asks the book that [`ProtocolSim::get_amount_out`] picks on this state, and no other: on
-    /// the state a swap returned, that book's turn is spent, so the quote goes to another book
-    /// or the state reports that there is none left.
-    async fn request_signed_quote(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<SignedQuote, SimulationError> {
-        self.quoting_book(&params.amount_in, &params.token_in, &params.token_out)?
-            .request_signed_quote(params)
-            .await
     }
 }
 

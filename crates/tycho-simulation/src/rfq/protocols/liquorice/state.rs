@@ -16,7 +16,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{AllPairs, AllPairsState, QuoteRule, VenueBook},
+        all_pairs::all_pairs_state,
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -177,102 +177,9 @@ impl IndicativelyPriced for LiquoriceState {
     }
 }
 
-/// Liquorice's books on one chain behind one component: one book per market maker and pair.
-///
-/// A swap takes its quote from the maker that priced it and spends that maker's turn, so a later
-/// swap on the state it returned goes to another maker.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LiquoriceAllPairsState(AllPairs<LiquoriceState>);
-
-impl LiquoriceAllPairsState {
-    pub(super) fn new(books: Vec<VenueBook<LiquoriceState>>, rule: QuoteRule) -> Self {
-        LiquoriceAllPairsState(AllPairs::new(books, rule))
-    }
-}
-
-impl AllPairsState for LiquoriceAllPairsState {
-    type Pair = LiquoriceState;
-
-    fn pairs(&self) -> &AllPairs<LiquoriceState> {
-        &self.0
-    }
-
-    fn with_pairs(&self, pairs: AllPairs<LiquoriceState>) -> Self {
-        LiquoriceAllPairsState(pairs)
-    }
-}
-
-#[typetag::serde]
-impl ProtocolSim for LiquoriceAllPairsState {
-    fn fee(&self) -> f64 {
-        0.0
-    }
-
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        self.0
-            .spot_price(&base.address, &quote.address)
-    }
-
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        self.amount_out(amount_in, &token_in.address, &token_out.address)
-    }
-
-    fn get_limits(
-        &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
-    ) -> Result<(BigUint, BigUint), SimulationError> {
-        self.0.get_limits(sell_token, buy_token)
-    }
-
-    fn as_indicatively_priced(&self) -> Result<&dyn IndicativelyPriced, SimulationError> {
-        Ok(self)
-    }
-
-    fn delta_transition(
-        &mut self,
-        _delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError> {
-        Err(TransitionError::DecodeError("Not implemented".into()))
-    }
-
-    fn clone_box(&self) -> Box<dyn ProtocolSim> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        self.same_books(other)
-    }
-}
-
-#[async_trait]
-impl IndicativelyPriced for LiquoriceAllPairsState {
-    /// Asks the book that [`ProtocolSim::get_amount_out`] picks on this state, and no other: on
-    /// the state a swap returned, that book's turn is spent, so the quote goes to another book
-    /// or the state reports that there is none left.
-    async fn request_signed_quote(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<SignedQuote, SimulationError> {
-        self.quoting_book(&params.amount_in, &params.token_in, &params.token_out)?
-            .request_signed_quote(params)
-            .await
-    }
+all_pairs_state! {
+    /// Liquorice's books on one chain behind one component: one book per market maker and pair.
+    LiquoriceAllPairsState(LiquoriceState);
 }
 
 #[cfg(test)]
