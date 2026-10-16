@@ -1,3 +1,11 @@
+## [0.461.0](https://github.com/propeller-heads/tycho/compare/0.460.0...0.461.0) (2026-10-16)
+
+
+### Features
+
+* **execution:** add the deployed BSC RingSwapV2 executor address ([0903140](https://github.com/propeller-heads/tycho/commit/09031404bb6cb830972f6d7d620ebdac2aa0eef4))
+* **execution:** add the deployed BSC RingSwapV2 executor address ([#1589](https://github.com/propeller-heads/tycho/issues/1589)) ([b54cb15](https://github.com/propeller-heads/tycho/commit/b54cb1552d541e8f875ea2ef9ab08857f8e9c41b))
+
 ## [0.460.0](https://github.com/propeller-heads/tycho/compare/0.459.0...0.460.0) (2026-10-15)
 
 
