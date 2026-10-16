@@ -86,6 +86,11 @@ pub fn needs_approval(protocol_system: &str) -> bool {
 /// A swap that actually falls back pays for the fallback protocol on top.
 pub const FALLBACK_ROUTER_OVERHEAD_GAS: u64 = 40_000;
 
+/// Gas for `MetricFallbackRouter`'s `quoteFallback` call, which prices the fallback protocol
+/// before the router picks a side. The cost depends on how much of the fallback pool's liquidity
+/// the quote walks; this covers most quotes on a concentrated-liquidity pool.
+pub const METRIC_FALLBACK_QUOTE_GAS: u64 = 100_000;
+
 /// `outputToRouter = true`: the pool sends output to the router, which then does an extra
 /// `_transferOut` to the receiver.
 pub const PROTOCOLS_OUTPUT_TO_ROUTER: &[&str] =
@@ -137,9 +142,10 @@ pub fn estimate_gas_usage(solution: &Solution, strategy: Strategy) -> BigUint {
             &strategy,
         );
         total_gas += group_transfer_overhead + &group.estimated_gas;
-        // `MetricFallbackRouter` quotes the pool by running its swap.
+        // `MetricFallbackRouter` quotes the pool by running its swap, then quotes the fallback.
         if group.protocol_system == METRIC_FALLBACK_PROTOCOL_SYSTEM {
             total_gas += &group.estimated_gas;
+            total_gas += BigUint::from(METRIC_FALLBACK_QUOTE_GAS);
         }
     }
 
@@ -406,10 +412,11 @@ mod tests {
 
         // user transfer (TransferFrom)         40_000  ← DEFAULT_TOKEN_TRANSFER_GAS
         // fallback router overhead             40_000  ← FALLBACK_ROUTER_OVERHEAD_GAS
+        // fallback quote                      100_000  ← METRIC_FALLBACK_QUOTE_GAS
         // pool gas                            100_000
         // simulated quote                     100_000  ← the pool gas again
         // fee output transfer                  60_000
-        assert_eq!(gas, BigUint::from(340_000u64));
+        assert_eq!(gas, BigUint::from(440_000u64));
     }
 
     #[test]
