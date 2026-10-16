@@ -43,11 +43,10 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for LiquoriceAllPairs
             builder = builder.quote_rule(quote_rule);
         }
         let client = builder.build().map_err(|e| {
-            InvalidSnapshotError::MissingAttribute(format!("Couldn't create LiquoriceClient: {e}"))
+            InvalidSnapshotError::ValueError(format!("Couldn't create LiquoriceClient: {e}"))
         })?;
 
-        LiquoriceAllPairsState::new(price_levels, tokens, client)
-            .map_err(|e| InvalidSnapshotError::ValueError(e.to_string()))
+        Ok(LiquoriceAllPairsState::new(price_levels, tokens, client))
     }
 }
 

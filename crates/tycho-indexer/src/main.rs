@@ -440,6 +440,7 @@ async fn run_rpc(global_args: GlobalArgs, rpc_args: RpcServerArgs) -> Result<(),
     let direct_gw = GatewayBuilder::new(&global_args.database_url)
         .set_chains(&[chain])
         .enable_token_cache()
+        .set_component_index(global_args.component_index)
         .build_direct_gw()
         .await?;
 
@@ -457,6 +458,12 @@ async fn run_rpc(global_args: GlobalArgs, rpc_args: RpcServerArgs) -> Result<(),
             .bind(&global_args.server_ip)
             .port(global_args.server_port)
             .plans_config(plans_config)
+            .disabled_rpc_caches(
+                global_args
+                    .disabled_rpc_caches
+                    .0
+                    .clone(),
+            )
             .run()?;
     info!(server_url, "Http and Ws server started");
     let shutdown_task = tokio::spawn(shutdown_handler(server_handle, vec![], None));
@@ -494,6 +501,7 @@ async fn create_indexing_tasks(
         .set_protocol_systems(&protocol_systems)
         .set_retention_horizon(retention_horizon)
         .enable_token_cache()
+        .set_component_index(global_args.component_index)
         .build_with_rpc_gateway()
         .await?;
     let chain = *chains
@@ -556,6 +564,12 @@ async fn create_indexing_tasks(
         })
         .entity_cache(entity_cache)
         .shadow_sample_rate(global_args.entity_cache_shadow_sample_rate)
+        .disabled_rpc_caches(
+            global_args
+                .disabled_rpc_caches
+                .0
+                .clone(),
+        )
         .run()?;
     info!(server_url, "Http and Ws server started");
 

@@ -291,7 +291,7 @@ impl HashflowClient {
             price_levels.push((maker_levels, tvl));
         }
         maker_price_levels::all_pairs_component(
-            Self::PROTOCOL_SYSTEM,
+            &self.protocol_system,
             "hashflow_pool",
             self.chain,
             price_levels,
@@ -700,6 +700,10 @@ fn pair_component_id(mm_level: &HashflowMarketMakerLevels) -> String {
 
 #[async_trait]
 impl RFQClient for HashflowClient {
+    fn component_layout(&self) -> ComponentLayout {
+        self.component_layout
+    }
+
     fn stream(
         &self,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {

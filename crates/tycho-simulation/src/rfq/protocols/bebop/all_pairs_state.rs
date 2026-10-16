@@ -3,6 +3,7 @@ use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 use async_trait::async_trait;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use tycho_common::{
     dto::ProtocolStateDelta,
     models::{protocol::GetAmountOutParams, token::Token},
@@ -40,23 +41,31 @@ impl fmt::Debug for BebopAllPairsState {
 }
 
 impl BebopAllPairsState {
-    /// Fails when a book names a token `tokens` does not carry.
+    /// Skips a book with a token missing from `tokens` (`debug!`: the decoder logged the token).
     pub fn new(
         books: Vec<BebopPriceData>,
         tokens: HashMap<Bytes, Token>,
         client: BebopClient,
-    ) -> Result<Self, SimulationError> {
+    ) -> Self {
         let mut pairs = Vec::with_capacity(books.len());
         for book in books {
-            let base_token = book_token(&tokens, &book.base)?;
-            let quote_token = book_token(&tokens, &book.quote)?;
+            let (Some(base_token), Some(quote_token)) =
+                (book_token(&tokens, &book.base), book_token(&tokens, &book.quote))
+            else {
+                debug!(
+                    "Skipping Bebop book 0x{}/0x{}: a token is missing from the state.",
+                    hex::encode(&book.base),
+                    hex::encode(&book.quote)
+                );
+                continue;
+            };
             pairs.push(BebopState::new(base_token, quote_token, book, client.clone()));
         }
         pairs.sort_by(|a, b| {
             (&a.base_token.address, &a.quote_token.address)
                 .cmp(&(&b.base_token.address, &b.quote_token.address))
         });
-        Ok(Self { pairs: Arc::new(pairs), used: false })
+        Self { pairs: Arc::new(pairs), used: false }
     }
 
     /// The state of the book with base `base` and quote `quote`, if any.
@@ -99,18 +108,11 @@ impl BebopAllPairsState {
     }
 }
 
-/// The token at `address`. Fails when `tokens` does not carry it: the client filters books to its
-/// tokens, so an unknown token means corrupt data.
-fn book_token(tokens: &HashMap<Bytes, Token>, address: &[u8]) -> Result<Token, SimulationError> {
+/// The token at `address`, if `tokens` carries it.
+fn book_token(tokens: &HashMap<Bytes, Token>, address: &[u8]) -> Option<Token> {
     tokens
         .get(&Bytes::from(address.to_vec()))
         .cloned()
-        .ok_or_else(|| {
-            SimulationError::FatalError(format!(
-                "Bebop book names token 0x{}, which the state does not carry",
-                hex::encode(address)
-            ))
-        })
 }
 
 #[typetag::serde]
@@ -260,7 +262,6 @@ mod tests {
             ]),
             empty_bebop_client(),
         )
-        .unwrap()
     }
 
     /// WBTC/USDC and WETH/USDC books.

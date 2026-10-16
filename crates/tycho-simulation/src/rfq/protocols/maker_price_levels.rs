@@ -7,6 +7,7 @@ use std::{
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use tycho_client::feed::synchronizer::ComponentWithState;
 use tycho_common::{
     models::{token::Token, Chain},
@@ -147,32 +148,34 @@ impl Fill<'_> {
 }
 
 impl AllMakerPriceLevels {
-    /// Fails when a maker's price levels name a token `tokens` does not carry.
+    /// Skips price levels with a token missing from `tokens` (`debug!`: the decoder logged the
+    /// token).
     pub fn new(
         mut price_levels: Vec<MakerPriceLevels>,
         tokens: HashMap<Bytes, Token>,
         pricing: MakerPricing,
         rule: QuoteRule,
-    ) -> Result<Self, SimulationError> {
-        for maker_levels in &price_levels {
-            for address in [&maker_levels.base_token, &maker_levels.quote_token] {
-                // The client filters levels to its tokens; an unknown token means corrupt data.
-                if !tokens.contains_key(address) {
-                    return Err(SimulationError::FatalError(format!(
-                        "Price levels of {} name token {address}, which the state does not carry",
-                        maker_levels.market_maker
-                    )));
-                }
+    ) -> Self {
+        price_levels.retain(|maker_levels| {
+            let both_tokens_present = [&maker_levels.base_token, &maker_levels.quote_token]
+                .into_iter()
+                .all(|address| tokens.contains_key(address));
+            if !both_tokens_present {
+                debug!(
+                    "Skipping price levels of {} on {} -> {}: a token is missing from the state.",
+                    maker_levels.market_maker, maker_levels.base_token, maker_levels.quote_token
+                );
             }
-        }
+            both_tokens_present
+        });
         price_levels.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
-        Ok(Self {
+        Self {
             price_levels: Arc::new(price_levels),
             tokens: Arc::new(tokens),
             used_market_makers: HashSet::new(),
             pricing,
             rule,
-        })
+        }
     }
 
     pub fn token(&self, address: &Bytes) -> Result<&Token, SimulationError> {
@@ -422,7 +425,6 @@ mod tests {
             pricing,
             rule,
         )
-        .unwrap()
     }
 
     fn per_maker() -> AllMakerPriceLevels {
@@ -437,15 +439,23 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_book_naming_unknown_token() {
-        let result = AllMakerPriceLevels::new(
-            vec![maker_price_levels("mm", &weth(), &usdc(), &[(1.0, 3000.0)])],
-            HashMap::from([(weth().address, weth())]),
+    fn new_skips_book_naming_unknown_token() {
+        let price_levels = AllMakerPriceLevels::new(
+            vec![
+                maker_price_levels("mm", &weth(), &usdc(), &[(1.0, 3000.0)]),
+                maker_price_levels("mm", &wbtc(), &usdc(), &[(1.0, 65000.0)]),
+            ],
+            HashMap::from([(weth().address, weth()), (usdc().address, usdc())]),
             MakerPricing::Liquorice,
             QuoteRule::OncePerMaker,
         );
+        let weth_price = price_levels
+            .spot_price(&weth().address, &usdc().address)
+            .unwrap();
+        let wbtc_price = price_levels.spot_price(&wbtc().address, &usdc().address);
+        assert_eq!(weth_price, 3000.0);
         assert!(
-            matches!(result, Err(SimulationError::FatalError(msg)) if msg.contains("does not carry"))
+            matches!(wbtc_price, Err(SimulationError::InvalidInput(msg, None)) if msg.contains("No market maker quotes"))
         );
     }
 
@@ -539,8 +549,7 @@ mod tests {
                 tokens(),
                 MakerPricing::Liquorice,
                 QuoteRule::OncePerMaker,
-            )
-            .unwrap();
+            );
             let result = price_levels.spot_price(&weth().address, &usdc().address);
             assert!(
                 matches!(result, Err(SimulationError::RecoverableError(msg)) if msg == "No liquidity")

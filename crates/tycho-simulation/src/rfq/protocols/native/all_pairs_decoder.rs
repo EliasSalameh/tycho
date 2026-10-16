@@ -46,11 +46,10 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for NativeAllPairsSta
             .component_layout(ComponentLayout::AllPairs)
             .build()
             .map_err(|e| {
-                InvalidSnapshotError::MissingAttribute(format!("Couldn't create NativeClient: {e}"))
+                InvalidSnapshotError::ValueError(format!("Couldn't create NativeClient: {e}"))
             })?;
 
-        NativeAllPairsState::new(books, tokens, client)
-            .map_err(|e| InvalidSnapshotError::ValueError(e.to_string()))
+        Ok(NativeAllPairsState::new(books, tokens, client))
     }
 }
 
