@@ -86,17 +86,10 @@ pub fn needs_approval(protocol_system: &str) -> bool {
 /// A swap that actually falls back pays for the fallback protocol on top.
 pub const FALLBACK_ROUTER_OVERHEAD_GAS: u64 = 40_000;
 
-/// Gas for the fallback router's `quoteFallback` call, which prices the fallback protocol before
-/// the router picks a side. The quote walks the fallback pool's liquidity the way a swap does, so
-/// this is the upper end of its cost on a concentrated-liquidity pool.
-pub const FALLBACK_QUOTE_GAS: u64 = 100_000;
-
-/// Whether the fallback router for `protocol_system` runs a signed quote first and falls back
-/// only on failure, so it never quotes the fallback protocol.
-fn runs_signed_quote_first(protocol_system: &str) -> bool {
-    protocol_system == BEBOP_FALLBACK_PROTOCOL_SYSTEM ||
-        protocol_system == HASHFLOW_FALLBACK_PROTOCOL_SYSTEM
-}
+/// Gas for `MetricFallbackRouter`'s `quoteFallback` call, which prices the fallback protocol
+/// before the router picks a side. The cost depends on how much of the fallback pool's liquidity
+/// the quote walks; this covers most quotes on a concentrated-liquidity pool.
+pub const METRIC_FALLBACK_QUOTE_GAS: u64 = 100_000;
 
 /// `outputToRouter = true`: the pool sends output to the router, which then does an extra
 /// `_transferOut` to the receiver.
@@ -149,9 +142,10 @@ pub fn estimate_gas_usage(solution: &Solution, strategy: Strategy) -> BigUint {
             &strategy,
         );
         total_gas += group_transfer_overhead + &group.estimated_gas;
-        // `MetricFallbackRouter` quotes the pool by running its swap.
+        // `MetricFallbackRouter` quotes the pool by running its swap, then quotes the fallback.
         if group.protocol_system == METRIC_FALLBACK_PROTOCOL_SYSTEM {
             total_gas += &group.estimated_gas;
+            total_gas += BigUint::from(METRIC_FALLBACK_QUOTE_GAS);
         }
     }
 
@@ -262,13 +256,12 @@ fn estimate_transfer_overhead(
     // fallback router — comes on top.
     if protocol_system.starts_with(FALLBACK_PREFIX) {
         overhead += BigUint::from(FALLBACK_ROUTER_OVERHEAD_GAS);
-        if !runs_signed_quote_first(protocol_system) {
-            overhead += BigUint::from(FALLBACK_QUOTE_GAS);
-        }
     }
 
     // The Bebop and Hashflow routers approve the venue themselves and forward the output.
-    if runs_signed_quote_first(protocol_system) {
+    if protocol_system == BEBOP_FALLBACK_PROTOCOL_SYSTEM ||
+        protocol_system == HASHFLOW_FALLBACK_PROTOCOL_SYSTEM
+    {
         overhead += BigUint::from(TOKEN_APPROVAL_GAS);
         overhead += transfer_token_gas(token_out);
     }
@@ -407,10 +400,9 @@ mod tests {
         // user transfer (TransferFrom)         40_000  ← DEFAULT_TOKEN_TRANSFER_GAS
         // input transfer                            0  ← push-payment, funds sent directly
         // fallback router overhead             40_000  ← FALLBACK_ROUTER_OVERHEAD_GAS
-        // fallback quote                      100_000  ← FALLBACK_QUOTE_GAS
         // pool gas                            100_000
         // fee output transfer                  60_000  ← not in OUTPUT_TO_ROUTER
-        assert_eq!(gas, BigUint::from(340_000u64));
+        assert_eq!(gas, BigUint::from(240_000u64));
     }
 
     #[test]
@@ -420,7 +412,7 @@ mod tests {
 
         // user transfer (TransferFrom)         40_000  ← DEFAULT_TOKEN_TRANSFER_GAS
         // fallback router overhead             40_000  ← FALLBACK_ROUTER_OVERHEAD_GAS
-        // fallback quote                      100_000  ← FALLBACK_QUOTE_GAS
+        // fallback quote                      100_000  ← METRIC_FALLBACK_QUOTE_GAS
         // pool gas                            100_000
         // simulated quote                     100_000  ← the pool gas again
         // fee output transfer                  60_000
@@ -463,12 +455,11 @@ mod tests {
         // user transfer (TransferFrom)         40_000  ← DEFAULT_TOKEN_TRANSFER_GAS
         // leg1 input transfer                  60_000  ← Split reintroduces the router hop
         // leg1 fallback router overhead        40_000  ← FALLBACK_ROUTER_OVERHEAD_GAS
-        // leg1 fallback quote                 100_000  ← FALLBACK_QUOTE_GAS
         // leg1 pool gas                       100_000
         // leg2 input transfer                  60_000  ← Split reintroduces the router hop
         // leg2 pool gas                       100_000
         // extra output transfer (→ router)     60_000  ← TOKEN_GAS
-        assert_eq!(gas, BigUint::from(560_000u64));
+        assert_eq!(gas, BigUint::from(460_000u64));
     }
 
     #[test]
