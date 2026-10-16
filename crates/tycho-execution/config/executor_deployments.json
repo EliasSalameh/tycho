@@ -275,7 +275,7 @@
     },
     "fallback:rfq:metric": {
       "contract": "MetricFallbackExecutor",
-      "args": ["0x0000000000000000000000000000000000000000"]
+      "args": ["0x174ec4B11994b36AfCCA0d31b6c591594cDdA1FB"]
     },
     "pancakeswap_infinity_cl": {
       "contract": "PancakeswapInfinityExecutor",
