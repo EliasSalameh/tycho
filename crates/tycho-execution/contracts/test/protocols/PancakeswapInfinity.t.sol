@@ -32,11 +32,11 @@ function usdcUsdtSwapData(address tokenIn, address tokenOut, bool zeroForOne)
 }
 
 contract PancakeswapInfinityExecutorExposed is PancakeswapInfinityExecutor {
-    constructor()
+    constructor(address clPoolManager_, address binPoolManager_)
         PancakeswapInfinityExecutor(
             IPancakeswapInfinityVault(INFINITY_VAULT),
-            INFINITY_CL_POOL_MANAGER,
-            INFINITY_BIN_POOL_MANAGER
+            clPoolManager_,
+            binPoolManager_
         )
     {}
 
@@ -79,7 +79,9 @@ contract PancakeswapInfinityExecutorTest is Constants, TestUtils {
     PancakeswapInfinityExecutorExposed executor;
 
     function setUp() public {
-        executor = new PancakeswapInfinityExecutorExposed();
+        executor = new PancakeswapInfinityExecutorExposed(
+            INFINITY_CL_POOL_MANAGER, INFINITY_BIN_POOL_MANAGER
+        );
     }
 
     function testDecodeParams() public view {
@@ -268,7 +270,9 @@ contract PancakeswapInfinityForkTest is Constants, TestUtils {
 
     function setUp() public {
         vm.createSelectFork(vm.rpcUrl("base"), INFINITY_FORK_BLOCK);
-        executor = new PancakeswapInfinityExecutorExposed();
+        executor = new PancakeswapInfinityExecutorExposed(
+            INFINITY_CL_POOL_MANAGER, INFINITY_BIN_POOL_MANAGER
+        );
     }
 
     /// @dev Funds the executor with tokenIn, swaps all of it and checks it reached ALICE as
@@ -293,6 +297,39 @@ contract PancakeswapInfinityForkTest is Constants, TestUtils {
         _assertSwap(
             BASE_USDT, BASE_USDC, usdcUsdtSwapData(BASE_USDT, BASE_USDC, false)
         );
+    }
+
+    /// Chains without a BinPoolManager (Robinhood) deploy with a zero one: CL still swaps,
+    /// Bin reverts before reaching address(0).
+    function testBinSwapRevertsWithoutBinManager() public {
+        executor = new PancakeswapInfinityExecutorExposed(
+            INFINITY_CL_POOL_MANAGER, address(0)
+        );
+        _assertSwap(
+            BASE_USDC, BASE_USDT, usdcUsdtSwapData(BASE_USDC, BASE_USDT, true)
+        );
+        deal(BASE_USDC, address(executor), 1000e6);
+        // Reverts before any pool is looked up, so fee and parameters are arbitrary.
+        bytes memory binData = abi.encodePacked(
+            BASE_USDC,
+            BASE_USDT,
+            true, // zeroForOne
+            uint8(1), // Bin
+            uint24(5), // fee
+            bytes32(uint256(10) << 16), // bin step 10
+            address(0) // no hooks
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PancakeswapInfinityExecutor__UnknownPoolType.selector, uint8(1)
+            )
+        );
+        executor.swap(1000e6, binData, ALICE);
+    }
+
+    function testConstructorRequiresAManager() public {
+        vm.expectRevert(PancakeswapInfinityExecutor__ZeroAddress.selector);
+        new PancakeswapInfinityExecutorExposed(address(0), address(0));
     }
 
     function testSwapMatchesEncoderCalldata() public {
