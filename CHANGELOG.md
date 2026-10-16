@@ -1,3 +1,13 @@
+## [0.461.1](https://github.com/propeller-heads/tycho/compare/0.461.0...0.461.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* estimate Metric fallback legs at their measured gas ([#1628](https://github.com/propeller-heads/tycho/issues/1628)) ([9ec76e2](https://github.com/propeller-heads/tycho/commit/9ec76e2b2273404c90e72ede5355b385639f00a7))
+* **execution:** charge the fallback quote on Metric legs only ([8a9afe4](https://github.com/propeller-heads/tycho/commit/8a9afe45b07d152877a6a06360123cd2df755c73))
+* **execution:** charge the fallback quote on quoting fallback legs ([8f1e2a9](https://github.com/propeller-heads/tycho/commit/8f1e2a94685d793323d0f4687e3a0fff4c0374cd))
+* **simulation:** raise Metric swap gas to the measured cost ([61db457](https://github.com/propeller-heads/tycho/commit/61db457dd38cd80e11ff00fd5dd7308ac80ec6ec))
+
 ## [0.461.0](https://github.com/propeller-heads/tycho/compare/0.460.0...0.461.0) (2026-10-16)
 
 
