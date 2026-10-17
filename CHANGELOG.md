@@ -1,3 +1,11 @@
+## [0.461.2](https://github.com/propeller-heads/tycho/compare/0.461.1...0.461.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **simulation:** point the TaurusFi pAMM at its live router ([8549a66](https://github.com/propeller-heads/tycho/commit/8549a66b01c1da33ed6e3b39882c2d25f2b91e0a))
+* **simulation:** point the TaurusFi pAMM at its live router ([#1633](https://github.com/propeller-heads/tycho/issues/1633)) ([f5ebe2b](https://github.com/propeller-heads/tycho/commit/f5ebe2bfd60984ff99020ae0c584b546b0b05ba9))
+
 ## [0.461.1](https://github.com/propeller-heads/tycho/compare/0.461.0...0.461.1) (2026-10-16)
 
 
