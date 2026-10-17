@@ -86,9 +86,11 @@ pub fn default_served_pamms() -> Vec<PriceLevelStreamConfig> {
         // quotes by this address and the newer one has no activity.
         ("kipseli", "0x71e790dd841c8a9061487cb3e78c288e75ce0b3d", 335_000u64),
         // The Metric router, per Titan's venue docs. It replaced 0xe715dc29…, which has had no
-        // activity since 2026-09-07. Measured over 213 fills (2026-10-16): p50 ~234k, p90 ~280k,
-        // up to ~320k on the WETH and stablecoin pairs; WBTC swaps run ~385k-612k.
-        ("metric", "0x99ab7c1c5eab47801f7937075998527a550fba8a", 325_000u64),
+        // activity since 2026-09-07. Its swap gas depends on the pair, so one value cannot fit
+        // all of them. Over 213 fills (2026-10-16), p50 was ~165k on USDC/USDT, ~245k on the
+        // WETH pairs and ~550k on WBTC/USDC; across all fills p50 ~234k, p90 ~280k. This takes
+        // the p90: it overstates the stablecoin pair and understates WBTC/USDC.
+        ("metric", "0x99ab7c1c5eab47801f7937075998527a550fba8a", 280_000u64),
         // The BopAMM (Bebop) router. It replaced 0xb09aaa56… on 2026-09-15, which has had no
         // activity since. The bytecode is the same except for one embedded address, so the
         // earlier measurement (~133k-136k, 2026-08-18) still applies.
