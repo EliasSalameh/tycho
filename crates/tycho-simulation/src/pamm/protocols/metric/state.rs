@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Gas estimate for one MetricExecutor swap (pool swap + callback settlement).
-const METRIC_SWAP_GAS: u64 = 170_000;
+const METRIC_SWAP_GAS: u64 = 235_000;
 
 #[derive(Clone, derive_more::Debug, Serialize, Deserialize)]
 pub struct MetricState {
