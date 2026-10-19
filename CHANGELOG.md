@@ -1,3 +1,11 @@
+## [0.462.0](https://github.com/propeller-heads/tycho/compare/0.461.3...0.462.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** support Metric fallbacks on BSC ([7fa50c0](https://github.com/propeller-heads/tycho/commit/7fa50c0d74135bd3354898b6c91da6e8ea5e5469))
+* **execution:** support Metric fallbacks on BSC ([#1630](https://github.com/propeller-heads/tycho/issues/1630)) ([e7fd8e5](https://github.com/propeller-heads/tycho/commit/e7fd8e563b33ab9da6a708ac0a55ebceba607425))
+
 ## [0.461.3](https://github.com/propeller-heads/tycho/compare/0.461.2...0.461.3) (2026-10-19)
 
 
