@@ -238,6 +238,10 @@
     "rfq:metric": {
       "contract": "MetricExecutor",
       "args": []
+    },
+    "fallback:rfq:metric": {
+      "contract": "MetricFallbackExecutor",
+      "args": ["0x92Ebf3AC5B8F53faA94471E3D1260D4d7492e4f5"]
     }
   },
   "polygon": {
