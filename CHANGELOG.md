@@ -1,3 +1,11 @@
+## [0.464.0](https://github.com/propeller-heads/tycho/compare/0.463.0...0.464.0) (2026-10-19)
+
+
+### Features
+
+* **simulation:** enable sDAI in the erc4626 and curve filters ([70a0ce2](https://github.com/propeller-heads/tycho/commit/70a0ce2c68a91124e9fbe90f9d0d0fe9683176a6))
+* **simulation:** enable sDAI in the erc4626 and curve filters ([#1627](https://github.com/propeller-heads/tycho/issues/1627)) ([0e6669b](https://github.com/propeller-heads/tycho/commit/0e6669bd7c1c0e8a60e1e3fef30e5afe5f68c5b5))
+
 ## [0.463.0](https://github.com/propeller-heads/tycho/compare/0.462.0...0.463.0) (2026-10-19)
 
 
