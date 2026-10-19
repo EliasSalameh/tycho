@@ -1,3 +1,39 @@
+## [0.464.0](https://github.com/propeller-heads/tycho/compare/0.463.0...0.464.0) (2026-10-19)
+
+
+### Features
+
+* **simulation:** enable sDAI in the erc4626 and curve filters ([70a0ce2](https://github.com/propeller-heads/tycho/commit/70a0ce2c68a91124e9fbe90f9d0d0fe9683176a6))
+* **simulation:** enable sDAI in the erc4626 and curve filters ([#1627](https://github.com/propeller-heads/tycho/issues/1627)) ([0e6669b](https://github.com/propeller-heads/tycho/commit/0e6669bd7c1c0e8a60e1e3fef30e5afe5f68c5b5))
+
+## [0.463.0](https://github.com/propeller-heads/tycho/compare/0.462.0...0.463.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** add the deployed BSC LunarBase executor address ([5d339d4](https://github.com/propeller-heads/tycho/commit/5d339d43241709ad2555c07c109d6e62c26b092e))
+* **execution:** add the deployed PancakeSwap Infinity CL executors ([17eeed4](https://github.com/propeller-heads/tycho/commit/17eeed4281c3f4c7f99092a9e0a8aefd43a9076a))
+* **execution:** register the deployed LunarBase and PancakeSwap Infinity CL executors ([#1631](https://github.com/propeller-heads/tycho/issues/1631)) ([c71be73](https://github.com/propeller-heads/tycho/commit/c71be73d3717a4a2621cc0b7c2ed545fdcc70e3b))
+
+## [0.462.0](https://github.com/propeller-heads/tycho/compare/0.461.3...0.462.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** support Metric fallbacks on BSC ([7fa50c0](https://github.com/propeller-heads/tycho/commit/7fa50c0d74135bd3354898b6c91da6e8ea5e5469))
+* **execution:** support Metric fallbacks on BSC ([#1630](https://github.com/propeller-heads/tycho/issues/1630)) ([e7fd8e5](https://github.com/propeller-heads/tycho/commit/e7fd8e563b33ab9da6a708ac0a55ebceba607425))
+
+## [0.461.3](https://github.com/propeller-heads/tycho/compare/0.461.2...0.461.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** ignore zip advisories RUSTSEC-2026-0367 to 0369 ([c2ed9cc](https://github.com/propeller-heads/tycho/commit/c2ed9cc92360885da7ce0a059e34acf92935e9fe))
+* **deps:** ignore zip advisories RUSTSEC-2026-0367 to 0369 ([#1636](https://github.com/propeller-heads/tycho/issues/1636)) ([da4cd78](https://github.com/propeller-heads/tycho/commit/da4cd7818644fa9797388e6f6158cf78391e0638))
+* **simulation:** point the Metric pAMM at its live router ([76575a2](https://github.com/propeller-heads/tycho/commit/76575a2cf106ef99e312290e7fcf4ec1b93a9ab3))
+* **simulation:** point the Metric pAMM at its live router ([#1632](https://github.com/propeller-heads/tycho/issues/1632)) ([119ca35](https://github.com/propeller-heads/tycho/commit/119ca35cf6dece8d514d038fcb0c9d21f4abb4fe))
+* **simulation:** use the p90 for the Metric pAMM swap gas ([901f1d4](https://github.com/propeller-heads/tycho/commit/901f1d4c96a4aaff13455a1174b406d445092600))
+
 ## [0.461.2](https://github.com/propeller-heads/tycho/compare/0.461.1...0.461.2) (2026-10-17)
 
 

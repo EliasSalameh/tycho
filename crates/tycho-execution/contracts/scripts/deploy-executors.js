@@ -91,7 +91,9 @@ const deploy_protocols = {
         "native_wrapper",
         "pancakeswap_infinity_cl",
         "rfq:metric",
-        "rfq:native"
+        "rfq:native",
+        "fallback:rfq:metric",
+        "lunarbase",
     ],
     "plasma": [
         "uniswap_v3",
