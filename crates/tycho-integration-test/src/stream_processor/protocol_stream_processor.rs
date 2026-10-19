@@ -331,6 +331,7 @@ impl ProtocolStreamProcessor {
                 "pancakeswap_v3".to_string(),
                 "ring_swap_v2".to_string(),
                 "pancakeswap_infinity_cl".to_string(),
+                "lunarbase".to_string(),
             ],
             Chain::Unichain => {
                 vec![
@@ -587,6 +588,15 @@ mod tests {
         assert!(
             defaults.contains(&"uniswap_v4_hooks".to_string()),
             "Robinhood defaults must include uniswap_v4_hooks: {defaults:?}"
+        );
+    }
+
+    #[test]
+    fn bsc_defaults_include_lunarbase() {
+        let defaults = processor(Chain::Bsc).get_default_protocols_for_chain();
+        assert!(
+            defaults.contains(&"lunarbase".to_string()),
+            "BSC defaults must include lunarbase: {defaults:?}"
         );
     }
 
