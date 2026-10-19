@@ -17,7 +17,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_state, RefusesQuote},
+        all_pairs::{all_pairs_state, RefusesQuote, SignedByMakers},
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -211,7 +211,7 @@ impl IndicativelyPriced for HashflowState {
 all_pairs_state! {
     /// Hashflow's books on one chain behind one component: every market maker's levels on every
     /// pair it quotes.
-    HashflowAllPairsState(HashflowState);
+    HashflowAllPairsState(HashflowState, SignedByMakers);
 }
 
 impl RefusesQuote for HashflowAllPairsState {

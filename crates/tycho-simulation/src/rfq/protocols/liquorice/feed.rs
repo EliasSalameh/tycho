@@ -31,7 +31,7 @@ pub struct LiquoriceFeed {
 /// credentials.
 pub struct LiquoriceFeedBuilder {
     book_config: BookFeedConfig,
-    component_layout: ComponentLayout,
+    component_layout: ComponentLayout<QuoteRule>,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     auth_solver: String,
     auth_key: String,

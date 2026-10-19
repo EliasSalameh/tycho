@@ -9,7 +9,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{BookCollector, QuoteRule, VenueBook},
+        all_pairs::{BookCollector, Venue, VenueBook},
         component::pair_component_id,
         wire::EntryReader,
         BookFeedConfig, BookSnapshot, Books, ReceivedAt,
@@ -121,8 +121,7 @@ impl BebopBookSource {
             self.protocol_system,
             PROTOCOL_TYPE,
             self.book_config.chain,
-            self.all_pairs
-                .then_some(QuoteRule::OncePerVenue),
+            self.all_pairs.then_some(()),
         );
         for (book, (base_token, quote_token, tvl, usd_per_quote_token)) in pairs
             .into_iter()
@@ -146,7 +145,7 @@ impl BebopBookSource {
                 usd_per_quote_token,
                 Arc::clone(&self.client),
             );
-            collector.push(component_id, VenueBook { maker: None, updated_at, state });
+            collector.push(component_id, VenueBook { signer: Venue, updated_at, state });
         }
         Ok(collector.finish::<BebopAllPairsState>())
     }

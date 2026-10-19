@@ -17,7 +17,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_state, RefusesQuote},
+        all_pairs::{all_pairs_state, RefusesQuote, SignedByVenue},
         component::PairState,
         levels::Levels,
         sim::{self, SwapDirection},
@@ -258,8 +258,9 @@ all_pairs_state! {
     /// Native's books on one chain behind one component.
     ///
     /// Native signs its quotes itself and names no market maker, so all of its books share one
-    /// turn whichever rule it is published under.
-    NativeAllPairsState(NativeState);
+    /// turn: a route takes one quote from the venue, and the swap that takes it spends every
+    /// book behind the component.
+    NativeAllPairsState(NativeState, SignedByVenue);
 }
 
 impl RefusesQuote for NativeAllPairsState {}

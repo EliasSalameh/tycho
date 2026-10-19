@@ -11,6 +11,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    fmt::Debug,
     sync::Arc,
 };
 
@@ -36,18 +37,19 @@ use crate::{
 
 /// Which components a feed publishes for its venue. The venue's feed builder picks the layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ComponentLayout {
+pub(crate) enum ComponentLayout<R> {
     /// One component per pair the venue prices, each priced by that pair's own book.
     PerPair,
     /// One component for every pair the venue prices, priced by all of its books at once. A
-    /// route may quote that component only as often as this [`QuoteRule`] allows.
-    AllPairs(QuoteRule),
+    /// route may quote that component only as often as `R` allows — a [`QuoteRule`] where the
+    /// venue names its makers, and nothing to choose where it signs for itself.
+    AllPairs(R),
 }
 
-impl From<Option<QuoteRule>> for ComponentLayout {
+impl<R> From<Option<R>> for ComponentLayout<R> {
     /// One component for all of a venue's pairs, quoted under the rule its feed was built with;
     /// one per pair where it was not built for that.
-    fn from(rule: Option<QuoteRule>) -> Self {
+    fn from(rule: Option<R>) -> Self {
         rule.map_or(ComponentLayout::PerPair, ComponentLayout::AllPairs)
     }
 }
@@ -95,62 +97,115 @@ impl QuoteRule {
     }
 }
 
-/// What a route has already taken from a venue, in the shape its [`QuoteRule`] counts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Spent {
-    /// Under [`QuoteRule::OncePerMaker`]: the makers this route has quoted, and whether it has
-    /// quoted the books of a venue that names none, which are one turn between them.
-    Makers { named: HashSet<String>, unnamed: bool },
-    /// Under [`QuoteRule::OncePerVenue`]: whether this route has quoted the venue at all.
-    Venue(bool),
+/// What a route has already taken from a venue, and whom it may still quote.
+pub(crate) trait Turns:
+    Clone + Debug + PartialEq + Serialize + DeserializeOwned + 'static
+{
+    /// Who signs the books these turns count.
+    type Signer: Clone + Debug + PartialEq + Serialize + DeserializeOwned;
+
+    /// What the venue's feed builder chooses about how often one route may quote it.
+    type Rule: Copy + Debug;
+
+    /// Nothing taken yet, under `rule`.
+    fn untaken(rule: Self::Rule) -> Self;
+
+    /// The rule the venue's component advertises.
+    fn quote_rule(&self) -> QuoteRule;
+
+    /// Whether a book `signer` put up may still be quoted.
+    fn allows(&self, signer: &Self::Signer) -> bool;
+
+    /// Takes the turn a swap against `signer` costs.
+    fn spend(&mut self, signer: &Self::Signer);
 }
 
-impl Spent {
-    fn nothing(rule: QuoteRule) -> Self {
+/// A market maker a venue names, whose ladders a book holds.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) struct MarketMaker(pub String);
+
+/// The venue, which signs its own quotes: one signer for all of its books.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Venue;
+
+/// What a route has taken from a venue that names its market makers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum SignedByMakers {
+    /// Under [`QuoteRule::OncePerMaker`]: the makers this route has quoted.
+    PerMaker(HashSet<MarketMaker>),
+    /// Under [`QuoteRule::OncePerVenue`]: whether this route has quoted the venue at all.
+    PerVenue(bool),
+}
+
+impl Turns for SignedByMakers {
+    type Signer = MarketMaker;
+    type Rule = QuoteRule;
+
+    fn untaken(rule: QuoteRule) -> Self {
         match rule {
-            QuoteRule::OncePerMaker => Spent::Makers { named: HashSet::new(), unnamed: false },
-            QuoteRule::OncePerVenue => Spent::Venue(false),
+            QuoteRule::OncePerMaker => SignedByMakers::PerMaker(HashSet::new()),
+            QuoteRule::OncePerVenue => SignedByMakers::PerVenue(false),
         }
     }
 
-    fn rule(&self) -> QuoteRule {
+    fn quote_rule(&self) -> QuoteRule {
         match self {
-            Spent::Makers { .. } => QuoteRule::OncePerMaker,
-            Spent::Venue(_) => QuoteRule::OncePerVenue,
+            SignedByMakers::PerMaker(_) => QuoteRule::OncePerMaker,
+            SignedByMakers::PerVenue(_) => QuoteRule::OncePerVenue,
         }
     }
 
-    /// Whether a book of `maker` may still be quoted.
-    fn allows(&self, maker: Option<&str>) -> bool {
-        match (self, maker) {
-            (Spent::Makers { named, .. }, Some(maker)) => !named.contains(maker),
-            (Spent::Makers { unnamed, .. }, None) => !unnamed,
-            (Spent::Venue(signed), _) => !signed,
+    fn allows(&self, signer: &MarketMaker) -> bool {
+        match self {
+            SignedByMakers::PerMaker(makers) => !makers.contains(signer),
+            SignedByMakers::PerVenue(signed) => !signed,
         }
     }
 
-    /// The same turns with a swap against `maker` taken out of them.
-    fn spending(&self, maker: Option<&str>) -> Self {
-        match (self.clone(), maker) {
-            (Spent::Makers { mut named, unnamed }, Some(maker)) => {
-                named.insert(maker.to_string());
-                Spent::Makers { named, unnamed }
+    fn spend(&mut self, signer: &MarketMaker) {
+        match self {
+            SignedByMakers::PerMaker(makers) => {
+                makers.insert(signer.clone());
             }
-            (Spent::Makers { named, .. }, None) => Spent::Makers { named, unnamed: true },
-            (Spent::Venue(_), _) => Spent::Venue(true),
+            SignedByMakers::PerVenue(signed) => *signed = true,
         }
+    }
+}
+
+/// What a route has taken from a venue that signs its own quotes: one turn, taken or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SignedByVenue(bool);
+
+impl Turns for SignedByVenue {
+    type Signer = Venue;
+    /// One signer is one turn, so the feed builder chooses nothing beyond the layout.
+    type Rule = ();
+
+    fn untaken((): ()) -> Self {
+        SignedByVenue(false)
+    }
+
+    fn quote_rule(&self) -> QuoteRule {
+        QuoteRule::OncePerVenue
+    }
+
+    fn allows(&self, _signer: &Venue) -> bool {
+        !self.0
+    }
+
+    fn spend(&mut self, _signer: &Venue) {
+        self.0 = true;
     }
 }
 
 /// One of the books a venue publishes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct VenueBook<S> {
-    /// The market maker whose ladders these are, where the venue names one. Books without a
-    /// maker count as one and the same under [`QuoteRule::OncePerMaker`].
-    pub maker: Option<String>,
+pub(crate) struct VenueBook<P, S> {
+    /// Who signs a quote from this book, and so whose turn a swap against it spends.
+    pub signer: S,
     /// When the venue last updated this book, as the per-pair layout would publish it.
     pub updated_at: Option<DateTime<Utc>>,
-    pub state: S,
+    pub state: P,
 }
 
 /// Every book a venue publishes, behind one component.
@@ -161,11 +216,11 @@ pub(crate) struct VenueBook<S> {
 /// The books are shared, so what a swap copies to hand back the state it leaves behind is a
 /// reference count and the set of books it has spent.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "S: Serialize + DeserializeOwned + PairState")]
-pub(crate) struct AllPairs<S> {
-    books: Arc<VenueBooks<S>>,
+#[serde(bound = "P: Serialize + DeserializeOwned + PairState, T: Turns")]
+pub(crate) struct AllPairs<P, T: Turns> {
+    books: Arc<VenueBooks<P, T::Signer>>,
     /// The turns every swap this state is downstream of has taken.
-    spent: Spent,
+    spent: T,
 }
 
 /// A venue's books and, for each direction, which of them price it.
@@ -173,24 +228,27 @@ pub(crate) struct AllPairs<S> {
 /// Serialized as the books alone: the index is derived from them, and is built again whenever
 /// a set of books comes from anywhere other than a source.
 #[derive(Debug, Deserialize)]
-#[serde(from = "Vec<VenueBook<S>>", bound = "S: DeserializeOwned + PairState")]
-struct VenueBooks<S> {
-    books: Vec<VenueBook<S>>,
+#[serde(
+    from = "Vec<VenueBook<P, S>>",
+    bound = "P: DeserializeOwned + PairState, S: DeserializeOwned"
+)]
+struct VenueBooks<P, S> {
+    books: Vec<VenueBook<P, S>>,
     /// Indices into `books`, by token sold and then token bought, so a swap looks only at the
     /// books that price it and a lookup costs no allocation.
     by_direction: HashMap<Bytes, HashMap<Bytes, Vec<usize>>>,
 }
 
-impl<S: Serialize> Serialize for VenueBooks<S> {
+impl<P: Serialize, S: Serialize> Serialize for VenueBooks<P, S> {
     fn serialize<W: serde::Serializer>(&self, serializer: W) -> Result<W::Ok, W::Error> {
         self.books.serialize(serializer)
     }
 }
 
-impl<S: PairState> From<Vec<VenueBook<S>>> for VenueBooks<S> {
-    fn from(books: Vec<VenueBook<S>>) -> Self {
+impl<P: PairState, S> From<Vec<VenueBook<P, S>>> for VenueBooks<P, S> {
+    fn from(books: Vec<VenueBook<P, S>>) -> Self {
         let mut by_direction: HashMap<Bytes, HashMap<Bytes, Vec<usize>>> = HashMap::new();
-        let mut kept: Vec<VenueBook<S>> = Vec::new();
+        let mut kept = Vec::new();
         for book in books {
             // A book that prices nothing is left out rather than held: it would put its tokens
             // on the component while naming no way to trade them, and a consumer routing
@@ -214,13 +272,16 @@ impl<S: PairState> From<Vec<VenueBook<S>>> for VenueBooks<S> {
     }
 }
 
-impl<S: PairState> AllPairs<S> {
-    pub fn new(books: Vec<VenueBook<S>>, rule: QuoteRule) -> Self {
-        AllPairs { books: Arc::new(books.into()), spent: Spent::nothing(rule) }
+/// A book and what it answered to a swap.
+type Answered<'a, P, S> = (&'a VenueBook<P, S>, Result<GetAmountOutResult, SimulationError>);
+
+impl<P: PairState, T: Turns> AllPairs<P, T> {
+    pub fn new(books: Vec<VenueBook<P, T::Signer>>, rule: T::Rule) -> Self {
+        AllPairs { books: Arc::new(books.into()), spent: T::untaken(rule) }
     }
 
     pub fn rule(&self) -> QuoteRule {
-        self.spent.rule()
+        self.spent.quote_rule()
     }
 
     /// Every direction the venue prices, which is what its component advertises.
@@ -236,7 +297,7 @@ impl<S: PairState> AllPairs<S> {
             .collect()
     }
 
-    pub fn books(&self) -> &[VenueBook<S>] {
+    pub fn books(&self) -> &[VenueBook<P, T::Signer>] {
         &self.books.books
     }
 
@@ -257,7 +318,7 @@ impl<S: PairState> AllPairs<S> {
         &self,
         token_in: &Bytes,
         token_out: &Bytes,
-    ) -> impl Iterator<Item = &VenueBook<S>> {
+    ) -> impl Iterator<Item = &VenueBook<P, T::Signer>> {
         self.books
             .by_direction
             .get(token_in)
@@ -276,7 +337,7 @@ impl<S: PairState> AllPairs<S> {
         &self,
         token_in: &Bytes,
         token_out: &Bytes,
-    ) -> Result<impl Iterator<Item = &VenueBook<S>>, SimulationError> {
+    ) -> Result<impl Iterator<Item = &VenueBook<P, T::Signer>>, SimulationError> {
         let mut pricing = self
             .books_pricing(token_in, token_out)
             .peekable();
@@ -287,7 +348,7 @@ impl<S: PairState> AllPairs<S> {
             ));
         }
         let mut quotable = pricing
-            .filter(|book| self.spent.allows(book.maker.as_deref()))
+            .filter(|book| self.spent.allows(&book.signer))
             .peekable();
         if quotable.peek().is_none() {
             return Err(SimulationError::RecoverableError(
@@ -297,9 +358,11 @@ impl<S: PairState> AllPairs<S> {
         Ok(quotable)
     }
 
-    /// The same books with the turn of `maker`'s book spent.
-    fn spending(&self, maker: Option<&str>) -> Self {
-        AllPairs { books: Arc::clone(&self.books), spent: self.spent.spending(maker) }
+    /// The same books with the turn of `signer`'s book spent.
+    fn spending(&self, signer: &T::Signer) -> Self {
+        let mut spent = self.spent.clone();
+        spent.spend(signer);
+        AllPairs { books: Arc::clone(&self.books), spent }
     }
 
     /// The book that answers `amount_in` best, and its answer.
@@ -308,8 +371,8 @@ impl<S: PairState> AllPairs<S> {
         amount_in: &BigUint,
         token_in: &Bytes,
         token_out: &Bytes,
-    ) -> Result<(&VenueBook<S>, Result<GetAmountOutResult, SimulationError>), SimulationError> {
-        let mut best: Option<(&VenueBook<S>, Result<GetAmountOutResult, SimulationError>)> = None;
+    ) -> Result<Answered<'_, P, T::Signer>, SimulationError> {
+        let mut best: Option<Answered<'_, P, T::Signer>> = None;
         for book in self.candidates(token_in, token_out)? {
             let (sold, bought) = book.tokens(token_in);
             let answer = book
@@ -377,7 +440,9 @@ impl<S: PairState> AllPairs<S> {
             self.books()
                 .iter()
                 .zip(other.books().iter())
-                .all(|(ours, theirs)| ours.maker == theirs.maker && ours.state.eq(&theirs.state))
+                .all(|(ours, theirs)| {
+                    ours.signer == theirs.signer && ours.state.eq(&theirs.state)
+                })
     }
 
     /// The swap against the best book available, handed back as `W` — the venue's own state
@@ -395,8 +460,7 @@ impl<S: PairState> AllPairs<S> {
         W: From<Self> + ProtocolSim + 'static,
     {
         let (book, answer) = self.best(amount_in, token_in, token_out)?;
-        let quoted =
-            || -> Box<dyn ProtocolSim> { Box::new(W::from(self.spending(book.maker.as_deref()))) };
+        let quoted = || -> Box<dyn ProtocolSim> { Box::new(W::from(self.spending(&book.signer))) };
         match answer {
             Ok(mut result) => {
                 result.new_state = quoted();
@@ -419,13 +483,13 @@ impl<S: PairState> AllPairs<S> {
         amount_in: &BigUint,
         token_in: &Bytes,
         token_out: &Bytes,
-    ) -> Result<&S, SimulationError> {
+    ) -> Result<&P, SimulationError> {
         let (book, _) = self.best(amount_in, token_in, token_out)?;
         Ok(&book.state)
     }
 }
 
-impl<S: PairState> VenueBook<S> {
+impl<P: PairState, S> VenueBook<P, S> {
     /// The book's own `Token`s for a swap that sells `token_in`. A state prices the pair it
     /// names, so it is given that pair rather than the caller's copy of the two tokens.
     fn tokens(&self, token_in: &Bytes) -> (&Token, &Token) {
@@ -482,18 +546,17 @@ pub(crate) trait RefusesQuote {
 macro_rules! all_pairs_state {
     (
         $(#[$doc:meta])*
-        $wrapper:ident($pair:ty);
+        $wrapper:ident($pair:ty, $turns:ty);
     ) => {
         $(#[$doc])*
         ///
         /// A swap spends the turn of the book it filled against, as the [`QuoteRule`] the
-        /// component was published under counts it: under `OncePerMaker` a later swap on the
-        /// state it returned goes to another market maker, and under `OncePerVenue` it finds
-        /// every book spent.
+        /// component was published under counts it. The next swap on the state it returned sees
+        /// that turn gone.
         ///
         /// [`QuoteRule`]: crate::book::all_pairs::QuoteRule
         #[derive(Clone, Debug, Serialize, Deserialize, ::derive_more::From)]
-        pub struct $wrapper($crate::book::all_pairs::AllPairs<$pair>);
+        pub struct $wrapper($crate::book::all_pairs::AllPairs<$pair, $turns>);
 
         #[typetag::serde]
         impl ::tycho_common::simulation::protocol_sim::ProtocolSim for $wrapper {
@@ -633,15 +696,15 @@ pub(crate) fn all_pairs_component_id(protocol_system: &str) -> Bytes {
 ///
 /// `None` where the venue priced nothing a consumer could route through, which is a component
 /// that would carry no tokens and no directions.
-pub(crate) fn all_pairs_book<S: PairState, W>(
+pub(crate) fn all_pairs_book<P: PairState, T: Turns, W>(
     protocol_system: &str,
     protocol_type: &str,
     chain: Chain,
-    books: Vec<VenueBook<S>>,
-    rule: QuoteRule,
+    books: Vec<VenueBook<P, T::Signer>>,
+    rule: T::Rule,
 ) -> Option<Book>
 where
-    W: From<AllPairs<S>> + ProtocolSim + 'static,
+    W: From<AllPairs<P, T>> + ProtocolSim + 'static,
 {
     let pairs = AllPairs::new(books, rule);
     if pairs.books().is_empty() {
@@ -678,21 +741,21 @@ where
 /// component id it would carry on its own and takes the [`Books`] at the end. Under
 /// [`ComponentLayout::PerPair`] that id is a component; under [`ComponentLayout::AllPairs`] the
 /// books end up behind one.
-pub(crate) struct BookCollector<S> {
+pub(crate) struct BookCollector<P, T: Turns> {
     protocol_system: &'static str,
     protocol_type: &'static str,
     chain: Chain,
-    layout: ComponentLayout,
+    layout: ComponentLayout<T::Rule>,
     books: Books,
-    venue_books: Vec<VenueBook<S>>,
+    venue_books: Vec<VenueBook<P, T::Signer>>,
 }
 
-impl<S: PairState> BookCollector<S> {
+impl<P: PairState, T: Turns> BookCollector<P, T> {
     pub fn new(
         protocol_system: &'static str,
         protocol_type: &'static str,
         chain: Chain,
-        layout: impl Into<ComponentLayout>,
+        layout: impl Into<ComponentLayout<T::Rule>>,
     ) -> Self {
         BookCollector {
             protocol_system,
@@ -705,7 +768,7 @@ impl<S: PairState> BookCollector<S> {
     }
 
     /// Takes one book of the venue, under the `component_id` the per-pair layout gives it.
-    pub fn push(&mut self, component_id: Bytes, book: VenueBook<S>) {
+    pub fn push(&mut self, component_id: Bytes, book: VenueBook<P, T::Signer>) {
         match self.layout {
             ComponentLayout::PerPair => self.books.insert(pair_book(
                 self.protocol_system,
@@ -723,11 +786,11 @@ impl<S: PairState> BookCollector<S> {
     /// `W` — the venue's own state type.
     pub fn finish<W>(mut self) -> Books
     where
-        W: From<AllPairs<S>> + ProtocolSim + 'static,
+        W: From<AllPairs<P, T>> + ProtocolSim + 'static,
     {
         if let ComponentLayout::AllPairs(rule) = self.layout {
             self.books
-                .extend(all_pairs_book::<S, W>(
+                .extend(all_pairs_book::<P, T, W>(
                     self.protocol_system,
                     self.protocol_type,
                     self.chain,
@@ -849,7 +912,7 @@ mod tests {
 
     /// A venue publishing [`TestBook`]s under one component.
     #[derive(Clone, Debug, Serialize, Deserialize, derive_more::From)]
-    struct TestVenue(AllPairs<TestBook>);
+    struct TestVenue(AllPairs<TestBook, SignedByMakers>);
 
     impl RefusesQuote for TestVenue {}
 
@@ -940,10 +1003,10 @@ mod tests {
     }
 
     /// A book of `maker` paying `out_per_in` B for every A up to `depth` of them.
-    fn book(maker: &str, out_per_in: u64, depth: u64) -> VenueBook<TestBook> {
+    fn book(maker: &str, out_per_in: u64, depth: u64) -> VenueBook<TestBook, MarketMaker> {
         let tokens = tokens();
         VenueBook {
-            maker: Some(maker.to_string()),
+            signer: MarketMaker(maker.to_string()),
             updated_at: None,
             state: TestBook {
                 base: tokens[&addr(0xaa)].clone(),
@@ -954,7 +1017,7 @@ mod tests {
         }
     }
 
-    fn venue(books: Vec<VenueBook<TestBook>>, rule: QuoteRule) -> TestVenue {
+    fn venue(books: Vec<VenueBook<TestBook, MarketMaker>>, rule: QuoteRule) -> TestVenue {
         TestVenue(AllPairs::new(books, rule))
     }
 
@@ -1089,7 +1152,7 @@ mod tests {
     /// which a consumer can do nothing with.
     #[test]
     fn a_venue_that_prices_nothing_publishes_no_component() {
-        let book = all_pairs_book::<TestBook, TestVenue>(
+        let book = all_pairs_book::<TestBook, SignedByMakers, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1106,7 +1169,7 @@ mod tests {
     fn the_component_advertises_the_directions_and_the_rule() {
         let tokens = tokens();
         let b_to_c = VenueBook {
-            maker: None,
+            signer: MarketMaker("mm".to_string()),
             updated_at: None,
             state: TestBook {
                 base: tokens[&addr(0xbb)].clone(),
@@ -1116,7 +1179,7 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book::<TestBook, TestVenue>(
+        let book = all_pairs_book::<TestBook, SignedByMakers, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1153,7 +1216,7 @@ mod tests {
     fn a_book_that_prices_nothing_is_left_out() {
         let tokens = tokens();
         let silent = VenueBook {
-            maker: None,
+            signer: MarketMaker("mm".to_string()),
             updated_at: None,
             state: TestBook {
                 base: tokens[&addr(0xbb)].clone(),
@@ -1163,7 +1226,7 @@ mod tests {
             },
         };
 
-        let book = all_pairs_book::<TestBook, TestVenue>(
+        let book = all_pairs_book::<TestBook, SignedByMakers, TestVenue>(
             "rfq:venue",
             "venue_pool",
             Chain::Ethereum,
@@ -1256,7 +1319,7 @@ mod tests {
     #[case::per_pair(ComponentLayout::PerPair, vec!["0x01", "0x02"])]
     #[case::all_pairs(ComponentLayout::AllPairs(QuoteRule::OncePerVenue), vec!["0x7266713a76656e7565"])]
     fn the_layout_decides_which_components_a_venues_books_become(
-        #[case] layout: ComponentLayout,
+        #[case] layout: ComponentLayout<QuoteRule>,
         #[case] expected: Vec<&str>,
     ) {
         let mut collector = BookCollector::new("rfq:venue", "venue_pool", Chain::Ethereum, layout);

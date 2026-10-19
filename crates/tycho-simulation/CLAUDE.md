@@ -80,14 +80,16 @@ for any protocol indexed by Tycho.
     already read as them — one side of a book, or neither, and every all-pairs component.
     `all_pairs` is the opt-in layout (`all_pairs()` on the four RFQ builders, taking the `QuoteRule`
     on the two that name their makers) that publishes a venue as one component for every pair it
-    prices: `AllPairs<S>` holds the per-pair states the other layout would publish, picks the best
-    book still allowed to quote under the component's `QuoteRule` (`once_per_maker`,
-    `once_per_venue`), and records it as spent in the state the swap returns. A venue's
-    `<Venue>AllPairsState` is a newtype over `AllPairs<S>`, because `#[typetag::serde]` registers
-    concrete types; the `all_pairs_state!` macro declares it, so the four differ only in the type
-    names and in what a venue refuses before a book is picked (`RefusesQuote::check_amount`, the
-    one thing that varies between them). A book
-    reporting no direction is left out of the state, so its tokens and its directions agree
+    prices: `AllPairs<P, T>` holds the per-pair states the other layout would publish, picks the
+    best book still allowed to quote under the component's `QuoteRule` (`once_per_maker`,
+    `once_per_venue`), and records it as spent in the state the swap returns. `T` is how the venue
+    counts turns — `SignedByMakers` where it names the maker behind each book, `SignedByVenue`
+    where it signs its own quotes and so has no rule to pick, which is why only the first pair of
+    builders takes one. A venue's `<Venue>AllPairsState` is a newtype over `AllPairs<P, T>`,
+    because `#[typetag::serde]` registers concrete types; the `all_pairs_state!` macro declares it
+    from those two types, so the four differ only in them and in what a venue refuses before a
+    book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
+    the state, so its tokens and its directions agree
   - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the

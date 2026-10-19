@@ -33,7 +33,7 @@ pub struct HashflowFeed {
 /// Builds a [`HashflowFeed`] from the shared [`BookFeedConfig`] and Hashflow's API credentials.
 pub struct HashflowFeedBuilder {
     protocol_system: &'static str,
-    component_layout: ComponentLayout,
+    component_layout: ComponentLayout<QuoteRule>,
     book_config: BookFeedConfig,
     usd_quote_tokens: Arc<HashSet<Bytes>>,
     auth_user: String,

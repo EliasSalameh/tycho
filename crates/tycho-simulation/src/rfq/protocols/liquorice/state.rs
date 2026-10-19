@@ -16,7 +16,7 @@ use tycho_common::{
 
 use crate::{
     book::{
-        all_pairs::{all_pairs_state, RefusesQuote},
+        all_pairs::{all_pairs_state, RefusesQuote, SignedByMakers},
         component::PairState,
         sim::{self, SwapDirection},
     },
@@ -179,7 +179,7 @@ impl IndicativelyPriced for LiquoriceState {
 
 all_pairs_state! {
     /// Liquorice's books on one chain behind one component: one book per market maker and pair.
-    LiquoriceAllPairsState(LiquoriceState);
+    LiquoriceAllPairsState(LiquoriceState, SignedByMakers);
 }
 
 impl RefusesQuote for LiquoriceAllPairsState {}

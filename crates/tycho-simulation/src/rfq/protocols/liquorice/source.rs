@@ -9,7 +9,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{BookCollector, ComponentLayout, VenueBook},
+        all_pairs::{BookCollector, ComponentLayout, MarketMaker, QuoteRule, VenueBook},
         component::maker_component_id,
         tvl, BookFeedConfig, BookSnapshot, ReceivedAt,
     },
@@ -34,7 +34,7 @@ pub struct LiquoriceBookSource {
     /// Requests binding quotes; shared with every state this source emits.
     pub client: Arc<LiquoriceClient>,
     /// Whether the venue's pairs are published as one component or one each.
-    pub component_layout: ComponentLayout,
+    pub component_layout: ComponentLayout<QuoteRule>,
 }
 
 impl LiquoriceBookSource {
@@ -114,7 +114,7 @@ impl HttpSource for LiquoriceBookSource {
                 );
                 collector.push(
                     component_id,
-                    VenueBook { maker: Some(mm_name.clone()), updated_at, state },
+                    VenueBook { signer: MarketMaker(mm_name.clone()), updated_at, state },
                 );
             }
         }

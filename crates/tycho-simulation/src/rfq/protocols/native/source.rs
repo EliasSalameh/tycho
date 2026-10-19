@@ -8,7 +8,7 @@ use tycho_common::Bytes;
 
 use crate::{
     book::{
-        all_pairs::{BookCollector, QuoteRule, VenueBook},
+        all_pairs::{BookCollector, Venue, VenueBook},
         component::pair_component_id,
         BookFeedConfig, BookSnapshot, ReceivedAt,
     },
@@ -196,8 +196,7 @@ impl HttpSource for NativeBookSource {
             PROTOCOL_SYSTEM,
             PROTOCOL_TYPE,
             self.book_config.chain,
-            self.all_pairs
-                .then_some(QuoteRule::OncePerVenue),
+            self.all_pairs.then_some(()),
         );
         for (component_id, book) in grouped {
             // Only requested markets become components.
@@ -228,7 +227,7 @@ impl HttpSource for NativeBookSource {
                 Arc::clone(&self.client),
             );
             // Native's orderbook carries no per-book timestamp.
-            collector.push(component_id, VenueBook { maker: None, updated_at: None, state });
+            collector.push(component_id, VenueBook { signer: Venue, updated_at: None, state });
         }
         Ok(BookSnapshot::received_now(collector.finish::<NativeAllPairsState>()))
     }
