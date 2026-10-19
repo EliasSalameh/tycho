@@ -68,6 +68,8 @@ impl TryFromWithBlock<ComponentWithState, TimestampHeader> for MetricState {
             token0: token0_address.clone(),
             token1: token1_address.clone(),
             tvl_fiat: None,
+            // Only unpaused pools are emitted, so the attributes do not carry the pause level.
+            pause_level: None,
         };
         let bid_ask = MetricBidAskResponse {
             bid_adj: read_biguint_attr(&attrs, "bid_adj")?,

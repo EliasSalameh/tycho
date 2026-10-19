@@ -70,6 +70,45 @@ pub struct MetricMetadata {
     /// it is `None` once a state is reconstructed by the decoder.
     #[serde(rename = "tvlFiat", default)]
     pub tvl_fiat: Option<f64>,
+    /// The pool's pause level: `0` trades normally, anything higher refuses some or all swaps.
+    /// `None` when the response predates the field.
+    #[serde(rename = "pauseLevel", default)]
+    pub pause_level: Option<u8>,
+}
+
+impl MetricMetadata {
+    /// Whether the pool accepts swaps. Metric routes only to pools at pause level `0`; a pool
+    /// whose response carries no pause level is treated as unpaused.
+    pub fn is_unpaused(&self) -> bool {
+        self.pause_level.unwrap_or(0) == 0
+    }
+}
+
+/// The response of `POST /public/v1/evm/{chain_id}/bid_ask/batch`: one result per requested pool,
+/// in request order.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MetricBatchBidAskResponse {
+    pub results: Vec<MetricBatchBidAskResult>,
+}
+
+/// One pool's entry in a batch bid/ask response: its quote, or the error the single-pool endpoint
+/// would have returned for it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MetricBatchBidAskResult {
+    #[serde(rename = "poolAddress", deserialize_with = "deserialize_address")]
+    pub pool_address: Bytes,
+    #[serde(default)]
+    pub quote: Option<MetricBidAskResponse>,
+    #[serde(default)]
+    pub error: Option<MetricBatchBidAskError>,
+}
+
+/// A pool that a batch bid/ask request could not quote.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MetricBatchBidAskError {
+    /// The HTTP status the single-pool endpoint would have returned for this pool.
+    pub status: u16,
+    pub error: String,
 }
 
 fn deserialize_address<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
@@ -377,5 +416,82 @@ mod tests {
 
         assert_eq!(response.next_offset, None);
         assert_eq!(response.data[0].tvl_fiat, Some(1234.56));
+    }
+
+    fn metadata_with_pause_level(pause_level: Option<u8>) -> MetricMetadata {
+        let mut pool = serde_json::json!({
+            "poolAddress": "0xbF48bCf474d57fF82A3215319229e0DE1476A557",
+            "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        });
+        if let Some(level) = pause_level {
+            pool["pauseLevel"] = serde_json::json!(level);
+        }
+        serde_json::from_value(pool).unwrap()
+    }
+
+    #[test]
+    fn test_only_pause_level_zero_is_unpaused() {
+        assert!(metadata_with_pause_level(Some(0)).is_unpaused());
+        assert!(!metadata_with_pause_level(Some(1)).is_unpaused());
+        assert!(!metadata_with_pause_level(Some(2)).is_unpaused());
+    }
+
+    #[test]
+    fn test_missing_pause_level_is_unpaused() {
+        let pool = metadata_with_pause_level(None);
+        assert_eq!(pool.pause_level, None);
+        assert!(pool.is_unpaused());
+    }
+
+    #[test]
+    fn test_batch_bid_ask_carries_quotes_and_per_pool_errors() {
+        let response: MetricBatchBidAskResponse = serde_json::from_value(serde_json::json!({
+            "results": [
+                {
+                    "poolAddress": "0xf85afbadecc7f23dd173ed706f07d9c7e2473e24",
+                    "quote": {
+                        "pair": "WETH/USDC",
+                        "poolAddress": "0xF85AfbADeCC7F23Dd173ed706f07d9C7e2473e24",
+                        "priceProviderStatus": "healthy",
+                        "bidAdj": "49940417631045696435290",
+                        "askAdj": "49945012360825322506424",
+                        "totalToken0Available": "24503618827789131821",
+                        "totalToken1Available": "49785157539",
+                        "serverTs": 1790508850,
+                        "depth": null
+                    }
+                },
+                {
+                    "poolAddress": "0x0000000000000000000000000000000000000001",
+                    "error": { "status": 404, "error": "Pair metadata not found" }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let [quoted, failed] = response.results.as_slice() else {
+            panic!("expected two results");
+        };
+        // Addresses are normalized, whatever casing the request used.
+        assert_eq!(
+            quoted.pool_address,
+            Bytes::from_str("0xF85AfbADeCC7F23Dd173ed706f07d9C7e2473e24").unwrap()
+        );
+        let quote = quoted
+            .quote
+            .as_ref()
+            .expect("the first pool was quoted");
+        assert_eq!(quote.server_ts, 1790508850);
+        assert!(quoted.error.is_none());
+
+        assert!(failed.quote.is_none());
+        assert_eq!(
+            failed.error,
+            Some(MetricBatchBidAskError {
+                status: 404,
+                error: "Pair metadata not found".to_string()
+            })
+        );
     }
 }

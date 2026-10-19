@@ -30,7 +30,8 @@ use crate::{
         errors::RFQError,
         models::TimestampHeader,
         protocols::metric::models::{
-            MetricBidAskResponse, MetricMetadata, PaginatedMetadataResponse,
+            MetricBatchBidAskResponse, MetricBidAskResponse, MetricMetadata,
+            PaginatedMetadataResponse,
         },
     },
     tycho_client::feed::synchronizer::{ComponentWithState, Snapshot, StateSyncMessage},
@@ -40,6 +41,9 @@ static METRIC_HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 /// Page size for the paginated metadata endpoint. The API clamps `count` to `[1, 500]`.
 const METADATA_PAGE_SIZE: u32 = 500;
+
+/// Most pools the batch bid/ask endpoint accepts in one request.
+const BID_ASK_BATCH_SIZE: usize = 100;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricClient {
@@ -222,44 +226,76 @@ impl MetricClient {
         Ok(pools)
     }
 
-    async fn fetch_bid_ask(&self, pool: &Bytes) -> Result<MetricBidAskResponse, RFQError> {
-        let endpoint =
-            format!("{}/{}/bid_ask", self.chain_endpoint, bytes_to_address_string(pool)?);
-        let mut request = self
-            .http_client()
-            .get(endpoint)
-            .header("accept", "application/json");
+    /// Fetches the bid/ask of `pools` through the batch endpoint, at most
+    /// [`BID_ASK_BATCH_SIZE`] pools per request.
+    ///
+    /// A pool the API cannot quote is logged and left out of the result; a request that fails as
+    /// a whole fails the call.
+    async fn fetch_bid_asks(
+        &self,
+        pools: &[Bytes],
+    ) -> Result<HashMap<Bytes, MetricBidAskResponse>, RFQError> {
+        let endpoint = format!("{}/bid_ask/batch", self.chain_endpoint);
+        let mut quotes = HashMap::with_capacity(pools.len());
+        for batch in pools.chunks(BID_ASK_BATCH_SIZE) {
+            let addresses = batch
+                .iter()
+                .map(bytes_to_address_string)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut request = self
+                .http_client()
+                .post(&endpoint)
+                .header("accept", "application/json")
+                .json(&serde_json::json!({ "pools": addresses }));
+            if let Some(api_key) = &self.api_key {
+                request = request.bearer_auth(api_key);
+            }
 
-        if let Some(api_key) = &self.api_key {
-            request = request.bearer_auth(api_key);
-        }
+            let response = timeout(self.quote_timeout, request.send())
+                .await
+                .map_err(|_| {
+                    RFQError::ConnectionError(format!(
+                        "Metric batch bid/ask request timed out after {} seconds",
+                        self.quote_timeout.as_secs()
+                    ))
+                })?
+                .map_err(|e| {
+                    RFQError::ConnectionError(format!("Failed to fetch Metric batch bid/ask: {e}"))
+                })?;
 
-        let response = timeout(self.quote_timeout, request.send())
-            .await
-            .map_err(|_| {
-                RFQError::ConnectionError(format!(
-                    "Metric bid/ask request timed out after {} seconds",
-                    self.quote_timeout.as_secs()
+            if !response.status().is_success() {
+                return Err(RFQError::ConnectionError(format!(
+                    "Metric batch bid/ask HTTP error {}: {}",
+                    response.status(),
+                    response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                )));
+            }
+
+            let response: MetricBatchBidAskResponse = response.json().await.map_err(|e| {
+                RFQError::ParsingError(format!(
+                    "Failed to parse Metric batch bid/ask response: {e}"
                 ))
-            })?
-            .map_err(|e| {
-                RFQError::ConnectionError(format!("Failed to fetch Metric bid/ask: {e}"))
             })?;
-
-        if !response.status().is_success() {
-            return Err(RFQError::ConnectionError(format!(
-                "Metric bid/ask HTTP error {}: {}",
-                response.status(),
-                response
-                    .text()
-                    .await
-                    .unwrap_or_default()
-            )));
+            for result in response.results {
+                match (result.quote, result.error) {
+                    (Some(quote), _) => {
+                        quotes.insert(result.pool_address, quote);
+                    }
+                    (None, Some(error)) => warn!(
+                        "Metric could not quote pool {} (HTTP {}): {}",
+                        result.pool_address, error.status, error.error
+                    ),
+                    (None, None) => warn!(
+                        "Metric batch bid/ask returned neither a quote nor an error for pool {}",
+                        result.pool_address
+                    ),
+                }
+            }
         }
-
-        response.json().await.map_err(|e| {
-            RFQError::ParsingError(format!("Failed to parse Metric bid/ask response: {e}"))
-        })
+        Ok(quotes)
     }
 
     fn find_pool<'a>(
@@ -305,7 +341,7 @@ impl RFQClient for MetricClient {
                     }
                 };
 
-                let mut new_components = HashMap::new();
+                let mut candidates = Vec::new();
                 for pool in &metadata {
                     if !client.tokens.is_empty() &&
                         (!client.tokens.contains(&pool.token0) ||
@@ -316,26 +352,39 @@ impl RFQClient for MetricClient {
 
                     // v1 metadata carries the fiat TVL directly, so no cross-pool price
                     // normalization is needed.
-                    let tvl = pool.tvl_fiat.unwrap_or(0.0);
-                    if tvl < client.tvl {
+                    if pool.tvl_fiat.unwrap_or(0.0) < client.tvl {
                         continue;
                     }
 
-                    let bid_ask = match client.fetch_bid_ask(&pool.pool_address).await {
-                        Ok(bid_ask) => bid_ask,
-                        Err(e) => {
-                            warn!(
-                                "Failed to fetch Metric bid/ask for pool {}: {}",
-                                pool.pool_address, e
-                            );
-                            continue;
-                        }
+                    if !pool.is_unpaused() {
+                        continue;
+                    }
+                    candidates.push(pool);
+                }
+
+                let addresses: Vec<Bytes> = candidates
+                    .iter()
+                    .map(|pool| pool.pool_address.clone())
+                    .collect();
+                let mut quotes = match client.fetch_bid_asks(&addresses).await {
+                    Ok(quotes) => quotes,
+                    Err(e) => {
+                        error!("Failed to fetch Metric bid/ask: {}", e);
+                        continue;
+                    }
+                };
+
+                let mut new_components = HashMap::new();
+                for pool in candidates {
+                    let Some(bid_ask) = quotes.remove(&pool.pool_address) else {
+                        continue;
                     };
                     if !bid_ask.is_quotable() {
                         continue;
                     }
 
                     let component_id = pool.pool_address.to_string();
+                    let tvl = pool.tvl_fiat.unwrap_or(0.0);
                     new_components.insert(
                         component_id.clone(),
                         client.create_component_with_state(component_id, pool, &bid_ask, tvl),
@@ -451,6 +500,7 @@ mod tests {
             token0: Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
             token1: Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             tvl_fiat: Some(3000.0),
+            pause_level: Some(0),
         }
     }
 
@@ -572,31 +622,24 @@ mod tests {
         let metadata = client.fetch_metadata().await.unwrap();
         assert!(!metadata.is_empty());
 
-        let mut last_error = None;
-        let mut selected = None;
-        for pool in &metadata {
-            match client
-                .fetch_bid_ask(&pool.pool_address)
-                .await
-            {
-                Ok(bid_ask) => {
-                    if bid_ask.is_quotable() &&
-                        !bid_ask.depth.asks.is_empty() &&
-                        !bid_ask.depth.bids.is_empty()
-                    {
-                        selected = Some((pool, bid_ask));
-                        break;
-                    }
-                }
-                Err(error) => last_error = Some(error.to_string()),
-            }
-        }
+        let addresses: Vec<Bytes> = metadata
+            .iter()
+            .map(|pool| pool.pool_address.clone())
+            .collect();
+        let quotes = client
+            .fetch_bid_asks(&addresses)
+            .await
+            .unwrap();
+        let selected = quotes.into_values().find(|bid_ask| {
+            bid_ask.is_quotable() &&
+                !bid_ask.depth.asks.is_empty() &&
+                !bid_ask.depth.bids.is_empty()
+        });
 
-        let Some((_pool, bid_ask)) = selected else {
+        let Some(bid_ask) = selected else {
             panic!(
-                "Metric live API on {chain} returned no quotable bid_ask response with ask and bid depth across {} pools; last error: {:?}",
-                metadata.len(),
-                last_error
+                "Metric live API on {chain} returned no quotable bid_ask response with ask and bid depth across {} pools",
+                metadata.len()
             );
         };
 

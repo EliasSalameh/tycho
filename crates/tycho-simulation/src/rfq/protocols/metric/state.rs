@@ -513,6 +513,7 @@ mod tests {
             token0: weth.address.clone(),
             token1: usdc.address.clone(),
             tvl_fiat: Some(3000.0),
+            pause_level: Some(0),
         };
         let bid_ask = MetricBidAskResponse {
             // 3000 * 2^64
@@ -986,7 +987,7 @@ mod tests {
     async fn test_live_metric_api_state_get_amount_out_and_signed_quote() {
         use crate::rfq::protocols::metric::models::PaginatedMetadataResponse;
 
-        // Base: the only supported chain with pools published on the live API so far.
+        // Base serves only partner-tier keys, so this test needs METRIC_API_KEY to be one.
         let weth = base_weth();
         let usdc = base_usdc();
         let config = crate::rfq::constants::get_metric_config();
@@ -1006,10 +1007,14 @@ mod tests {
         .unwrap();
 
         let http_client = reqwest::Client::new();
-        let metadata: PaginatedMetadataResponse = http_client
+        let mut metadata_request = http_client
             .get(format!("{base_url}/public/v1/evm/8453/metadata"))
             .header("accept", "application/json")
-            .query(&[("count", "500")])
+            .query(&[("count", "500")]);
+        if let Some(api_key) = &config.api_key {
+            metadata_request = metadata_request.bearer_auth(api_key);
+        }
+        let metadata: PaginatedMetadataResponse = metadata_request
             .send()
             .await
             .unwrap()
