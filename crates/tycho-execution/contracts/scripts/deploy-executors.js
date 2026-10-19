@@ -92,6 +92,7 @@ const deploy_protocols = {
         "pancakeswap_infinity_cl",
         "rfq:metric",
         "rfq:native",
+        "fallback:rfq:metric",
         "lunarbase",
     ],
     "plasma": [

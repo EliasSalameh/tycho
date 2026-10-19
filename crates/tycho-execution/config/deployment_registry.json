@@ -219,6 +219,7 @@
         "native_wrapper": "0x8c41B3842D767Bb07818E9E82fB62964910a82Ef",
         "rfq:native": "0x19e8F03Be0159Af8c04A9553f82eb1f17C2e8451",
         "ring_swap_v2": "0x5De5D17985716AB919b806023Bd0Ed294450FFd7",
+        "fallback:rfq:metric": "0x78FddACdd167d25efb81d5a45a9A3003Fd8c0643",
         "lunarbase": "0x99576B7C64Fe225785bd69E91fc9dC857Dd7AaA5"
       },
       "superseded": [{

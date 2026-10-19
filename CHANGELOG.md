@@ -1,3 +1,30 @@
+## [0.462.0](https://github.com/propeller-heads/tycho/compare/0.461.3...0.462.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** support Metric fallbacks on BSC ([7fa50c0](https://github.com/propeller-heads/tycho/commit/7fa50c0d74135bd3354898b6c91da6e8ea5e5469))
+* **execution:** support Metric fallbacks on BSC ([#1630](https://github.com/propeller-heads/tycho/issues/1630)) ([e7fd8e5](https://github.com/propeller-heads/tycho/commit/e7fd8e563b33ab9da6a708ac0a55ebceba607425))
+
+## [0.461.3](https://github.com/propeller-heads/tycho/compare/0.461.2...0.461.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** ignore zip advisories RUSTSEC-2026-0367 to 0369 ([c2ed9cc](https://github.com/propeller-heads/tycho/commit/c2ed9cc92360885da7ce0a059e34acf92935e9fe))
+* **deps:** ignore zip advisories RUSTSEC-2026-0367 to 0369 ([#1636](https://github.com/propeller-heads/tycho/issues/1636)) ([da4cd78](https://github.com/propeller-heads/tycho/commit/da4cd7818644fa9797388e6f6158cf78391e0638))
+* **simulation:** point the Metric pAMM at its live router ([76575a2](https://github.com/propeller-heads/tycho/commit/76575a2cf106ef99e312290e7fcf4ec1b93a9ab3))
+* **simulation:** point the Metric pAMM at its live router ([#1632](https://github.com/propeller-heads/tycho/issues/1632)) ([119ca35](https://github.com/propeller-heads/tycho/commit/119ca35cf6dece8d514d038fcb0c9d21f4abb4fe))
+* **simulation:** use the p90 for the Metric pAMM swap gas ([901f1d4](https://github.com/propeller-heads/tycho/commit/901f1d4c96a4aaff13455a1174b406d445092600))
+
+## [0.461.2](https://github.com/propeller-heads/tycho/compare/0.461.1...0.461.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **simulation:** point the TaurusFi pAMM at its live router ([8549a66](https://github.com/propeller-heads/tycho/commit/8549a66b01c1da33ed6e3b39882c2d25f2b91e0a))
+* **simulation:** point the TaurusFi pAMM at its live router ([#1633](https://github.com/propeller-heads/tycho/issues/1633)) ([f5ebe2b](https://github.com/propeller-heads/tycho/commit/f5ebe2bfd60984ff99020ae0c584b546b0b05ba9))
+
 ## [0.461.1](https://github.com/propeller-heads/tycho/compare/0.461.0...0.461.1) (2026-10-16)
 
 
