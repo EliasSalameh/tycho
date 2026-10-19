@@ -28,6 +28,8 @@ cargo run -p tycho-integration-test -- \
 
 Key optional flags: `--no-tls`, `--disable-onchain`, `--disable-rfq`,
 `--disable-price-level-stream`, `--disable-execution`, `--protocols uniswap_v2,curve`,
+`--protocol-tvl-thresholds lunarbase=10` (replaces `--tvl-threshold` for the named protocols;
+each one must be enabled),
 `--max-blocks 100`, `--parallel-simulations 5`, `--always-test-components <id,...>`,
 `--price-level-stream-block-interval 1`, `--price-level-stream-stale-threshold-secs 10`,
 `--test-every-n-updates 10`, `--bypass-executor-timelock`.
