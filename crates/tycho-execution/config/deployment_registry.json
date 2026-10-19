@@ -184,7 +184,8 @@
         "uniswap_v4": "0xdb696336F7A5F9048252664A3475C194dAe0e62f",
         "native_wrapper": "0x117ABa0Cc2fC158318cC5640A3F8da0C426cD4ab",
         "rfq:native": "0x73ab9F8741a4EF6cB44fc095BFc767B5E458E125",
-        "rfq:metric": "0x5dF460efec4cACA38d8115c6b36E9F7A6741eBCF"
+        "rfq:metric": "0x5dF460efec4cACA38d8115c6b36E9F7A6741eBCF",
+        "fallback:rfq:metric": "0x918335AF35DdDFad0C6E0d3beF95A6F9a0F02C3c"
       },
       "superseded": [{
         "status": "superseded",
