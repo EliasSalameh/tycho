@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 import "../TestUtils.sol";
 import "../TychoRouterTestSetup.sol";
 import "@src/executors/PancakeswapInfinityExecutor.sol";
+import "@src/executors/PancakeswapInfinityRobinhoodExecutor.sol";
 import {Constants} from "../Constants.sol";
 
 address constant INFINITY_VAULT = 0x238a358808379702088667322f80aC48bAd5e6c4;
@@ -303,13 +304,6 @@ contract PancakeswapInfinityForkTest is Constants, TestUtils {
         );
     }
 
-    function testConstructorRequiresAManager() public {
-        vm.expectRevert(PancakeswapInfinityExecutor__ZeroAddress.selector);
-        new PancakeswapInfinityExecutorExposed(
-            INFINITY_VAULT, address(0), address(0)
-        );
-    }
-
     function testSwapMatchesEncoderCalldata() public {
         bytes memory data =
             loadCallDataFromFile("test_encode_pancakeswap_infinity_cl_swap");
@@ -318,9 +312,34 @@ contract PancakeswapInfinityForkTest is Constants, TestUtils {
     }
 }
 
+/// Same callback stand-in as PancakeswapInfinityExecutorExposed.
+contract PancakeswapInfinityRobinhoodExecutorExposed is
+    PancakeswapInfinityRobinhoodExecutor
+{
+    using SafeERC20 for IERC20;
+
+    constructor(address vault_, address clPoolManager_, address binPoolManager_)
+        PancakeswapInfinityRobinhoodExecutor(
+            IPancakeswapInfinityVault(vault_), clPoolManager_, binPoolManager_
+        )
+    {}
+
+    fallback(bytes calldata) external returns (bytes memory) {
+        uint256 amountIn = uint256(bytes32(msg.data[68:100]));
+        address tokenIn = address(bytes20(msg.data[120:140]));
+
+        (TransferManager.TransferType transferType, address receiver) =
+            this.getCallbackTransferData(msg.data, tokenIn, msg.sender);
+        if (transferType == TransferManager.TransferType.Transfer) {
+            IERC20(tokenIn).safeTransfer(receiver, amountIn);
+        }
+        return _handleCallback(msg.data);
+    }
+}
+
 /// Runs the executor as `executor_deployments.json` deploys it on Robinhood.
 contract PancakeswapInfinityRobinhoodForkTest is Constants, TestUtils {
-    PancakeswapInfinityExecutorExposed executor;
+    PancakeswapInfinityRobinhoodExecutorExposed executor;
 
     function setUp() public {
         vm.createSelectFork(vm.rpcUrl("robinhood"), ROBINHOOD_FORK_BLOCK);
@@ -328,8 +347,18 @@ contract PancakeswapInfinityRobinhoodForkTest is Constants, TestUtils {
             vm.readFile("../config/executor_deployments.json"),
             ".robinhood.pancakeswap_infinity_cl.args"
         );
-        executor =
-            new PancakeswapInfinityExecutorExposed(args[0], args[1], args[2]);
+        executor = new PancakeswapInfinityRobinhoodExecutorExposed(
+            args[0], args[1], args[2]
+        );
+    }
+
+    function testConstructorRequiresAManager() public {
+        vm.expectRevert(
+            PancakeswapInfinityRobinhoodExecutor__ZeroAddress.selector
+        );
+        new PancakeswapInfinityRobinhoodExecutorExposed(
+            INFINITY_VAULT, address(0), address(0)
+        );
     }
 
     function testSwapWethToUsdg() public {
@@ -367,7 +396,8 @@ contract PancakeswapInfinityRobinhoodForkTest is Constants, TestUtils {
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                PancakeswapInfinityExecutor__UnknownPoolType.selector, uint8(1)
+                PancakeswapInfinityRobinhoodExecutor__UnknownPoolType.selector,
+                uint8(1)
             )
         );
         executor.swap(amountIn, binData, ALICE);
