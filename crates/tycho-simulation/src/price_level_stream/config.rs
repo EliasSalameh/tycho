@@ -61,8 +61,8 @@ impl PriceLevelStreamConfig {
 /// [`auto_detected_gas_cost`](super::stream::PriceLevelStreamBuilder::auto_detected_gas_cost).
 pub const DEFAULT_AUTO_DETECTED_GAS_COST: u64 = 335_000;
 
-/// The pAMMs known to be served by the Titan price level stream (as of 2026-10-17): FermiSwap,
-/// Kipseli, Metric, Bebop, TaurusFi, and Tempest.
+/// The pAMMs known to be served by the Titan price level stream (as of 2026-10-19): FermiSwap,
+/// Kipseli, Metric, Bebop, TaurusFi, Tempest, Goliath, Stelaxis, and ElZorro.
 ///
 /// Registered on a builder via
 /// [`with_known_pamms`](super::stream::PriceLevelStreamBuilder::with_known_pamms), so their
@@ -107,6 +107,16 @@ pub fn default_served_pamms() -> Vec<PriceLevelStreamConfig> {
         // The Tempest router (unverified), per Titan's venue docs. Measured ~120k-155k
         // (2026-09-11).
         ("tempest", "0x00000003f1ec2379e79f58e12ec6c4f51ee92149", 160_000u64),
+        // The Goliath router, which the stream keys its books by. Gas over 80 traced fills
+        // (2026-10-19): p50 ~64k, p90 ~89k, max ~98k.
+        ("goliath", "0x4367985a63063fc970b009c6e599e9225181f551", 105_000u64),
+        // The Stelaxis router, which the stream keys its books by: a minimal proxy that emits
+        // the pAMM swap event. Gas over 72 traced fills (2026-10-19): p50 ~65k, p90 ~95k, max
+        // ~100k.
+        ("stelaxis", "0x77047af6cd8f7f84d96a020a2833d24916b75fde", 105_000u64),
+        // The ElZorro router, which the stream keys its books by: a minimal proxy that emits the
+        // pAMM swap event. Gas over 71 traced fills (2026-10-19): p50 ~35k, p90 ~68k, max ~97k.
+        ("elzorro", "0xcf211b4dd0d2be5c173ea57bcf938fc61d1d3bd3", 105_000u64),
     ];
     pamms
         .into_iter()

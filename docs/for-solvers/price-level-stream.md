@@ -22,7 +22,7 @@ let price_level_stream = PriceLevelStreamBuilder::new()
 
 Every frame carries a flat list of books, one per venue and pair, and the stream emits one component per venue and pair. A component id concatenates the venue address with the pair's two token addresses, sorted ascending, so it survives a venue rename. The `pamm_address` static attribute carries the venue address your encoder sends the swap to.
 
-`with_known_pamms()` registers the six venues Tycho has measured — `bebop`, `fermiswap`, `kipseli`, `metric`, `taurusfi` and `tempest` — each with its own per-swap gas estimate, and names their components after the venue. Titan quotes neither every venue nor every pair at all times, so the live set is usually smaller.
+`with_known_pamms()` registers the nine venues Tycho has measured — `bebop`, `elzorro`, `fermiswap`, `goliath`, `kipseli`, `metric`, `stelaxis`, `taurusfi` and `tempest` — each with its own per-swap gas estimate, and names their components after the venue. Titan quotes neither every venue nor every pair at all times, so the live set is usually smaller.
 
 `auto_detect(true)` additionally serves every other venue Titan streams, naming it by its full lowercase hex address (`pricelevelstream:0x5979…`) and quoting it with a conservative gas estimate — the maximum over the measured venues, which `auto_detected_gas_cost` overrides. A venue keeps its component ids and its `pamm_address` when a later release measures it and the name replaces the address.
 
