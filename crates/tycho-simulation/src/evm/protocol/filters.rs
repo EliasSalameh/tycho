@@ -114,14 +114,15 @@ pub fn fluid_v1_paused_pools_filter(component: &ComponentWithState) -> bool {
 
 /// Filters `vm:curve` components to those the hybrid `CurveState` can quote correctly.
 ///
-/// Excludes pools with rate-bearing or rebasing coins, unless every such coin is an oracle coin
-/// whose rate provider is on a trusted list. Such a coin prices through a per-block
-/// rate (an oracle, an ERC4626 vault, or an in-place rebase exposed via `stored_rates`) whose
-/// source is an external contract. The hybrid reads that rate via VM getters against the locally
-/// indexed storage. If DCI does not capture every slot the rate read touches, the hybrid gets a
-/// stale or default value and the quote drifts from the on-chain swap (observed up to ~30% on
-/// oracle-rate NG pools). Some providers also return an inflated rate to callers that look like
-/// a quote.
+/// Excludes pools with rate-bearing or rebasing coins, unless the pool is on a trusted list. An
+/// oracle coin is trusted when its rate provider is on the trusted list, and an ERC4626 coin when
+/// its vault is on the trusted list. A pool with rebasing coins is trusted only by its pool id.
+/// Such a coin prices through a per-block rate (an oracle, an ERC4626 vault, or an in-place rebase
+/// exposed via `stored_rates`) whose source is an external contract. The hybrid reads that rate via
+/// VM getters against the locally indexed storage. If DCI does not capture every slot the rate read
+/// touches, the hybrid gets a stale or default value and the quote drifts from the on-chain swap
+/// (observed up to ~30% on oracle-rate NG pools). Some providers also return an inflated rate to
+/// callers that look like a quote.
 ///
 /// Detection uses the substreams' static markers:
 /// - `rebase_tokens` — non-empty list of rebasing coins (e.g. stETH, ETHx). A pool carrying it is
@@ -205,9 +206,9 @@ fn has_untrusted_rebase_tokens(component: &ComponentWithState) -> bool {
 }
 
 /// True when `asset_types` contains a coin the hybrid cannot quote: any non-standard coin other
-/// than an oracle coin backed by a trusted rate provider. Each entry is a hex-encoded integer
-/// (`"0x"`/`"0x00"` = standard; `"0x01"` oracle, `"0x02"` rebasing, `"0x03"` ERC4626). A pool
-/// without `asset_types` has only standard coins.
+/// than an oracle coin backed by a trusted rate provider or an ERC4626 coin on the trusted vault
+/// list. Each entry is a hex-encoded integer (`"0x"`/`"0x00"` = standard; `"0x01"` oracle,
+/// `"0x02"` rebasing, `"0x03"` ERC4626). A pool without `asset_types` has only standard coins.
 fn has_unsupported_asset_type(attrs: &HashMap<String, Bytes>) -> bool {
     // Oracle rate providers as `(oracle, method id)` pairs, matched against the pool's `oracles`
     // and `method_ids` static attributes. An entry must return the same rate to a quote as to a
