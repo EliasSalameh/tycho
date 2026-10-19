@@ -1,3 +1,12 @@
+## [0.463.0](https://github.com/propeller-heads/tycho/compare/0.462.0...0.463.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** add the deployed BSC LunarBase executor address ([5d339d4](https://github.com/propeller-heads/tycho/commit/5d339d43241709ad2555c07c109d6e62c26b092e))
+* **execution:** add the deployed PancakeSwap Infinity CL executors ([17eeed4](https://github.com/propeller-heads/tycho/commit/17eeed4281c3f4c7f99092a9e0a8aefd43a9076a))
+* **execution:** register the deployed LunarBase and PancakeSwap Infinity CL executors ([#1631](https://github.com/propeller-heads/tycho/issues/1631)) ([c71be73](https://github.com/propeller-heads/tycho/commit/c71be73d3717a4a2621cc0b7c2ed545fdcc70e3b))
+
 ## [0.462.0](https://github.com/propeller-heads/tycho/compare/0.461.3...0.462.0) (2026-10-19)
 
 
