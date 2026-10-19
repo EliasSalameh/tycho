@@ -222,9 +222,6 @@ fn has_unsupported_asset_type(attrs: &HashMap<String, Bytes>) -> bool {
         ("0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee", "0x679aefce"),
     ];
 
-    let Some(types) = attr_json_list(attrs, "asset_types") else {
-        return false;
-    };
     // ERC4626 coins whose `convertToAssets` the hybrid reads correctly. The pool reads the rate
     // through `stored_rates()`, so DCI must capture every slot that read touches, on every branch.
     //
@@ -237,6 +234,9 @@ fn has_unsupported_asset_type(attrs: &HashMap<String, Bytes>) -> bool {
         "0x83f20f44975d03b1b09e64809b757c47f942beea",
     ];
 
+    let Some(types) = attr_json_list(attrs, "asset_types") else {
+        return false;
+    };
     let oracles = attr_json_list(attrs, "oracles").unwrap_or_default();
     let method_ids = attr_json_list(attrs, "method_ids").unwrap_or_default();
     let coins = attr_json_list(attrs, "coins").unwrap_or_default();
