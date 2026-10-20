@@ -1,3 +1,16 @@
+## [0.471.0](https://github.com/propeller-heads/tycho/compare/0.470.1...0.471.0) (2026-10-20)
+
+
+### Features
+
+* **simulation:** migrate the price level stream to Titan V2 ([6d1ad78](https://github.com/propeller-heads/tycho/commit/6d1ad785a0f6738346e7a8e4db96503ca254d895))
+* **simulation:** migrate the price level stream to Titan V2 ([#1597](https://github.com/propeller-heads/tycho/issues/1597)) ([0ed0550](https://github.com/propeller-heads/tycho/commit/0ed0550ef0024f0a9d4d6f31bd9e619e4c409368))
+
+
+### Bug Fixes
+
+* **simulation:** point Metric and TaurusFi at their live routers ([95f67f6](https://github.com/propeller-heads/tycho/commit/95f67f6653df5dee34bc02391a1246635f87db33))
+
 ## [0.470.1](https://github.com/propeller-heads/tycho/compare/0.470.0...0.470.1) (2026-10-20)
 
 
