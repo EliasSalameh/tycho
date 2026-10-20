@@ -463,7 +463,8 @@ same `FallbackSwapData` `user_data`:
 - `HashflowFallbackSwapEncoder` requests the signed quote with the chain's `HashflowFallbackRouter` as trader, read
   from `fallback_router` under `fallback:rfq:hashflow`, and wraps the 345-byte quote in the tokens and the fallback.
 
-None of these routers is deployed, so no chain lists these entries yet. The gas estimator charges a
+The Metric router is deployed on Ethereum, Base, BSC and Robinhood, Bebop's on Ethereum and Base,
+and Hashflow's on Ethereum. The gas estimator charges a
 Metric leg its pool gas twice (the simulation runs the pool's swap), and a Bebop or Hashflow leg the router's approval
 and output forward.
 
@@ -471,9 +472,10 @@ and output forward.
 reads it. A chain lists a protocol when its router has the protocol's singleton (Uniswap V4, Fluid
 V1) and `executor_addresses.json` has an executor for it there; tests check both against the
 executor configs. A chain missing from the list has no router and supports nothing. Ethereum,
-Base, Robinhood and BSC are listed today. On BSC, PancakeSwap V2 pairs encode as Uniswap V2 with
-`fee_bps` 25 and PancakeSwap V3 pools as Uniswap V3, quoted by simulation since BSC has no static
-quoter.
+Base, Robinhood, BSC and Polygon are listed today. On BSC, PancakeSwap V2 pairs encode as Uniswap V2
+with `fee_bps` 25 and PancakeSwap V3 pools as Uniswap V3, quoted by simulation since BSC has no
+static quoter. On Polygon, QuickSwap V2 pairs encode as Uniswap V2 with `fee_bps` 30, and Uniswap V3
+and Ramses V3 pools are quoted by Eden's static quoter.
 
 `FallbackProtocol` is `#[repr(u8)]`, so the discriminant is the protocol byte, and `strum` derives
 its snake-case variant name as the `user_data` tag, which the `FallbackSwapData` variant of the same

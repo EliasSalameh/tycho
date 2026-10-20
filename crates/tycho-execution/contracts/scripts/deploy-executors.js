@@ -81,6 +81,7 @@ const deploy_protocols = {
         "uniswap_v4",
         "native_wrapper",
         "rfq:metric",
+        "fallback:rfq:metric"
     ],
     "bsc": [
         "ring_swap_v2",
