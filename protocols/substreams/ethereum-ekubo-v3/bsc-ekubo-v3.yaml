@@ -1,6 +1,7 @@
 specVersion: v0.1.0
 package:
   name: "bsc_ekubo_v3"
+  description: "Ekubo V3 indexing on BNB Smart Chain"
   version: v0.2.5
   url: "https://github.com/propeller-heads/tycho-protocol-sdk/tree/main/substreams/ethereum-ekubo-v3"
 
@@ -21,6 +22,8 @@ binaries:
   default:
     type: wasm/rust-v1
     file: ../target/wasm32-unknown-unknown/release/ethereum_ekubo_v3.wasm
+
+network: bsc
 
 # The SignedExclusiveSwap extension address of the BSC deployment; map_components
 # tags its pools with `is_exclusive`. BSC has no Ve33 deployment, so Ve33
