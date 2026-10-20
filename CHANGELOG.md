@@ -1,3 +1,16 @@
+## [0.467.0](https://github.com/propeller-heads/tycho/compare/0.466.0...0.467.0) (2026-10-20)
+
+
+### Features
+
+* **integration-test:** add per-protocol TVL thresholds ([dfef1f6](https://github.com/propeller-heads/tycho/commit/dfef1f63e99caaee7e616ebca29c1b46c72d5e2a))
+* **integration-test:** add per-protocol TVL thresholds ([#1640](https://github.com/propeller-heads/tycho/issues/1640)) ([888b620](https://github.com/propeller-heads/tycho/commit/888b620ea61b7d64b92708800b1f7a76d42bf640))
+
+
+### Bug Fixes
+
+* **integration-test:** test lunarbase on BSC by default ([2e948cc](https://github.com/propeller-heads/tycho/commit/2e948cc5f269da5e9b7390b636ebb960ea52fcfc))
+
 ## [0.466.0](https://github.com/propeller-heads/tycho/compare/0.465.0...0.466.0) (2026-10-20)
 
 
