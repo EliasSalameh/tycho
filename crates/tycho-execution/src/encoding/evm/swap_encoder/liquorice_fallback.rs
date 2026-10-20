@@ -83,6 +83,15 @@ impl SwapEncoder for LiquoriceFallbackSwapEncoder {
                 self.chain
             )));
         }
+        let native_token = self.chain.native_token().address;
+        if swap.token_in().address == native_token || swap.token_out().address == native_token {
+            return Err(EncodingError::InvalidInput(format!(
+                "The native token is not supported on fallback:rfq:liquorice: the chain's \
+                 LiquoriceFallbackRouter only trades ERC20s and would revert the swap. Use the \
+                 wrapped token, or rfq:liquorice, for {}",
+                self.chain
+            )));
+        }
 
         let liquorice = self
             .liquorice
@@ -123,6 +132,7 @@ mod tests {
 
     use alloy::hex::{decode, encode};
     use num_bigint::BigUint;
+    use rstest::rstest;
     use tycho_common::models::protocol::ProtocolComponent;
 
     use super::*;
@@ -248,6 +258,34 @@ mod tests {
 
         assert!(
             matches!(err, EncodingError::InvalidInput(message) if message.contains("ethereum"))
+        );
+    }
+
+    #[rstest]
+    #[case::native_token_in(Chain::Ethereum.native_token().address, Bytes::from(format!("0x{WETH}").as_str()))]
+    #[case::native_token_out(Bytes::from(format!("0x{USDC}").as_str()), Chain::Ethereum.native_token().address)]
+    fn test_native_token_leg(#[case] token_in: Bytes, #[case] token_out: Bytes) {
+        let swap = Swap::new(
+            ProtocolComponent {
+                id: String::from("liquorice-rfq"),
+                protocol_system: String::from("fallback:rfq:liquorice"),
+                ..Default::default()
+            },
+            default_token(token_in),
+            default_token(token_out),
+            BigUint::ZERO,
+        )
+        .with_user_data(Bytes::from(
+            format!(r#"{{"fallback_protocol":"uniswap_v3","pool":"0x{USDC_WETH_USV3}"}}"#)
+                .as_bytes(),
+        ));
+
+        let err = encoder()
+            .encode_swap(&swap, &context())
+            .unwrap_err();
+
+        assert!(
+            matches!(err, EncodingError::InvalidInput(message) if message.contains("native token"))
         );
     }
 }
