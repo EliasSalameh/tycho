@@ -1,3 +1,12 @@
+## [0.468.0](https://github.com/propeller-heads/tycho/compare/0.467.0...0.468.0) (2026-10-20)
+
+
+### Features
+
+* **ekubo-v3:** add BSC and Base substreams manifests ([50df01e](https://github.com/propeller-heads/tycho/commit/50df01ecf7f6a20a714a9a3b34037c8de52e8031))
+* **ekubo-v3:** add BSC and Base substreams manifests  ([#1653](https://github.com/propeller-heads/tycho/issues/1653)) ([7c2b604](https://github.com/propeller-heads/tycho/commit/7c2b604b1184ba537d4c1b79e8b0d823a7c90100))
+* **simulation:** support ekubo_v3 SignedExclusiveSwap on BSC and Base ([cacc01b](https://github.com/propeller-heads/tycho/commit/cacc01b95c1f47d261422c42ad2bd21a73665f49))
+
 ## [0.467.0](https://github.com/propeller-heads/tycho/compare/0.466.0...0.467.0) (2026-10-20)
 
 
