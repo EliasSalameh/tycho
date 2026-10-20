@@ -1,3 +1,22 @@
+## [0.470.0](https://github.com/propeller-heads/tycho/compare/0.469.0...0.470.0) (2026-10-20)
+
+
+### Features
+
+* **execution:** add LiquoriceFallbackRouter and LiquoriceFallbackExecutor ([9707dee](https://github.com/propeller-heads/tycho/commit/9707deea2f7b8841195dddc2dfe54f93a2a3046d))
+* **execution:** add Native and Liquorice fallback routers ([#1607](https://github.com/propeller-heads/tycho/issues/1607)) ([e1c78e0](https://github.com/propeller-heads/tycho/commit/e1c78e0eea7d62039ffd6cbdba54ff710d874b02))
+* **execution:** add NativeFallbackRouter and NativeFallbackExecutor ([5170b25](https://github.com/propeller-heads/tycho/commit/5170b25f8cafbd3a736b9d758b5d472754c1c33c))
+* **simulation:** add fallback-router mode to the Native and Liquorice feeds ([ef9310f](https://github.com/propeller-heads/tycho/commit/ef9310f7ef68b2b03649daccf2ecc9430109c869))
+
+
+### Bug Fixes
+
+* **execution:** lock calldata.txt across test processes ([31644d9](https://github.com/propeller-heads/tycho/commit/31644d9a74b88d49e2b66fe4398c6d8bf17c4b69))
+* **execution:** reject native-token legs in NativeFallbackSwapEncoder ([67970a4](https://github.com/propeller-heads/tycho/commit/67970a4866ce08f28827ec185f190f2d3fc8b0e7))
+* **execution:** reject native-token legs on fallback:rfq:hashflow ([b95cb6d](https://github.com/propeller-heads/tycho/commit/b95cb6d85299cb95a423f11fbd289aa861b05703))
+* **execution:** reject native-token legs on fallback:rfq:liquorice ([b704e34](https://github.com/propeller-heads/tycho/commit/b704e34be192d823468aadb01242c6d7937036ff))
+* **execution:** return unspent input from NativeFallbackRouter ([dabfc87](https://github.com/propeller-heads/tycho/commit/dabfc875b928a9674a6749b58116f4f4cba34a3c))
+
 ## [0.469.0](https://github.com/propeller-heads/tycho/compare/0.468.0...0.469.0) (2026-10-20)
 
 
