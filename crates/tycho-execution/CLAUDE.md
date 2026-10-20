@@ -360,6 +360,18 @@ pool and the hop. Data shorter than 207 bytes reverts `TychoSubsidizingExecutor_
   no tokens. Tokens already held by the router would not raise the balance at `measureAt`, so a payment from them
   would not count as output.
 
+Encoding (`src/encoding/evm/subsidy.rs`): `Solution::with_subsidy(SubsidyTerms)` makes the strategy encoders wrap one
+swap group in the subsidizing executor. `SubsidyTerms` documents which swap group can carry the subsidy, and
+`EncodedSolution::write_subsidy_signature` documents the signing order.
+
+- The encoder does not sign. It writes a 65-byte zero signature, which the payer skips as `InvalidSignature`.
+- The executor address is the `subsidy` entry of `config/executor_addresses.json`; the payer is `payer_address` under
+  `subsidy` in `config/protocol_specific_addresses.json`. No chain lists them until they are deployed.
+  `SwapEncoderRegistry::register_subsidy_contracts` sets both, for tests and forks.
+- `tests/subsidy_integration_tests.rs` signs with a test key and writes `<name>` and `<name>_unsigned` calldata;
+  `contracts/test/protocols/TychoSubsidizingEncoder.t.sol` deploys the payer and the executor at the addresses the
+  Rust tests name and checks the exact output of both.
+
 ### Executor Flow, Callbacks & Output Verification
 
 **Balance-diff verification**: The Dispatcher independently verifies every swap output. It
