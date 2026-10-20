@@ -1,3 +1,17 @@
+## [0.465.0](https://github.com/propeller-heads/tycho/compare/0.464.0...0.465.0) (2026-10-19)
+
+
+### Features
+
+* **execution:** add a Robinhood Infinity executor ([f9d6ec8](https://github.com/propeller-heads/tycho/commit/f9d6ec836680c95f73d54b42cf51346742440fbf))
+* **execution:** deploy PancakeSwap Infinity on Robinhood ([dd47192](https://github.com/propeller-heads/tycho/commit/dd4719272d106d35377252cf7eeac635a315d02a))
+
+
+### Bug Fixes
+
+* **execution:** allow a missing Infinity pool manager ([28cd906](https://github.com/propeller-heads/tycho/commit/28cd906a0a393303733efebf2a5454a35a85ee23))
+* **execution:** allow a missing Infinity pool manager ([#1634](https://github.com/propeller-heads/tycho/issues/1634)) ([b5826a2](https://github.com/propeller-heads/tycho/commit/b5826a233c7b08d1aab4a969b3df44689bb57aa3))
+
 ## [0.464.0](https://github.com/propeller-heads/tycho/compare/0.463.0...0.464.0) (2026-10-19)
 
 
