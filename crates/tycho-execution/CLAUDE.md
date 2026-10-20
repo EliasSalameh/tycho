@@ -463,7 +463,7 @@ same `FallbackSwapData` `user_data`:
 - `HashflowFallbackSwapEncoder` requests the signed quote with the chain's `HashflowFallbackRouter` as trader, read
   from `fallback_router` under `fallback:rfq:hashflow`, and wraps the 345-byte quote in the tokens and the fallback.
 
-The Metric router is deployed on Ethereum, Base, BSC and Robinhood, Bebop's on Ethereum and Base,
+The Metric router is deployed on Ethereum, Base, BSC, Robinhood and Polygon, Bebop's on Ethereum and Base,
 and Hashflow's on Ethereum. The gas estimator charges a
 Metric leg its pool gas twice (the simulation runs the pool's swap), and a Bebop or Hashflow leg the router's approval
 and output forward.

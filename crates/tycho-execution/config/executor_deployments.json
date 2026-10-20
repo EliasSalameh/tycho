@@ -248,7 +248,7 @@
     },
     "fallback:rfq:metric": {
       "contract": "MetricFallbackExecutor",
-      "args": ["0x0000000000000000000000000000000000000000"]
+      "args": ["0x14d20db2490711E75ae4355A909AbEeF9B82835c"]
     }
   },
   "bsc": {
