@@ -334,6 +334,33 @@ Constraints:
   transfer) is claimable by anyone through the permissionless `swap` and is considered lost. A Curve exchange leaves its
   approval in place; the same reasoning covers it, since there is nothing here to take.
 
+### Subsidies (`executors/TychoSubsidizingExecutor.sol`)
+
+`TychoSubsidizingExecutor` wraps one hop: it runs the hop through an inner executor named in its swap data, then calls
+`ISubsidyPayer.pay` to pay a signed subsidy in the hop's output token.
+
+Swap data: `[boundTo: 20][amount: 32][minAmountIn: 32][nonce: 32][deadline: 6][signature: 65][innerExecutor: 20]
+[innerData]`. The subsidy's `innerSwapHash` is `keccak256` over `innerExecutor ‖ innerData`, so the signature covers the
+pool and the hop. Data shorter than 207 bytes reverts `TychoSubsidizingExecutor__InvalidDataLength`.
+
+- The inner executor must be approved on the router with its timelock passed, and may not be the wrapper itself;
+  otherwise `TychoSubsidizingExecutor__UnapprovedInnerExecutor`. `getTransferData` and `fundsExpectedAddress` forward to
+  it and map the wrapper's own address back to the router, so every transfer type and sequential hops work unchanged.
+- Before the inner swap, the wrapper writes the inner executor into `_CURRENTLY_SWAPPING_EXECUTOR_SLOT`, so the
+  router's fallback sends pool callbacks straight to it. It clears the slot before calling the payer, so a contract
+  the payer sends funds to cannot reach the inner executor through the fallback. The wrapper keeps its own copy of the Dispatcher's slot
+  constant; if the two drift apart, the callback tests fail.
+- The payer pays into the Dispatcher's `measureAt` (`outputToRouter ? router : receiver`), inside `swap()`, so the
+  Dispatcher counts the subsidy as hop output. Fees, slippage capture, `minAmountOut`, vault credits and later hops
+  then see it like any other output. The quote's `expectedAmountOut` has to include the subsidy, or positive slippage
+  capture takes it.
+- `pay` runs in `try/catch`. A payer revert emits `SubsidyPaymentFailed(nonce)` from the router and the swap fills
+  without the subsidy. Calling a payer address with no code, or a payer that returns malformed data, would still
+  revert.
+- The payer, a separate contract, holds the budget, the signer and the nonces. The wrapper writes no storage and moves
+  no tokens. Tokens already held by the router would not raise the balance at `measureAt`, so a payment from them
+  would not count as output.
+
 ### Executor Flow, Callbacks & Output Verification
 
 **Balance-diff verification**: The Dispatcher independently verifies every swap output. It
