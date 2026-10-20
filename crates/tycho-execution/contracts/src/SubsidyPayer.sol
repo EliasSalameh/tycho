@@ -144,6 +144,10 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
             emit SubsidySkipped(nonce, SkipReason.TransferFailed);
             return false;
         }
+        // Emitted after the transfer on purpose: only then is it paid. A
+        // re-entering receiver cannot pay twice, because the nonce is
+        // marked first and only the nonReentrant router can call `pay`.
+        // slither-disable-next-line reentrancy-events
         emit SubsidyPaid(
             nonce, subsidy.boundTo, to, subsidy.token, subsidy.amount
         );
@@ -320,8 +324,9 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         }
         // The gas cap means a receiver that reverts, burns gas or returns a
         // huge payload only loses its subsidy: it cannot spend more than the
-        // cap, which also bounds the return data copied back.
-        // slither-disable-next-line low-level-calls,arbitrary-send-eth
+        // cap, which also bounds the return data copied back
+        // (testPayEthFailingReceiver measures that copy).
+        // slither-disable-next-line low-level-calls,arbitrary-send-eth,return-bomb
         (success,) = to.call{value: amount, gas: _ETH_TRANSFER_GAS}("");
     }
 }
