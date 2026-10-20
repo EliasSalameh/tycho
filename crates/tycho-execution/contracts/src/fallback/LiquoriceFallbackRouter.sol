@@ -18,7 +18,8 @@ error LiquoriceFallbackRouter__InvalidSelector(bytes4 selector);
 /// @notice A `TychoFallbackRouter` whose primary is a signed Liquorice quote. The quote MUST name
 /// this contract as trader and receiver, and Liquorice MUST allow it as a solver.
 /// @dev The price is signed off-chain, so the quote runs first and the fallback runs only when it
-/// fails. Liquorice quotes do not partially fill: the settlement pulls the signed amount.
+/// fails. Partial fills are not supported on purpose: a Liquorice quote partially fills only when
+/// its maker allows it, which is rare, so the settlement pulls the signed amount.
 contract LiquoriceFallbackRouter is TychoFallbackRouter {
     using SafeERC20 for IERC20;
     using Address for address;
