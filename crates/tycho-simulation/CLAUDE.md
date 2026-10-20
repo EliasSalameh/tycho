@@ -113,9 +113,11 @@ for any protocol indexed by Tycho.
   Liquorice, Native) — their clients are shared via `Arc` by the emitted states, which request
   signed quotes through `IndicativelyPriced`; the crate-private `RFQError` covers the quoting layer
   and never reaches a public signature. Credentials are constructor arguments of the feed builders;
-  the library never reads the environment. `with_fallback_router()` on the Bebop and Hashflow
-  builders (and Metric's, in `pamm/`) stamps components `fallback:rfq:{venue}` instead, so
-  tycho-execution routes their swaps through that venue's fallback router; off by default
+  the library never reads the environment. `with_fallback_router()` on the Bebop, Hashflow,
+  Liquorice and Native builders (and Metric's, in `pamm/`) stamps components
+  `fallback:rfq:{venue}` instead, so tycho-execution routes their swaps through that venue's
+  fallback router; off by default. The Native and Liquorice routers are not deployed yet. The
+  fallback routers trade ERC20s only, so Native's fallback feed offers no native-token books
 - **`pamm/`**: book feeds for pAMMs — venues priced off-chain but executed directly against
   the pool, no binding quote (Metric today; its state does not implement `IndicativelyPriced`,
   and its client is held by the feed alone rather than by every state).
