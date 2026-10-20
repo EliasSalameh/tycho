@@ -148,7 +148,9 @@ mod tests {
             levels::{Levels, PriceLevel},
             test_token_map,
         },
-        rfq::protocols::hashflow::{models::HashflowPair, PROTOCOL_SYSTEM},
+        rfq::protocols::hashflow::{
+            models::HashflowPair, FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
+        },
         snapshot_feed::http::test_support::spawn_http_server,
     };
 
@@ -215,6 +217,57 @@ mod tests {
             source.normalized_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
 
         assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case::per_pair(
+        ComponentLayout::PerPair,
+        // "fallback:rfq:hashflow" in ASCII, then WETH, USDC and the maker's name.
+        "0x66616c6c6261636b3a7266713a68617368666c6f77\
+           c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2\
+           a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+           6d6d31"
+    )]
+    #[case::all_pairs(
+        ComponentLayout::AllPairs(QuoteRule::OncePerMaker),
+        // The venue-wide component is the protocol system and nothing else.
+        "0x66616c6c6261636b3a7266713a68617368666c6f77"
+    )]
+    #[tokio::test]
+    async fn a_fallback_source_labels_its_components_for_the_fallback_router(
+        #[case] component_layout: ComponentLayout<QuoteRule>,
+        #[case] expected_id: &str,
+    ) {
+        let weth = Bytes::from_str(WETH).unwrap();
+        let usdc = Bytes::from_str(USDC).unwrap();
+        let market_makers = r#"{"marketMakers":["mm1"]}"#.to_string();
+        let price_levels = format!(
+            r#"{{"status":"success","levels":{{
+                "mm1":[{{"pair":{{"baseToken":"{WETH}","quoteToken":"{USDC}"}},"levels":[{{"q":"1","p":"3000"}}]}}]
+            }}}}"#
+        );
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/taker/v3/market-makers")
+            {
+                Some(("200 OK", market_makers.clone()))
+            } else {
+                Some(("200 OK", price_levels.clone()))
+            }
+        })
+        .await;
+        let source = HashflowBookSource {
+            protocol_system: FALLBACK_PROTOCOL_SYSTEM,
+            component_layout,
+            ..source_for(&server.url(), &[&weth, &usdc], 0.0)
+        };
+
+        let books = source.fetch().await.unwrap().books;
+
+        let book = books.values().next().expect("one book");
+        assert_eq!(book.component.protocol_system, "fallback:rfq:hashflow");
+        assert_eq!(book.component.id.to_string(), expected_id);
     }
 
     /// Every market maker's level set becomes its own directed book once its TVL, normalized

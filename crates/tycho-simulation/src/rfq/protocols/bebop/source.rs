@@ -187,6 +187,7 @@ impl WsSource for BebopBookSource {
 mod tests {
     use std::str::FromStr;
 
+    use rstest::rstest;
     use tycho_common::models::Chain;
 
     use super::*;
@@ -195,7 +196,7 @@ mod tests {
         rfq::protocols::bebop::{
             client::QuoteOrigin,
             models::{BebopPriceData, BebopSupportedChain},
-            PROTOCOL_SYSTEM,
+            FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     };
 
@@ -263,6 +264,33 @@ mod tests {
             let book = books.values().next().unwrap();
             assert_eq!(book.component.protocol_system, "rfq:bebop");
         }
+    }
+
+    #[rstest]
+    #[case::per_pair(
+        false,
+        // "fallback:rfq:bebop" in ASCII, then WETH and USDC.
+        "0x66616c6c6261636b3a7266713a6265626f70\
+           c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2\
+           a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    )]
+    #[case::all_pairs(true, "0x66616c6c6261636b3a7266713a6265626f70")]
+    fn a_fallback_source_labels_its_components_for_the_fallback_router(
+        #[case] all_pairs: bool,
+        #[case] expected_id: &str,
+    ) {
+        let source = BebopBookSource {
+            protocol_system: FALLBACK_PROTOCOL_SYSTEM,
+            all_pairs,
+            ..test_source(0.0)
+        };
+        let update = BebopPricingUpdate { pairs: vec![weth_usdc_price_data(3000.0)] };
+
+        let books = source.build_books(update).unwrap();
+
+        let book = books.values().next().expect("one book");
+        assert_eq!(book.component.protocol_system, "fallback:rfq:bebop");
+        assert_eq!(book.component.id.to_string(), expected_id);
     }
 
     #[test]

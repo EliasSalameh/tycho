@@ -135,7 +135,8 @@ mod tests {
         book::test_token_map,
         evm::protocol::utils::bytes_to_address,
         pamm::protocols::metric::{
-            client::DEFAULT_BID_ASK_CONCURRENCY, feed::MetricFeedBuilder, PROTOCOL_SYSTEM,
+            client::DEFAULT_BID_ASK_CONCURRENCY, feed::MetricFeedBuilder, FALLBACK_PROTOCOL_SYSTEM,
+            PROTOCOL_SYSTEM,
         },
         snapshot_feed::http::test_support::spawn_http_server,
     };
@@ -227,6 +228,38 @@ mod tests {
 
     fn q64(price: u64) -> BigUint {
         BigUint::from(price) << 64usize
+    }
+
+    #[tokio::test]
+    async fn a_fallback_source_labels_its_components_for_the_fallback_router() {
+        const POOL: &str = "0x1111111111111111111111111111111111111111";
+        const SERVER_TS: u64 = 1_700_000_000;
+        let page = metadata_page(&[pool_json(POOL, Some(1_000.0))], None);
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
+                return Some(("200 OK", page.clone()));
+            }
+            Some(("200 OK", bid_ask_json(SERVER_TS, false)))
+        })
+        .await;
+        let mut source = MetricBookSource {
+            protocol_system: FALLBACK_PROTOCOL_SYSTEM,
+            ..source(Chain::Ethereum, &server.url(), "test_key")
+        };
+        source.book_config.tokens = Arc::new(test_token_map(&[
+            (&weth().address, "WETH", 18),
+            (&usdc().address, "USDC", 6),
+        ]));
+
+        let books = source.fetch().await.unwrap().books;
+
+        let book = books.values().next().expect("one book");
+        assert_eq!(book.component.protocol_system, "fallback:rfq:metric");
+        // A Metric component is identified by its pool address, whatever the system labels it.
+        assert_eq!(book.component.id.to_string(), POOL);
     }
 
     #[tokio::test]
