@@ -195,11 +195,13 @@ for any protocol indexed by Tycho.
   carrying the account state Titan simulated each venue on to price its ladders. `titan.rs`'s
   `validate` refuses a venue entry **whole** (20/32-byte identities, hex quantities incl. odd-digit
   balances, a build `timestamp`, 1:1 `assetPairs`/`pairSequences`, no `code`/full `state`, caps 32
-  accounts / 512 slots / 64 KiB measured on raw slot+word bytes); `overrides.rs` holds what it
+  accounts / 512 slots); `overrides.rs` holds what it
   accepts in a fail-closed `OverrideBuffer` keyed by `(canonical venue, sorted pair)` — the sequence
   is **not** part of `PairKey`: a key holds a pair's recent sequences together, and the stamping
-  lookup adds the sequence as its discriminator — with one slot of lifetime fixed at admission and
-  never extended by a replay, 8 builds per key across all of that pair's sequences, 1,024
+  lookup adds the sequence as its discriminator — served while the entry's `blockNumber` is still
+  the block being quoted and one slot has not passed since its build stamp, both derived from what
+  Titan sent so a re-send computes the same deadline and nothing has to be remembered about a
+  dropped build, 8 builds per key across all of that pair's sequences, 1,024
   `(venue, pair)` keys, 16 entries per frame × 32 pairs per entry, newest-built wins, a same-build
   conflicting payload poisons that build as a *recency bar* (older builds refused, newer ones still
   supersede), plus a rotating sweep so a key no lookup visits still expires. `tracker.rs` stamps at
@@ -212,7 +214,7 @@ for any protocol indexed by Tycho.
   Quoting never reads it: a dead/malformed second socket, a refused entry, an empty buffer, an
   unreadable reference and the opt-out all end in a state that quotes and carries no snapshot.
   `telemetry.rs` adds `override_match_total{outcome}` (5 `MatchResult` outcomes),
-  `override_buffer_total{event}` (17 `IngestEvent`s) and `refused_override_entries_total{reason}`
+  `override_buffer_total{event}` (16 `IngestEvent`s) and `refused_override_entries_total{reason}`
   (10 `EntryRejection`s) — those three registered at zero only while stamping is on — plus
   `invalid_provenance_total` (per **served** book, unreadable references only), which is registered
   **unconditionally**, because the provenance read sits on the price level path: the series exists

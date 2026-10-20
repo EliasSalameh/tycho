@@ -69,9 +69,6 @@ const MAX_ACCOUNTS: usize = 32;
 /// How many storage words one venue entry may override across all its accounts.
 const MAX_SLOTS: usize = 512;
 
-/// How many bytes of storage slots and words one venue entry may carry.
-const MAX_STORAGE_BYTES: usize = 64 * 1024;
-
 /// Connection tuning for the Titan WebSocket, set through the
 /// [`PriceLevelStreamBuilder`](super::stream::PriceLevelStreamBuilder).
 #[derive(Clone, Copy, Debug)]
@@ -171,9 +168,10 @@ pub(super) enum Provenance {
     /// reason to drop the book — the ladders are what quote, and the reference is metadata about
     /// them.
     ///
-    /// Nothing counts this yet: the tracker's `PairProvenance::of_book` is where this variant and
-    /// [`Self::Absent`] collapse into one, and so the one place a counter can still tell a
-    /// producer that sent an unreadable reference from one that sent none.
+    /// The tracker's `PairProvenance::of_book` is where this variant and [`Self::Absent`] collapse
+    /// into one, so it is the one place that can still tell a producer which sent an unreadable
+    /// reference from one that sent none — and the place that counts it, under
+    /// `invalid_provenance_total`.
     Invalid,
 }
 
@@ -276,16 +274,6 @@ impl TitanFrame for TitanOverrideMessage {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TitanVenueOverride {
-    /// Titan's display name for the venue. Nothing reads it for identity: `quote_address` is the
-    /// identity, exactly as on a book.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "a display label, deliberately not part of any identity the stream records"
-        )
-    )]
-    pub maker: Option<String>,
     /// The venue address this entry's snapshot belongs to — the same join key the price level
     /// stream's books carry, and not necessarily the venue's executable address.
     pub quote_address: Bytes,
@@ -445,8 +433,8 @@ pub(super) enum EntryRejection {
     /// An account overrode its code, or replaced its whole storage instead of diffing it, so the
     /// snapshot no longer describes the venue the chain holds.
     UnsupportedOverride,
-    /// The snapshot is past a per-entry cap ([`MAX_ACCOUNTS`] accounts, [`MAX_SLOTS`] storage
-    /// words, [`MAX_STORAGE_BYTES`] of storage).
+    /// The snapshot is past a per-entry cap: [`MAX_ACCOUNTS`] accounts or [`MAX_SLOTS`] storage
+    /// words.
     OverCap,
 }
 
@@ -490,9 +478,9 @@ fn validated(entry: TitanVenueOverride) -> Result<VenueOverrides, EntryRejection
 
 /// Errors unless the snapshot fits every per-entry cap.
 ///
-/// The caps are checked on Titan's own values, before any width is, so they bound what one
-/// frame can make this process retain even when the widths turn out wrong. At the 32-byte width a
-/// word is validated to, the slot cap is the binding one; the byte cap bounds a payload that grows.
+/// Counted on Titan's own values, before any width is checked, so one entry cannot make this
+/// process retain more than the caps allow even when its widths turn out wrong. A word that is
+/// not 32 bytes is refused separately, as [`EntryRejection::MalformedStorage`].
 fn ensure_within_caps(
     accounts: &BTreeMap<Bytes, TitanAccountOverride>,
 ) -> Result<(), EntryRejection> {
@@ -500,14 +488,10 @@ fn ensure_within_caps(
         return Err(EntryRejection::OverCap);
     }
     let mut slots: usize = 0;
-    let mut bytes: usize = 0;
     for account in accounts.values() {
         slots = slots.saturating_add(account.state_diff.len());
-        for (slot, word) in &account.state_diff {
-            bytes = bytes.saturating_add(slot.len() + word.len());
-        }
     }
-    if slots > MAX_SLOTS || bytes > MAX_STORAGE_BYTES {
+    if slots > MAX_SLOTS {
         return Err(EntryRejection::OverCap);
     }
     Ok(())
@@ -1161,7 +1145,6 @@ mod tests {
             .iter()
             .find(|venue| venue.quote_address == address(METRIC))
             .expect("the Metric entry");
-        assert_eq!(metric.maker.as_deref(), Some("Metric"));
         assert_eq!(metric.block_number, Some(26_201_954));
         assert_eq!(metric.slot, Some(15_440_992));
         assert_eq!(metric.timestamp, Some(1_792_115_920_126_438_314));
@@ -1395,16 +1378,11 @@ mod tests {
     /// A snapshot past any one of the per-entry caps is refused whole: what one frame can make
     /// this process retain has to be bounded before anything in it is trusted.
     #[rstest]
-    #[case::too_many_accounts(33, 0, 32)]
-    #[case::too_many_slots(2, 257, 32)]
-    #[case::too_much_storage(1, 200, 400)]
-    fn an_over_cap_snapshot_rejects_the_entry(
-        #[case] accounts: usize,
-        #[case] slots: usize,
-        #[case] word_bytes: usize,
-    ) {
+    #[case::too_many_accounts(33, 0)]
+    #[case::too_many_slots(2, 257)]
+    fn an_over_cap_snapshot_rejects_the_entry(#[case] accounts: usize, #[case] slots: usize) {
         let entry = Entry {
-            state_override: synthetic_state_override(accounts, slots, word_bytes),
+            state_override: synthetic_state_override(accounts, slots, WORD_BYTES),
             ..Entry::default()
         };
 

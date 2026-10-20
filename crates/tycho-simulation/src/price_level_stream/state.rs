@@ -328,13 +328,20 @@ impl ProtocolSim for PriceLevelStreamState {
         self
     }
 
-    /// Equal when the pair, both ladders, the gas cost and the simulation overrides match.
+    /// Equal when the pair, both ladders, the gas cost and the simulated pre-state match.
     ///
-    /// The overrides are part of the price: the same ladders priced on different account state
-    /// are different quotes, and a consumer that skips a state because it equals the one it
-    /// holds would keep simulating on the superseded snapshot. `quotable_until` is left out
-    /// instead: it is per-process metadata that never survives serialization, and skipping a
-    /// state only leaves the consumer on the older, stricter guard.
+    /// The pre-state is part of the price: the same ladders priced on different account state are
+    /// different quotes, and a consumer that skips a state because it equals the one it holds
+    /// would keep simulating on the superseded snapshot.
+    ///
+    /// Two fields are left out, both because this process derives them rather than reading them
+    /// off the stream, so comparing either would report a change the venue did not make.
+    /// `quotable_until` is per-process metadata that never survives serialization. The snapshot's
+    /// `expires_at` is narrowed to the ladder deadline of the message that carried the ladders,
+    /// which is a wall-clock second and moves between two messages carrying one unchanged
+    /// snapshot — see
+    /// [`same_simulated_state`](super::overrides::PammSimulationOverrides::same_simulated_state).
+    /// Skipping a state in either case leaves the consumer on the older, stricter deadline.
     fn eq(&self, other: &dyn ProtocolSim) -> bool {
         other
             .as_any()
@@ -349,12 +356,17 @@ impl ProtocolSim for PriceLevelStreamState {
                     quotable_until: _,
                     overrides,
                 } = other;
+                let same_pre_state = match (&self.overrides, overrides) {
+                    (None, None) => true,
+                    (Some(held), Some(arriving)) => held.same_simulated_state(arriving),
+                    (None, Some(_)) | (Some(_), None) => false,
+                };
                 &self.token0 == token0 &&
                     &self.token1 == token1 &&
                     &self.quotes_0_to_1 == quotes_0_to_1 &&
                     &self.quotes_1_to_0 == quotes_1_to_0 &&
                     &self.gas_cost == gas_cost &&
-                    &self.overrides == overrides
+                    same_pre_state
             })
     }
 }
@@ -756,6 +768,27 @@ mod tests {
         let mut rebuilt = test_overrides();
         rebuilt.built_at_ns += 1;
         assert!(!stamped().eq(&state().with_simulation_overrides(rebuilt)));
+    }
+
+    /// The narrowed deadline is this process's reading of when to stop simulating, not something
+    /// the venue said, so it must not make an unchanged quote look changed.
+    ///
+    /// The state narrows a snapshot's `expires_at` to the ladder deadline of the message that
+    /// carried the ladders, and that deadline is a wall-clock second: two messages a second apart
+    /// carrying one unchanged snapshot narrow it to two different values. Comparing it would
+    /// report every such message as a changed quote, and a consumer that reroutes on change would
+    /// reroute on a price that did not move.
+    #[test]
+    fn eq_ignores_a_renarrowed_override_deadline() {
+        let held = state().with_simulation_overrides(test_overrides());
+
+        let mut renarrowed = test_overrides();
+        renarrowed.expires_at += 1;
+        assert!(held.eq(&state().with_simulation_overrides(renarrowed)));
+
+        let mut earlier = test_overrides();
+        earlier.expires_at -= 1;
+        assert!(held.eq(&state().with_simulation_overrides(earlier)));
     }
 
     /// The consumed ladders are empty, but the successor still names the state the fill was

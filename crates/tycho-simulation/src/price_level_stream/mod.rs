@@ -103,11 +103,12 @@
 //! The second socket is what closes that gap: per venue entry it carries the accounts Titan
 //! overrode to price that venue, and the pair versions the ladders it produced name. Entries are
 //! validated whole (`titan::validate`), held in a bounded fail-closed buffer
-//! (`overrides::OverrideBuffer`) for one slot of their build's lifetime — fixed at the build's
-//! first admission, and never extended by a replay, a supersession or a contradiction, each of
-//! which leaves the build barred rather than forgotten until a slot from its stamp has passed,
-//! while pressure that would have to forget such a build refuses the arriving one instead — and
-//! stamped onto a state at construction, which
+//! (`overrides::OverrideBuffer`) and attached to a state at construction while two bounds hold:
+//! the block the entry was simulated for is still the block being quoted, and one slot has not
+//! yet passed since Titan's build stamp. Both are functions of what Titan sent, so every
+//! admission of one build computes the same deadline and a re-send changes nothing — which is why
+//! the buffer keeps no record of what it dropped. Only a contradicted build is pinned, until its
+//! own deadline. The result is read back by
 //! [`simulation_overrides`](state::PriceLevelStreamState::simulation_overrides) reads back as
 //! [`PammSimulationOverrides`](overrides::PammSimulationOverrides).
 //!
@@ -191,8 +192,7 @@
 //!   outcome.
 //! - `price_level_stream_override_buffer_total{event}`: every event of an ingest of the override
 //!   buffer — `admitted`, `restamped`, `replayed`, `older_build`, `conflict_poisoned`,
-//!   `rejected_poisoned_build`, `rejected_older_than_poison`, `rejected_spent_replay`,
-//!   `rejected_future_skew`, `rejected_expired`, `rejected_key_saturated`,
+//!   `rejected_contradicted`, `rejected_future_skew`, `rejected_expired`, `rejected_key_saturated`,
 //!   `rejected_keys_exhausted`, `rejected_frame_entry_cap`, `rejected_entry_pair_cap`,
 //!   `degenerate_pair`, `evicted_entry`, `evicted_key`, `swept_expired`. These are buffer events,
 //!   not lookup misses: an eviction here says a held build was dropped, never that a ladder failed

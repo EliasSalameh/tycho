@@ -109,6 +109,25 @@ impl PammSimulationOverrides {
         self.block_number
             .is_none_or(|target| target >= block)
     }
+
+    /// Whether two snapshots describe the same simulated pre-state.
+    ///
+    /// Everything Titan sent is compared, destructured so that a field added to the snapshot has
+    /// to be classified here rather than silently ignored. [`Self::expires_at`] is excluded
+    /// because this process derives it: the buffer takes it from the build's own stamp, which is
+    /// compared, and the state narrows it to the ladder deadline of whichever message carried the
+    /// ladders — a wall-clock second that moves between two messages carrying one unchanged
+    /// snapshot. Comparing it would report a changed quote for a snapshot that did not change.
+    ///
+    /// Both the buffer, deciding whether an arriving build repeats one it holds, and
+    /// `ProtocolSim::eq`, deciding whether a served state still says what it said, ask this.
+    pub(super) fn same_simulated_state(&self, other: &Self) -> bool {
+        let Self { accounts, block_number, block_timestamp, built_at_ns, expires_at: _ } = self;
+        *accounts == other.accounts &&
+            *block_number == other.block_number &&
+            *block_timestamp == other.block_timestamp &&
+            *built_at_ns == other.built_at_ns
+    }
 }
 
 /// How many builds of one `(venue, pair)` key the buffer retains, contradiction records included.
@@ -378,26 +397,6 @@ fn exported_second(built_at_ns: u64) -> u64 {
     u64::try_from(deadline_nanos / u128::from(NANOS_PER_SECOND)).unwrap_or(u64::MAX)
 }
 
-/// Whether two builds describe the same simulated pre-state.
-///
-/// `expires_at` is excluded because it is derived: one slot after `built_at_ns`, which is compared,
-/// so two builds agreeing on everything else cannot disagree on it. Everything Titan did send is
-/// compared, destructured so that a field added to the snapshot has to be classified here rather
-/// than silently ignored.
-fn same_payload(retained: &PammSimulationOverrides, arriving: &PammSimulationOverrides) -> bool {
-    let PammSimulationOverrides {
-        accounts,
-        block_number,
-        block_timestamp,
-        built_at_ns,
-        expires_at: _,
-    } = retained;
-    *accounts == arriving.accounts &&
-        *block_number == arriving.block_number &&
-        *block_timestamp == arriving.block_timestamp &&
-        *built_at_ns == arriving.built_at_ns
-}
-
 /// The builds one `(venue, pair)` key retains.
 struct KeyHistory {
     /// At most [`MAX_KEY_DEPTH`] builds, contradiction records included, in no particular order.
@@ -554,7 +553,7 @@ impl KeyHistory {
     fn replay(&mut self, index: usize, arriving: &Arriving, events: &mut Vec<IngestEvent>) {
         let retained = &mut self.entries[index];
         let replayed = match &retained.content {
-            Content::Snapshot(snapshot) => same_payload(snapshot, &arriving.snapshot),
+            Content::Snapshot(snapshot) => snapshot.same_simulated_state(&arriving.snapshot),
             // Unreachable: `active` names the build serving the sequence, which holds a payload,
             // and a contradicted build is refused before this. Refusing is the answer either way.
             Content::Contradicted => false,
@@ -851,7 +850,8 @@ fn hex(literal: &str) -> Bytes {
 /// one carrying a single 32-byte storage write.
 ///
 /// `block_timestamp` is the entry's beacon slot turned into a Unix second, and `expires_at` the
-/// second of `built_at_ns` plus one slot, as a deadline fixed at admission.
+/// second of `built_at_ns` plus one slot — a function of the stamp, so it is the same whenever the
+/// build is admitted.
 #[cfg(test)]
 pub(super) fn test_overrides() -> PammSimulationOverrides {
     PammSimulationOverrides {
@@ -1117,8 +1117,8 @@ mod tests {
     ///
     /// Every build here is stamped before the clock that admits it, which is the lifecycle of
     /// ordinary traffic: Titan's stamps were observed at least 120 ms behind the local clock. A
-    /// build stamped *ahead* of that clock is held to its first admission by a fence instead, and
-    /// [`the_spent_fence_state_machine`] walks that lifecycle on its own.
+    /// build stamped ahead of that clock takes the same path, because its deadline comes from its
+    /// stamp either way; [`a_trailing_clock_does_not_lock_the_buffer`] pins that.
     #[test]
     fn the_retention_state_machine() {
         let clock = Clock::new();
