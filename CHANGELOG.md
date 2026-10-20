@@ -1,3 +1,16 @@
+## [0.469.0](https://github.com/propeller-heads/tycho/compare/0.468.0...0.469.0) (2026-10-20)
+
+
+### Features
+
+* **execution:** add SubsidyPayer contract ([d917aa4](https://github.com/propeller-heads/tycho/commit/d917aa43978f4c91daeec53818d8e27956bfe83d))
+* **execution:** add SubsidyPayer contract ([#1643](https://github.com/propeller-heads/tycho/issues/1643)) ([88a3124](https://github.com/propeller-heads/tycho/commit/88a312437fe81d90dc52b1f644fe4be23f4a26ae))
+
+
+### Bug Fixes
+
+* **execution:** suppress expected Slither findings in SubsidyPayer ([52b5cb6](https://github.com/propeller-heads/tycho/commit/52b5cb60f9e7c91da5db2309aaad1f39467ebb2f))
+
 ## [0.468.0](https://github.com/propeller-heads/tycho/compare/0.467.0...0.468.0) (2026-10-20)
 
 
