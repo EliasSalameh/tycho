@@ -121,7 +121,7 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
     function pay(
         Subsidy calldata subsidy,
         uint256 hopAmountIn,
-        address routerCaller,
+        address routerMsgSender,
         address to,
         bytes calldata signature
     ) external returns (bool paid) {
@@ -129,7 +129,7 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
 
         uint256 nonce = subsidy.nonce;
         SkipReason reason =
-            _skipReason(subsidy, hopAmountIn, routerCaller, signature);
+            _skipReason(subsidy, hopAmountIn, routerMsgSender, signature);
         if (reason != SkipReason.None) {
             emit SubsidySkipped(nonce, reason);
             return false;
@@ -228,7 +228,7 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
     function _skipReason(
         Subsidy calldata subsidy,
         uint256 hopAmountIn,
-        address routerCaller,
+        address routerMsgSender,
         bytes calldata signature
     ) private view returns (SkipReason) {
         // Checks `paused()` instead of using `whenNotPaused`, which reverts:
@@ -246,7 +246,7 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
             return SkipReason.InvalidSignature;
         }
         // Pays only when the quoted sender (`boundTo`) is sending this swap:
-        // - `routerCaller` is whoever called the router, not the router
+        // - `routerMsgSender` is whoever called the router, not the router
         //   itself. The subsidy executor runs by delegatecall, so it passes
         //   the router's own msg.sender, and only the router may call `pay`:
         //   no caller can set it. It covers EOAs, smart wallets and
@@ -257,7 +257,8 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         // skipped without using the nonce. tx.origin only decides who earns
         // the subsidy; it guards no funds.
         // slither-disable-next-line tx-origin
-        if (subsidy.boundTo != routerCaller && subsidy.boundTo != tx.origin) {
+        if (subsidy.boundTo != routerMsgSender && subsidy.boundTo != tx.origin)
+        {
             return SkipReason.CallerMismatch;
         }
         if (hopAmountIn < subsidy.minAmountIn) {

@@ -184,7 +184,7 @@ contract SubsidyPayerTest is Test {
         return _sign(s, SIGNER_PK);
     }
 
-    /// @dev Calls `pay` as ROUTER, with `tx.origin` ORIGIN and `routerCaller`
+    /// @dev Calls `pay` as ROUTER, with `tx.origin` ORIGIN and `routerMsgSender`
     ///      CALLER.
     function _pay(Subsidy memory s, bytes memory sig, address to)
         internal

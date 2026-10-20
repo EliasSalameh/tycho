@@ -58,7 +58,7 @@ interface ISubsidyPayer {
     /// @param subsidy The subsidy terms that `signature` covers.
     /// @param hopAmountIn Input amount of the hop, checked against
     ///        `subsidy.minAmountIn`.
-    /// @param routerCaller Whoever called the router (the router's own
+    /// @param routerMsgSender Whoever called the router (the router's own
     ///        `msg.sender`), as passed by the subsidy executor from its
     ///        delegatecall context; matched against `subsidy.boundTo`.
     /// @param to Receives the subsidy; it is where the Dispatcher measures
@@ -71,7 +71,7 @@ interface ISubsidyPayer {
     function pay(
         Subsidy calldata subsidy,
         uint256 hopAmountIn,
-        address routerCaller,
+        address routerMsgSender,
         address to,
         bytes calldata signature
     ) external returns (bool paid);
