@@ -12,13 +12,14 @@ use crate::encoding::{
 /// Protocol config key of the chain's `LiquoriceFallbackRouter` address.
 const FALLBACK_ROUTER_CONFIG_KEY: &str = "fallback_router";
 
-/// `[tokenIn: 20][tokenOut: 20]`, the part of the Liquorice swap data before the executor's
-/// length prefix.
+/// `LiquoriceSwapEncoder` returns `[tokenIn: 20][tokenOut: 20][partialFillOffset: 4]
+/// [originalBaseTokenAmount: 32][minBaseTokenAmount: 32][settlement calldata]`. This encoder keeps
+/// the tokens, drops the partial-fill fields and length-prefixes the calldata.
+/// `LIQUORICE_HEAD_LENGTH` is the length of the kept tokens.
 const LIQUORICE_HEAD_LENGTH: usize = 40;
 
-/// `[partialFillOffset: 4][originalBaseTokenAmount: 32][minBaseTokenAmount: 32]`, which the
-/// Liquorice swap data carries between the tokens and the settlement calldata.
-/// `LiquoriceFallbackRouter` does not partially fill, so it takes the calldata alone.
+/// Length of the dropped partial-fill fields. `LiquoriceFallbackRouter` does not partially fill,
+/// so it takes the settlement calldata alone.
 const LIQUORICE_FILL_FIELDS_LENGTH: usize = 68;
 
 /// Encodes a Liquorice swap for `LiquoriceFallbackRouter`. The quote is requested with that router

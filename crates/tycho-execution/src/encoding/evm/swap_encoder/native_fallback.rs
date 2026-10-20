@@ -12,12 +12,13 @@ use crate::encoding::{
 /// Protocol config key of the chain's `NativeFallbackRouter` address.
 const FALLBACK_ROUTER_CONFIG_KEY: &str = "fallback_router";
 
-/// `[tokenIn: 20][tokenOut: 20]`, the part of the Native swap data before the executor's length
-/// prefix.
+/// `NativeSwapEncoder` returns `[tokenIn: 20][tokenOut: 20][target: 20][signedAmountIn: 32]
+/// [calldata]`. This encoder keeps the tokens, drops `target` and length-prefixes the rest.
+/// `NATIVE_HEAD_LENGTH` is the length of the kept tokens.
 const NATIVE_HEAD_LENGTH: usize = 40;
 
-/// `[target: 20]`, which the Native swap data carries between the tokens and the signed amount.
-/// `NativeFallbackRouter` calls its immutable `nativeRouterV6` instead.
+/// Length of the dropped `target`, the address the Native executor calls. `NativeFallbackRouter`
+/// always calls its own `nativeRouterV6`, so it takes no target.
 const NATIVE_TARGET_LENGTH: usize = 20;
 
 /// Encodes a Native swap for `NativeFallbackRouter`. The quote is requested with that router as
