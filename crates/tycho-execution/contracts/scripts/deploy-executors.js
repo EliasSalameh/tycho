@@ -106,6 +106,7 @@ const deploy_protocols = {
         "uniswap_v3",
         "uniswap_v4",
         "ekubo_v3",
+        "pancakeswap_infinity_cl",
         "native_wrapper",
         "rfq:metric",
         "rfq:native",

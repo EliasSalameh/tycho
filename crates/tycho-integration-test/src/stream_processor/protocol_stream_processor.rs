@@ -47,7 +47,7 @@ use tycho_simulation::{
     protocol::models::Update,
 };
 
-use crate::stream_processor::{StreamUpdate, UpdateType};
+use crate::stream_processor::{StreamUpdate, StreamUpdatePayload};
 
 /// A TVL threshold, in native token units, for one protocol system. Parsed from
 /// `protocol=threshold`, e.g. `lunarbase=10`.
@@ -214,8 +214,7 @@ impl ProtocolStreamProcessor {
                         }
                     };
                 let update = StreamUpdate {
-                    update_type: UpdateType::Protocol,
-                    update,
+                    payload: StreamUpdatePayload::Protocol(update),
                     is_first_update,
                     received_at,
                 };
