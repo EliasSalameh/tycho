@@ -1,3 +1,20 @@
+## [0.470.1](https://github.com/propeller-heads/tycho/compare/0.470.0...0.470.1) (2026-10-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **protocol:** rename Update.block_number_or_timestamp to block_number (#1562)
+* **protocol:** `Update.block_number_or_timestamp` is `Update.block_number`,
+with no serde alias — a market recording saved under the old name fails to
+load with `missing field block_number` and needs the key renamed.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+### Code Refactoring
+
+* **protocol:** rename Update.block_number_or_timestamp to block_number ([23070ba](https://github.com/propeller-heads/tycho/commit/23070babf5958bda9ca80664c1f8778e11c42317))
+* **protocol:** rename Update.block_number_or_timestamp to block_number ([#1562](https://github.com/propeller-heads/tycho/issues/1562)) ([2ee3349](https://github.com/propeller-heads/tycho/commit/2ee33493814146d19ebfe12ef8308d0fa0c25629))
+
 ## [0.470.0](https://github.com/propeller-heads/tycho/compare/0.469.0...0.470.0) (2026-10-20)
 
 
