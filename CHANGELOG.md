@@ -1,3 +1,11 @@
+## [0.472.0](https://github.com/propeller-heads/tycho/compare/0.471.0...0.472.0) (2026-10-20)
+
+
+### Features
+
+* **simulation:** serve the Goliath, Stelaxis and ElZorro pAMMs ([994e789](https://github.com/propeller-heads/tycho/commit/994e789e6066947997e41c014749152fc968d264))
+* **simulation:** serve the Goliath, Stelaxis and ElZorro pAMMs ([#1648](https://github.com/propeller-heads/tycho/issues/1648)) ([8a4a3a2](https://github.com/propeller-heads/tycho/commit/8a4a3a2f42ccd5cd195017a15aabe03da0992dfa))
+
 ## [0.471.0](https://github.com/propeller-heads/tycho/compare/0.470.1...0.471.0) (2026-10-20)
 
 
