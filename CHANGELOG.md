@@ -1,3 +1,11 @@
+## [0.472.1](https://github.com/propeller-heads/tycho/compare/0.472.0...0.472.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **client:** increase Arbitrum feed timeout ([ec44a95](https://github.com/propeller-heads/tycho/commit/ec44a955017bead5abaaf4f124f00ca0f47f3bdf))
+* **client:** remove unnecessary comment ([a538afa](https://github.com/propeller-heads/tycho/commit/a538afa2ea7ae140f48deb893376d4d5c2bd5d47))
+
 ## [0.472.0](https://github.com/propeller-heads/tycho/compare/0.471.0...0.472.0) (2026-10-20)
 
 
