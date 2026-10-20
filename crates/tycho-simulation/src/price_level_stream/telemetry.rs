@@ -38,8 +38,8 @@ pub(super) const RECONNECTS: &str = "price_level_stream_reconnects_total";
 pub(super) const UNREGISTERED_PAMM_ENTRIES: &str =
     "price_level_stream_unregistered_pamm_entries_total";
 /// Counter, label `reason`, one of [`SkipReason`]. Incremented once per book of a served venue
-/// whose token symbols do not name a pair this consumer can serve, so the book is not priced at
-/// all. Every reason starts at zero. The symbol itself is never a label — it appears only in the
+/// whose token addresses do not name a pair this consumer can serve, so the book is not priced at
+/// all. Every reason starts at zero. The address itself is never a label — it appears only in the
 /// accompanying DEBUG log.
 pub(super) const SKIPPED_BOOKS: &str = "price_level_stream_skipped_books_total";
 /// Counter, label `reason`, one of [`SideRejectReason`]. Incremented once per book side whose

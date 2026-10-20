@@ -275,9 +275,9 @@ impl PriceLevelStreamBuilder {
     /// re-added by the next accepted frame carrying it. Frames that are too old, from the
     /// future, out of order, or whose block regresses or jumps more than one block per elapsed
     /// slot plus 2 are rejected without effect. Frames that contain no served pAMM produce no
-    /// update. Books whose token symbols are not bound to assets present in the provided token
-    /// metadata are skipped, as is any one book side whose levels do not state a usable price
-    /// function — leaving that direction unquotable.
+    /// update. Books naming an address absent from the provided token metadata are skipped, as is
+    /// any one book side whose levels do not state a usable price function — leaving that
+    /// direction unquotable.
     ///
     /// Every update is stamped with the block its frame targets, a removal with the newest
     /// accepted block. Block numbers never decrease while something is served. Once every
@@ -952,8 +952,6 @@ mod tests {
         std::future::pending::<()>().await;
     }
 
-    /// A streamed symbol is resolved through the bindings only, never through the symbols of the
-    /// consumer's own tokens: an impostor `WBTC` neither captures the bound asset's quotes nor
     /// The address Titan streams is the identity, so an impostor token calling itself `WBTC` is
     /// never priced and never blocks the real asset. Kipseli quoted WBTC/USDC and WETH/USDC in
     /// the capture, so the WETH/USDC component must survive every case.

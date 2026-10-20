@@ -88,6 +88,8 @@ A frame names its assets by address and prices every level in human units:
       "quoteAddress": "0x5979458912f80b96d30d4220af8e2e4925a33320",
       "token1": "WBTC",
       "token2": "USDC",
+      "token1Address": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+      "token2Address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
       "bids": [{ "price": 80970.38, "cumVolume": 0.0005 }],
       "asks": [{ "price": 80997.89405475458, "cumVolume": 0.00012346 }]
     }
@@ -132,7 +134,12 @@ The stream therefore preserves the quoting model for every pair whose assets you
 
 ## Venue identity
 
-A venue's identity in Tycho is its **public identity**: the address a swap goes to. Titan streams some venues under a different `quoteAddress` — a join key across its streams rather than an executable address — so the stream normalizes every such address at every boundary. Kipseli is today's only case: its books arrive under `0xc9a956b5196dfe110debe8781857bc8b97d32091`, while its swaps go to the `KipseliPropAMMWrapper` router at `0x71e790dd841c8a9061487cb3e78c288e75ce0b3d`.
+A venue's identity in Tycho is its **public identity**: the address a swap goes to. Titan streams some venues under a different `quoteAddress` — a join key across its streams rather than an executable address — so the stream normalizes every such address at every boundary. Two venues differ today:
+
+| venue | books arrive under | swaps go to |
+|---|---|---|
+| Kipseli | `0xc9a956b5196dfe110debe8781857bc8b97d32091` | `0x71e790dd841c8a9061487cb3e78c288e75ce0b3d`, the `KipseliPropAMMWrapper` router |
+| Metric | `0xe844701934d9c6085b292e428f41b911cc0b3872` | `0x99ab7c1c5eab47801f7937075998527a550fba8a` |
 
 Component ids, venue names, gas costs, denials and the `pamm_address` attribute therefore always carry the public identity, never the streamed one, and your encoder always sends the swap to the public identity. `add_pamm` and `deny_pamm` accept either of a venue's addresses and normalize what you pass, so you can configure a venue by whichever address you have. A venue the alias table does not name already streams under its public identity, so for it the two coincide.
 

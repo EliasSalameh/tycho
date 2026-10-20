@@ -165,8 +165,9 @@ for any protocol indexed by Tycho.
   `pricelevelstream:{pamm}`, where `{pamm}` names the venue's **canonical public identity**: the
   address a swap goes to. `config.rs`'s `PAMM_ADDRESS_ALIASES` normalizes every boundary onto it —
   incoming book `quoteAddress`es as well as the addresses handed to `add_pamm`/`deny_pamm`, either
-  of which may name either address (today's one entry is Kipseli, streamed under `0xc9a9…` and
-  executed at `0x71e7…`). Component ids, venue names, gas costs, denial and the `pamm_address`
+  of which may name either address (today's two entries are Kipseli, streamed under `0xc9a9…` and
+  executed at `0x71e7…`, and Metric, streamed under `0xe844…` and executed at `0x99ab…`).
+  Component ids, venue names, gas costs, denial and the `pamm_address`
   attribute therefore always carry the public identity, never the streamed one; `maker` is
   recorded nowhere. A
   new builder serves nothing: `with_known_pamms` registers the known-good venues and denies

@@ -75,8 +75,9 @@ fn deadline_after(idle_timeout: Duration) -> Instant {
 /// the block currently being built.
 ///
 /// Books are quoted in human units, so a level is a decimal price and a cumulative volume rather
-/// than a pair of token amounts, and tokens arrive as symbols, not addresses: a consumer has to
-/// resolve them against its own token metadata before it can price anything.
+/// than a pair of token amounts, and tokens arrive as addresses, with symbols alongside them as
+/// display labels: a consumer resolves the addresses against its own token metadata before it can
+/// price anything.
 ///
 /// Frames are best effort, not complete snapshots: a venue or pair can be absent from one frame
 /// and present in the next (observed on 7.7% of frames in a 15 minute capture), so absence must
@@ -133,7 +134,11 @@ pub(super) struct TitanBook {
     pub bids: Vec<TitanLevel>,
 }
 
-/// A single quote level: `cum_volume` of `token1` is available in total at `price` or better.
+/// A single quote level: selling `cum_volume` of `token1` in total executes at an average of
+/// `price`.
+///
+/// An average, not a limit: `ladders_for_book` computes `amount_out = price · cum_volume`, which
+/// holds only under that reading.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TitanLevel {

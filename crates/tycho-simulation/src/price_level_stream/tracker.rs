@@ -514,8 +514,9 @@ struct PairLadders {
     quotes_1_to_0: Vec<PriceLevelStreamQuote>,
 }
 
-/// The quote ladders of `book`, or `None` if it prices no pair this consumer can serve: a symbol
-/// that does not resolve through `bindings` into `tokens`, or two symbols naming one asset.
+/// The quote ladders of `book`, or `None` if it prices no pair this consumer can serve: an address
+/// that is not 20 bytes (`malformed_address`), one absent from `tokens` (`unadmitted_token`), or
+/// two addresses that name one asset (`one_asset_pair`).
 ///
 /// A side the conversion rejects yields an empty ladder, so that one direction is unquotable
 /// while the opposite direction keeps being served — as for a side the venue quoted empty.
@@ -1388,8 +1389,8 @@ mod tests {
         assert!(update.removed_pairs.is_empty());
     }
 
-    /// A book whose base symbol resolves to an address above its quote token's sorts the pair the
-    /// other way round, so the bids become the `token1 → token0` ladder and the asks the
+    /// A book whose `token1` address sorts above its `token2` address orders the pair the other
+    /// way round, so the bids become the `token1 → token0` ladder and the asks the
     /// `token0 → token1` one. Both sides carry distinct amounts, so a ladder landing in the wrong
     /// slot cannot pass: WETH sorts above USDC, the bids sell 1 WETH for 3,000 USDC, and the asks
     /// sell 6,200 USDC for 2 WETH.
