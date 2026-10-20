@@ -44,6 +44,79 @@ pub struct MetricMetadata {
     /// Total value locked in the requested fiat currency, used directly as the component TVL.
     /// Absent when Metric has no price for the pool.
     pub tvl_fiat: Option<f64>,
+    /// `0` trades normally; anything higher refuses some or all swaps. `None` when the response
+    /// omits the field.
+    #[serde(default)]
+    pub pause_level: Option<u8>,
+}
+
+impl MetricMetadata {
+    /// Whether the pool accepts swaps. Metric routes only to pools at pause level `0`; a pool
+    /// whose metadata carries no pause level is treated as unpaused.
+    pub fn is_unpaused(&self) -> bool {
+        self.pause_level.unwrap_or(0) == 0
+    }
+}
+
+/// The body `POST /public/v1/evm/{chain_id}/bid_ask/batch` is sent with.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MetricBatchBidAskRequest {
+    /// Checksummed pool addresses, at most 100.
+    pub pools: Vec<String>,
+}
+
+/// The answer of `POST /public/v1/evm/{chain_id}/bid_ask/batch`: one result per requested pool.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MetricBatchBidAskResponse {
+    pub results: Vec<MetricBatchBidAskResult>,
+}
+
+/// One pool's entry in a batch bid/ask answer: its quote, or the error the single-pool endpoint
+/// would have answered for it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetricBatchBidAskResult {
+    #[serde(deserialize_with = "evm_address::deserialize")]
+    pub pool_address: Bytes,
+    #[serde(default)]
+    pub quote: Option<MetricBidAskResponse>,
+    #[serde(default)]
+    pub error: Option<MetricBatchBidAskError>,
+}
+
+impl MetricBatchBidAskResult {
+    /// The pool's quote, or why Metric did not quote it.
+    pub fn into_quote(self) -> Result<MetricBidAskResponse, FeedError> {
+        match (self.quote, self.error) {
+            (Some(quote), _) => Ok(quote),
+            (None, Some(error)) => Err(error.into()),
+            (None, None) => Err(FeedError::Parsing(format!(
+                "Metric batch bid/ask answered neither a quote nor an error for pool {}",
+                self.pool_address
+            ))),
+        }
+    }
+}
+
+/// A pool a batch bid/ask request could not quote.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MetricBatchBidAskError {
+    /// The HTTP status the single-pool endpoint would have answered with.
+    pub status: u16,
+    pub error: String,
+}
+
+impl From<MetricBatchBidAskError> for FeedError {
+    /// Classified as a failed single-pool request would be: fatal only when Metric names the
+    /// chain as one it does not serve.
+    fn from(error: MetricBatchBidAskError) -> Self {
+        let message = format!("Metric bid/ask HTTP error {}: {}", error.status, error.error);
+        if (MetricApiError { error: error.error }).refuses_the_chain() {
+            FeedError::Fatal(message)
+        } else {
+            FeedError::Connection(message)
+        }
+    }
 }
 
 /// Metric returns its numeric fields as decimal strings; they are parsed once at deserialization
@@ -161,6 +234,10 @@ fn q64_to_f64(value: &BigUint) -> Result<f64, FeedError> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -343,5 +420,84 @@ mod tests {
 
         assert_eq!(response.next_offset, None);
         assert_eq!(response.data[0].tvl_fiat, Some(1234.56));
+    }
+
+    fn metadata_with_pause_level(pause_level: Option<u8>) -> MetricMetadata {
+        let mut pool = serde_json::json!({
+            "poolAddress": "0xbF48bCf474d57fF82A3215319229e0DE1476A557",
+            "token0": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        });
+        if let Some(level) = pause_level {
+            pool["pauseLevel"] = serde_json::json!(level);
+        }
+        serde_json::from_value(pool).unwrap()
+    }
+
+    #[rstest]
+    #[case::trading(Some(0), true)]
+    #[case::partly_paused(Some(1), false)]
+    #[case::fully_paused(Some(2), false)]
+    #[case::no_pause_level(None, true)]
+    fn only_pause_level_zero_is_unpaused(#[case] pause_level: Option<u8>, #[case] unpaused: bool) {
+        let pool = metadata_with_pause_level(pause_level);
+
+        assert_eq!(pool.pause_level, pause_level);
+        assert_eq!(pool.is_unpaused(), unpaused);
+    }
+
+    #[test]
+    fn batch_bid_ask_carries_quotes_and_per_pool_errors() {
+        let response: MetricBatchBidAskResponse = serde_json::from_value(serde_json::json!({
+            "results": [
+                {
+                    "poolAddress": "0xf85afbadecc7f23dd173ed706f07d9c7e2473e24",
+                    "quote": {
+                        "pair": "WETH/USDC",
+                        "poolAddress": "0xF85AfbADeCC7F23Dd173ed706f07d9C7e2473e24",
+                        "priceProviderStatus": "healthy",
+                        "bidAdj": "49940417631045696435290",
+                        "askAdj": "49945012360825322506424",
+                        "totalToken0Available": "24503618827789131821",
+                        "totalToken1Available": "49785157539",
+                        "serverTs": 1790508850,
+                        "depth": null
+                    }
+                },
+                {
+                    "poolAddress": "0x0000000000000000000000000000000000000001",
+                    "error": { "status": 404, "error": "Pair metadata not found" }
+                },
+                { "poolAddress": "0x0000000000000000000000000000000000000002" }
+            ]
+        }))
+        .unwrap();
+
+        let [quoted, failed, empty] = <[_; 3]>::try_from(response.results).unwrap();
+        // Addresses decode to bytes, whatever casing the venue answers in.
+        assert_eq!(
+            quoted.pool_address,
+            Bytes::from_str("0xF85AfbADeCC7F23Dd173ed706f07d9C7e2473e24").unwrap()
+        );
+        assert_eq!(quoted.into_quote().unwrap().server_ts, 1790508850);
+        let error = failed.into_quote().unwrap_err();
+        assert!(matches!(error, FeedError::Connection(_)), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("Pair metadata not found"),
+            "{error}"
+        );
+        assert!(matches!(empty.into_quote(), Err(FeedError::Parsing(_))));
+    }
+
+    #[rstest]
+    #[case::an_unknown_pool("Pair metadata not found", false)]
+    #[case::an_unserved_chain("Unknown chainId: 130", true)]
+    fn only_a_batch_entry_refusing_the_chain_is_fatal(#[case] message: &str, #[case] fatal: bool) {
+        let error: FeedError =
+            MetricBatchBidAskError { status: 404, error: message.to_string() }.into();
+
+        assert_eq!(error.is_fatal(), fatal, "{error}");
     }
 }
