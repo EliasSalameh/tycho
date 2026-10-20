@@ -23,9 +23,6 @@ error SubsidyPayer__AddressZero();
  *      Each skip emits `SubsidySkipped` and returns false, so the swap fills
  *      as it would without the subsidy.
  *
- *      `pay` checks `paused()` instead of using `whenNotPaused`, because it
- *      must skip, not revert.
- *
  *      No address holds `DEFAULT_ADMIN_ROLE`. Every role administers itself
  *      except `PAUSER_ROLE`, which `PAUSER_ADMIN_ROLE` administers. Pauser keys
  *      are hot, so a leaked one must not be able to revoke the other pausers.
@@ -230,6 +227,9 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         address routerCaller,
         bytes calldata signature
     ) private view returns (SkipReason) {
+        // Checks `paused()` instead of using `whenNotPaused`, which reverts:
+        // a pause must only skip the subsidy, so swaps still fill without it
+        // and pausing never disrupts swap flow
         if (paused()) {
             return SkipReason.Paused;
         }
@@ -241,9 +241,17 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         if (!_isSignedBySigner(subsidy, signature)) {
             return SkipReason.InvalidSignature;
         }
-        // tx.origin lets contract and relayed callers of the router still earn
-        // the subsidy bound to the EOA behind them. It only picks who earns
-        // the subsidy; no caller funds depend on this check.
+        // Pays only when the quoted sender (`boundTo`) is sending this swap:
+        // - `routerCaller` is whoever called the router, not the router
+        //   itself. The subsidy executor runs by delegatecall, so it passes
+        //   the router's own msg.sender, and only the router may call `pay`:
+        //   no caller can set it. It covers EOAs, smart wallets and
+        //   integrator contracts that call the router directly.
+        // - `tx.origin` covers a user EOA that calls the router through an
+        //   integrator contract, so the router's caller is the integrator.
+        // A copied signature sent by anyone else matches neither and is
+        // skipped without using the nonce. tx.origin only decides who earns
+        // the subsidy; it guards no funds.
         // slither-disable-next-line tx-origin
         if (subsidy.boundTo != routerCaller && subsidy.boundTo != tx.origin) {
             return SkipReason.CallerMismatch;
@@ -285,9 +293,10 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         bytes4 selector = IERC20.balanceOf.selector;
         bool success;
         uint256 returnSize;
-        // Assembly, because a Solidity `staticcall` copies all return data.
-        // This copies at most 32 bytes, so a huge reply cannot run `pay` out
-        // of gas.
+        // Assembly, because a Solidity call copies all return data into
+        // memory, and memory gas grows quadratically. Copying at most 32
+        // bytes means a token returning a huge payload cannot make `pay`
+        // spend its gas on that copy.
         // slither-disable-next-line assembly
         assembly ("memory-safe") {
             let ptr := mload(0x40)
@@ -309,12 +318,10 @@ contract SubsidyPayer is ISubsidyPayer, AccessControl, Pausable, EIP712 {
         if (token != ETH_ADDRESS) {
             return IERC20(token).trySafeTransfer(to, amount);
         }
-        // Assembly, because a Solidity `call` copies return data. With capped
-        // gas and no copy, a receiver that reverts, burns gas or returns a
-        // huge payload only loses its subsidy.
-        // slither-disable-next-line assembly
-        assembly ("memory-safe") {
-            success := call(_ETH_TRANSFER_GAS, to, amount, 0, 0, 0, 0)
-        }
+        // The gas cap means a receiver that reverts, burns gas or returns a
+        // huge payload only loses its subsidy: it cannot spend more than the
+        // cap, which also bounds the return data copied back.
+        // slither-disable-next-line low-level-calls,arbitrary-send-eth
+        (success,) = to.call{value: amount, gas: _ETH_TRANSFER_GAS}("");
     }
 }

@@ -58,8 +58,9 @@ interface ISubsidyPayer {
     /// @param subsidy The subsidy terms that `signature` covers.
     /// @param hopAmountIn Input amount of the hop, checked against
     ///        `subsidy.minAmountIn`.
-    /// @param routerCaller The router's `msg.sender`, as passed by the
-    ///        subsidy executor; matched against `subsidy.boundTo`.
+    /// @param routerCaller Whoever called the router (the router's own
+    ///        `msg.sender`), as passed by the subsidy executor from its
+    ///        delegatecall context; matched against `subsidy.boundTo`.
     /// @param to Receives the subsidy; it is where the Dispatcher measures
     ///        the hop's output. It is not signed, because only the router
     ///        calls `pay` and the router's executor code picks `to`.
