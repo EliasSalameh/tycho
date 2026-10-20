@@ -60,7 +60,8 @@ use crate::{
     stream_processor::{
         book_stream_processor::BookStreamProcessor,
         price_level_stream_processor::PriceLevelStreamProcessor,
-        protocol_stream_processor::ProtocolStreamProcessor, StreamUpdate, StreamUpdatePayload,
+        protocol_stream_processor::{ProtocolStreamProcessor, ProtocolTvlThreshold},
+        StreamUpdate, StreamUpdatePayload,
     },
 };
 
@@ -177,6 +178,12 @@ struct Cli {
     #[arg(long, default_value_t = 1.1)]
     tvl_buffer_ratio: f64,
 
+    /// TVL thresholds for single protocols, as comma-separated `protocol=threshold` pairs in
+    /// native token units (e.g. `lunarbase=10,pancakeswap_infinity_cl=3`). Each one replaces
+    /// --tvl-threshold for its protocol. Every named protocol must be enabled.
+    #[arg(long, value_delimiter = ',')]
+    protocol_tvl_thresholds: Vec<ProtocolTvlThreshold>,
+
     /// Minimum token quality to filter by (defaults to 100 if not provided)
     #[arg(long)]
     min_token_quality: Option<i32>,
@@ -231,6 +238,7 @@ impl Debug for Cli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Cli")
             .field("tvl_threshold", &self.tvl_threshold)
+            .field("protocol_tvl_thresholds", &self.protocol_tvl_thresholds)
             .field("chain", &self.chain)
             .field("tycho_api_key", &"****")
             .field("tycho_url", &self.tycho_url)
@@ -484,6 +492,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
         ) {
             protocol_handle = Some(
                 protocol_stream_processor
+                    .with_protocol_tvl_thresholds(cli.protocol_tvl_thresholds.clone())
                     .with_override_providers(override_providers.clone())
                     .run_stream(&all_tokens, protocol_tx)
                     .await?,
@@ -2385,6 +2394,56 @@ mod tests {
         ])
         .expect("--test-every-n-blocks must stay accepted as an alias");
         assert_eq!(cli.test_every_n_updates, 10);
+    }
+
+    #[test]
+    fn protocol_tvl_thresholds_parses_comma_separated_pairs() {
+        let cli = Cli::try_parse_from([
+            "tycho-integration-test",
+            "--tycho-url",
+            "localhost:4242",
+            "--rpc-url",
+            "http://localhost:8545",
+            "--protocol-tvl-thresholds",
+            "lunarbase=10,pancakeswap_infinity_cl=3",
+        ])
+        .expect("comma-separated protocol=threshold pairs must be accepted");
+
+        let parsed: Vec<(&str, f64)> = cli
+            .protocol_tvl_thresholds
+            .iter()
+            .map(|t| (t.protocol.as_str(), t.threshold))
+            .collect();
+        assert_eq!(parsed, [("lunarbase", 10.0), ("pancakeswap_infinity_cl", 3.0)]);
+    }
+
+    #[test]
+    fn protocol_tvl_thresholds_defaults_to_none() {
+        let cli = Cli::try_parse_from([
+            "tycho-integration-test",
+            "--tycho-url",
+            "localhost:4242",
+            "--rpc-url",
+            "http://localhost:8545",
+        ])
+        .unwrap();
+
+        assert!(cli.protocol_tvl_thresholds.is_empty());
+    }
+
+    #[test]
+    fn protocol_tvl_thresholds_rejects_malformed_pair() {
+        let result = Cli::try_parse_from([
+            "tycho-integration-test",
+            "--tycho-url",
+            "localhost:4242",
+            "--rpc-url",
+            "http://localhost:8545",
+            "--protocol-tvl-thresholds",
+            "lunarbase=10,pancakeswap_infinity_cl",
+        ]);
+
+        assert!(result.is_err());
     }
 
     /// An all-pairs component says which pairs it prices; the run reads them rather than
