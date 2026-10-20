@@ -92,6 +92,9 @@ pub const FALLBACK_ROUTER_OVERHEAD_GAS: u64 = 40_000;
 /// the quote walks; this covers most quotes on a concentrated-liquidity pool.
 pub const METRIC_FALLBACK_QUOTE_GAS: u64 = 100_000;
 
+/// Extra gas of a subsidized swap.
+pub const SUBSIDY_GAS: u64 = 65_000;
+
 /// `outputToRouter = true`: the pool sends output to the router, which then does an extra
 /// `_transferOut` to the receiver.
 pub const PROTOCOLS_OUTPUT_TO_ROUTER: &[&str] =
@@ -148,6 +151,9 @@ pub fn estimate_gas_usage(solution: &Solution, strategy: Strategy) -> BigUint {
             total_gas += &group.estimated_gas;
             total_gas += BigUint::from(METRIC_FALLBACK_QUOTE_GAS);
         }
+    }
+    if solution.subsidy().is_some() {
+        total_gas += BigUint::from(SUBSIDY_GAS);
     }
 
     // Add user transfer overhead
