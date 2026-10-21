@@ -774,7 +774,7 @@ mod tests {
     /// gas of the `beforeSwap` call and of the pool manager dispatching it.
     #[tokio::test]
     async fn open_clalpha_pool_quotes_like_a_hookless_pool() {
-        let decoded = decode_at(clalpha_snapshot(1_000), Chain::Bsc, 1_000)
+        let decoded = decode_at(clalpha_snapshot(1_000), Chain::Bsc, 1_001)
             .await
             .expect("an open CLAlphaHook pool decodes on BSC");
         assert!(decoded.hook.is_some(), "the registered handler is installed despite the bits");
@@ -860,7 +860,7 @@ mod tests {
             |state: &UniswapV4State| state.get_amount_out(BigUint::from(1_000_000_u64), &t0, &t1);
         assert!(quote(&state).is_err());
 
-        assert!(state.apply_block(&BlockContext::new(2, 2_000)), "opening re-emits the pool");
+        assert!(state.apply_block(&BlockContext::new(2, 2_001)), "opening re-emits the pool");
         assert!(quote(&state).is_ok());
 
         state
@@ -879,7 +879,7 @@ mod tests {
             .unwrap();
         assert!(quote(&state).is_err(), "a rescheduled start pauses the pool");
 
-        assert!(state.apply_block(&BlockContext::new(3, 7_200)));
+        assert!(state.apply_block(&BlockContext::new(3, 7_201)));
         assert!(quote(&state).is_ok());
     }
 

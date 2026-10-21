@@ -57,8 +57,8 @@ pub const CLALPHA_BEFORE_SWAP_GAS: u64 = 7_600;
 ///
 /// The hook owner can move the start time until the pool opens, and on the first version even
 /// after it has opened, which pauses the pool. The indexer publishes every change as the
-/// `alpha_start_timestamp` attribute, and the gate is evaluated against the block a quote is
-/// expected to execute in.
+/// `alpha_start_timestamp` attribute, and the gate is evaluated, conservatively, against the
+/// block a quote is expected to execute in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PancakeswapClAlphaHookHandler {
     address: Address,
@@ -73,9 +73,15 @@ impl PancakeswapClAlphaHookHandler {
         Self { address, start_timestamp, execution_timestamp }
     }
 
-    /// `isPoolStarted(id)` at the execution block.
+    /// Whether a swap is sure to pass the gate, which opens once
+    /// `0 < poolStartedTimestamp[id] <= block.timestamp`.
+    ///
+    /// The comparison is strict because the execution timestamp is projected: on BSC it is the
+    /// last block's timestamp plus one second, but about two blocks share each second, so the
+    /// block a quote lands in can still carry the last block's timestamp. A strict comparison
+    /// opens the pool only once that block has reached the start time.
     pub fn is_open(&self) -> bool {
-        self.start_timestamp > 0 && self.start_timestamp <= self.execution_timestamp
+        self.start_timestamp > 0 && self.start_timestamp < self.execution_timestamp
     }
 
     fn before_swap_gas(&self) -> u64 {
@@ -272,11 +278,12 @@ mod tests {
         }
     }
 
-    /// `isPoolStarted`: a zero start never opens, and the start second itself is open.
+    /// A zero start never opens, and the projected execution second must be past the start.
     #[rstest]
     #[case::disabled(0, 5_000, false)]
     #[case::before_start(2_000, 1_999, false)]
-    #[case::at_start(2_000, 2_000, true)]
+    #[case::at_start(2_000, 2_000, false)]
+    #[case::one_second_after_start(2_000, 2_001, true)]
     #[case::after_start(2_000, 9_999, true)]
     fn gate_matches_is_pool_started(#[case] start: u64, #[case] now: u64, #[case] open: bool) {
         let handler = PancakeswapClAlphaHookHandler::new(HOOK, start, now);
@@ -288,9 +295,9 @@ mod tests {
     fn apply_block_reports_only_a_gate_flip() {
         let mut handler = PancakeswapClAlphaHookHandler::new(HOOK, 2_000, 1_000);
 
-        assert!(!handler.apply_block(&BlockContext::new(10, 1_999)), "still closed");
-        assert!(handler.apply_block(&BlockContext::new(11, 2_000)), "opens at the start second");
-        assert!(!handler.apply_block(&BlockContext::new(11, 2_000)), "a repeated block is a no-op");
+        assert!(!handler.apply_block(&BlockContext::new(10, 2_000)), "still closed");
+        assert!(handler.apply_block(&BlockContext::new(11, 2_001)), "opens past the start second");
+        assert!(!handler.apply_block(&BlockContext::new(11, 2_001)), "a repeated block is a no-op");
         assert!(!handler.apply_block(&BlockContext::new(12, 2_003)), "stays open");
     }
 
@@ -314,7 +321,7 @@ mod tests {
     #[case::v2(CLALPHA_HOOKS_BSC[2], CLALPHA_BEFORE_SWAP_GAS)]
     #[case::v3(CLALPHA_HOOKS_BSC[3], CLALPHA_BEFORE_SWAP_GAS)]
     fn before_swap_passes_an_open_pool_through_untouched(#[case] hook: Address, #[case] gas: u64) {
-        let handler = PancakeswapClAlphaHookHandler::new(hook, 2_000, 2_000);
+        let handler = PancakeswapClAlphaHookHandler::new(hook, 2_000, 2_001);
 
         let out = handler
             .before_swap(before_swap_params(), None, None)
