@@ -1,3 +1,16 @@
+## [0.475.0](https://github.com/propeller-heads/tycho/compare/0.474.0...0.475.0) (2026-10-21)
+
+
+### Features
+
+* **execution:** support Metric fallbacks on Arbitrum ([7011570](https://github.com/propeller-heads/tycho/commit/7011570e3a1f8c0e30a663c69c56efede278e4c4))
+* **execution:** support Metric fallbacks on Arbitrum ([#1645](https://github.com/propeller-heads/tycho/issues/1645)) ([9f6d444](https://github.com/propeller-heads/tycho/commit/9f6d444142df6de85c6c9e250cf03d34d3e65cc3))
+
+
+### Bug Fixes
+
+* **router-trades:** name Arbitrum Metric fallback executor ([a9a51c2](https://github.com/propeller-heads/tycho/commit/a9a51c2793b789e348f67c3e8849a638d4df9f5f))
+
 ## [0.474.0](https://github.com/propeller-heads/tycho/compare/0.473.0...0.474.0) (2026-10-21)
 
 
