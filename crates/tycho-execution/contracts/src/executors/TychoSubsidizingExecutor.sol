@@ -38,8 +38,8 @@ contract TychoSubsidizingExecutor is IExecutor {
         external
         payable
     {
-        (IExecutor inner, bytes calldata innerData) =
-            _inner(data, address(this));
+        (IExecutor inner, bytes calldata innerData) = _decodeInner(data);
+        _checkInnerExecutorApproval(address(inner), address(this));
         // slither-disable-next-line unused-return
         (,,, address tokenOut, bool outputToRouter) =
             inner.getTransferData(innerData);
@@ -87,7 +87,8 @@ contract TychoSubsidizingExecutor is IExecutor {
             bool outputToRouter
         )
     {
-        (IExecutor inner, bytes calldata innerData) = _inner(data, msg.sender);
+        (IExecutor inner, bytes calldata innerData) = _decodeInner(data);
+        _checkInnerExecutorApproval(address(inner), msg.sender);
         (transferType, receiver, tokenIn, tokenOut, outputToRouter) =
             inner.getTransferData(innerData);
         receiver = _routerIfSelf(receiver);
@@ -98,7 +99,8 @@ contract TychoSubsidizingExecutor is IExecutor {
         view
         returns (address receiver)
     {
-        (IExecutor inner, bytes calldata innerData) = _inner(data, msg.sender);
+        (IExecutor inner, bytes calldata innerData) = _decodeInner(data);
+        _checkInnerExecutorApproval(address(inner), msg.sender);
         receiver = _routerIfSelf(inner.fundsExpectedAddress(innerData));
     }
 
@@ -136,28 +138,33 @@ contract TychoSubsidizingExecutor is IExecutor {
         return receiver == address(this) ? msg.sender : receiver;
     }
 
-    /// @dev Reverts unless `router` approved the inner executor and its
-    ///      timelock passed.
-    function _inner(bytes calldata data, address router)
+    function _decodeInner(bytes calldata data)
         internal
-        view
+        pure
         returns (IExecutor inner, bytes calldata innerData)
     {
         if (data.length < 207) {
             revert TychoSubsidizingExecutor__InvalidDataLength();
         }
-        address innerAddress = address(bytes20(data[187:207]));
+        inner = IExecutor(address(bytes20(data[187:207])));
+        innerData = data[207:];
+    }
+
+    /// @dev Reverts unless `router` approved the inner executor and its
+    ///      timelock passed.
+    function _checkInnerExecutorApproval(address inner, address router)
+        internal
+        view
+    {
         uint256 activation = TychoRouterV3(payable(router))
-            .executorsActivationTimestamp(innerAddress);
+            .executorsActivationTimestamp(inner);
         // slither-disable-next-line incorrect-equality
-        if (activation == 0 || innerAddress == _self) {
-            revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(innerAddress);
+        if (activation == 0 || inner == _self) {
+            revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(inner);
         }
         // slither-disable-next-line timestamp
         if (block.timestamp < activation) {
-            revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(innerAddress);
+            revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(inner);
         }
-        inner = IExecutor(innerAddress);
-        innerData = data[207:];
     }
 }
