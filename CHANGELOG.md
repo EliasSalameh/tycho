@@ -1,3 +1,20 @@
+## [0.473.0](https://github.com/propeller-heads/tycho/compare/0.472.2...0.473.0) (2026-10-21)
+
+
+### Features
+
+* **simulation:** poll Metric every 2 s ([2fe0410](https://github.com/propeller-heads/tycho/commit/2fe0410b2ce73354d28bddee907fa756620e6c30))
+* **simulation:** poll Metric every 5 s ([74d296d](https://github.com/propeller-heads/tycho/commit/74d296d80384db4a5b9d7645769c73210499ad5a))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([64182a2](https://github.com/propeller-heads/tycho/commit/64182a2caa45fb69c709c5772d890633826e83cd))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([2335f06](https://github.com/propeller-heads/tycho/commit/2335f069b8a27a68d35964f92f6ce0ee5b27e2f2))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([#1638](https://github.com/propeller-heads/tycho/issues/1638)) ([8d6793f](https://github.com/propeller-heads/tycho/commit/8d6793fc6604feeec5195d1d75e99904489db851))
+
+
+### Bug Fixes
+
+* **integration-test:** execute price level venues directly ([49e5697](https://github.com/propeller-heads/tycho/commit/49e56973ee40377d2bec3925b51c3d69f3d39269))
+* **integration-test:** execute price level venues directly ([#1639](https://github.com/propeller-heads/tycho/issues/1639)) ([3680b63](https://github.com/propeller-heads/tycho/commit/3680b6386a242682397b185e81062de046f0a88b))
+
 ## [0.472.2](https://github.com/propeller-heads/tycho/compare/0.472.1...0.472.2) (2026-10-21)
 
 
