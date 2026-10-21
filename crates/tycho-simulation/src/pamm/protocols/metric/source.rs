@@ -16,8 +16,9 @@ use crate::{
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
-/// Fetches one complete Metric book per poll: every quotable pool between the configured tokens
-/// whose USD TVL clears the threshold, as simulate-ready books. `Debug` output omits the API key.
+/// Fetches one complete Metric book per poll: every unpaused, quotable pool between the
+/// configured tokens whose USD TVL clears the threshold, as simulate-ready books. `Debug` output
+/// omits the API key.
 #[derive(derive_more::Debug, Clone)]
 pub struct MetricBookSource {
     /// The protocol system stamped on this source's components: the venue's own, or its
@@ -46,7 +47,8 @@ impl HttpSource for MetricBookSource {
                     // v1 metadata carries the USD TVL directly, so no cross-pool price
                     // normalization is needed.
                     self.book_config
-                        .clears_min_tvl(pool.tvl_fiat.unwrap_or(0.0), &pool.pool_address)
+                        .clears_min_tvl(pool.tvl_fiat.unwrap_or(0.0), &pool.pool_address) &&
+                    is_unpaused(pool)
             })
             .collect();
 
@@ -101,6 +103,14 @@ impl HttpSource for MetricBookSource {
     }
 }
 
+/// Whether Metric routes to `pool`, which it does only at pause level `0`.
+fn is_unpaused(pool: &MetricMetadata) -> bool {
+    if !pool.is_unpaused() {
+        debug!(pool = %pool.pool_address, pause_level = ?pool.pause_level, "skipping paused pool");
+    }
+    pool.is_unpaused()
+}
+
 /// What a poll reports when none of the pools it asked answered: the pools' own verdict where
 /// they agree on it, and an unreachable venue where they do not. One pool calling its failure
 /// fatal is about that pool; every pool calling it fatal is about the venue, and nothing is
@@ -121,7 +131,7 @@ fn every_pool_failed(failures: Vec<FeedError>) -> FeedError {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr, sync::Arc};
+    use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
     use num_bigint::BigUint;
     use rstest::rstest;
@@ -138,7 +148,7 @@ mod tests {
             client::DEFAULT_BID_ASK_CONCURRENCY, feed::MetricFeedBuilder, FALLBACK_PROTOCOL_SYSTEM,
             PROTOCOL_SYSTEM,
         },
-        snapshot_feed::http::test_support::spawn_http_server,
+        snapshot_feed::http::test_support::{spawn_http_server, MockRequest, MockResponse},
     };
 
     const FIRST_POOL: &str = "0x1111111111111111111111111111111111111111";
@@ -188,13 +198,41 @@ mod tests {
         body.to_string()
     }
 
-    /// The `/bid_ask` target of `pool` on Ethereum as the client requests it: the chain's own
-    /// prefix, then the pool's checksummed address.
-    fn bid_ask_target(pool: &str) -> String {
-        let checksummed = bytes_to_address(&Bytes::from_str(pool).unwrap())
+    /// The batch bid/ask target on Ethereum as the client requests it.
+    const BATCH_TARGET: &str = "/public/v1/evm/1/bid_ask/batch";
+
+    /// The pools a batch bid/ask request names, as the lowercase hex its tests address them by.
+    fn requested_pools(request: &MockRequest) -> Vec<String> {
+        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+        body["pools"]
+            .as_array()
             .unwrap()
-            .to_checksum(None);
-        format!("/public/v1/evm/1/{checksummed}/bid_ask")
+            .iter()
+            .map(|pool| {
+                let pool = pool.as_str().unwrap();
+                // The client sends checksummed addresses.
+                let checksummed = bytes_to_address(&Bytes::from_str(pool).unwrap())
+                    .unwrap()
+                    .to_checksum(None);
+                assert_eq!(pool, checksummed);
+                pool.to_lowercase()
+            })
+            .collect()
+    }
+
+    /// A batch answer holding `pool`'s quote.
+    fn quote_entry(pool: &str, bid_ask: &str) -> serde_json::Value {
+        let quote: serde_json::Value = serde_json::from_str(bid_ask).unwrap();
+        serde_json::json!({ "poolAddress": pool, "quote": quote })
+    }
+
+    /// A batch answer holding the error Metric gave for `pool`.
+    fn error_entry(pool: &str, status: u16, error: &str) -> serde_json::Value {
+        serde_json::json!({ "poolAddress": pool, "error": { "status": status, "error": error } })
+    }
+
+    fn batch_body(entries: Vec<serde_json::Value>) -> String {
+        serde_json::json!({ "results": entries }).to_string()
     }
 
     /// A source against the Metric deployment at `base_url`, with an empty token universe and no
@@ -242,7 +280,7 @@ mod tests {
             {
                 return Some(("200 OK", page.clone()));
             }
-            Some(("200 OK", bid_ask_json(SERVER_TS, false)))
+            Some(("200 OK", batch_body(vec![quote_entry(POOL, &bid_ask_json(SERVER_TS, false))])))
         })
         .await;
         let mut source = MetricBookSource {
@@ -269,7 +307,11 @@ mod tests {
         const UNQUOTABLE: &str = "0x3333333333333333333333333333333333333333";
         const BELOW_FLOOR: &str = "0x4444444444444444444444444444444444444444";
         const UNPRICED: &str = "0x5555555555555555555555555555555555555555";
+        const PAUSED: &str = "0x6666666666666666666666666666666666666666";
+        const UNANSWERED: &str = "0x7777777777777777777777777777777777777777";
         const SERVER_TS: u64 = 1_700_000_000;
+        let mut paused = pool_json(PAUSED, Some(1_000.0));
+        paused["pauseLevel"] = serde_json::json!(1);
         let page = metadata_page(
             &[
                 pool_json(HEALTHY, Some(1_000.0)),
@@ -277,6 +319,8 @@ mod tests {
                 pool_json(UNQUOTABLE, Some(1_000.0)),
                 pool_json(BELOW_FLOOR, Some(99.0)),
                 pool_json(UNPRICED, None),
+                paused,
+                pool_json(UNANSWERED, Some(1_000.0)),
             ],
             None,
         );
@@ -287,18 +331,19 @@ mod tests {
             {
                 return Some(("200 OK", page.clone()));
             }
-            if request.target == bid_ask_target(HEALTHY) {
-                return Some(("200 OK", bid_ask_json(SERVER_TS, false)));
-            }
-            if request.target == bid_ask_target(FAILING) {
-                return Some(("500 Internal Server Error", "boom".to_string()));
-            }
-            if request.target == bid_ask_target(UNQUOTABLE) {
-                return Some(("200 OK", bid_ask_json(SERVER_TS, true)));
-            }
-            // Pools filtered out on metadata must never get here; answering them as healthy
-            // makes such a slip show up as an extra emitted book.
-            Some(("200 OK", bid_ask_json(SERVER_TS, false)))
+            assert_eq!(request.target, BATCH_TARGET);
+            let entries = requested_pools(request)
+                .into_iter()
+                .filter_map(|pool| match pool.as_str() {
+                    FAILING => Some(error_entry(&pool, 500, "boom")),
+                    UNQUOTABLE => Some(quote_entry(&pool, &bid_ask_json(SERVER_TS, true))),
+                    UNANSWERED => None,
+                    // Pools filtered out on metadata must never get here; answering them as
+                    // healthy makes such a slip show up as an extra emitted book.
+                    _ => Some(quote_entry(&pool, &bid_ask_json(SERVER_TS, false))),
+                })
+                .collect();
+            Some(("200 OK", batch_body(entries)))
         })
         .await;
         let endpoint = server.url();
@@ -338,13 +383,19 @@ mod tests {
     /// a chain the venue has stopped serving is a chain no later poll reaches either, while one
     /// pool alone saying so is about that pool, whatever the pool beside it answered.
     #[rstest]
-    #[case::every_pool_on_a_refused_key(REFUSED_KEY, REFUSED_KEY, false)]
-    #[case::every_pool_on_an_unserved_chain(UNSERVED_CHAIN, UNSERVED_CHAIN, true)]
-    #[case::one_pool_of_two_refusing_the_chain(UNSERVED_CHAIN, REFUSED_KEY, false)]
+    #[case::the_batch_on_a_refused_key(Err(REFUSED_KEY), false)]
+    #[case::the_batch_on_an_unserved_chain(Err(UNSERVED_CHAIN), true)]
+    #[case::every_pool_refusing_the_chain(
+        Ok(["Unknown chainId: 1", "Unknown chainId: 1"]),
+        true
+    )]
+    #[case::one_pool_of_two_refusing_the_chain(
+        Ok(["Unknown chainId: 1", "Pair metadata not found"]),
+        false
+    )]
     #[tokio::test]
     async fn losing_every_pool_fails_the_poll(
-        #[case] first_answer: (&'static str, &'static str),
-        #[case] second_answer: (&'static str, &'static str),
+        #[case] answer: Result<[&'static str; 2], (&'static str, &'static str)>,
         #[case] fatal: bool,
     ) {
         let page = metadata_page(
@@ -358,12 +409,18 @@ mod tests {
             {
                 return Some(("200 OK", page.clone()));
             }
-            let (status, body) = if request.target == bid_ask_target(FIRST_POOL) {
-                first_answer
-            } else {
-                second_answer
+            let errors = match answer {
+                Ok(errors) => errors,
+                Err((status, body)) => return Some((status, body.to_string())),
             };
-            Some((status, body.to_string()))
+            let entries = requested_pools(request)
+                .iter()
+                .map(|pool| {
+                    let error = if pool == FIRST_POOL { errors[0] } else { errors[1] };
+                    error_entry(pool, 404, error)
+                })
+                .collect();
+            Some(("200 OK", batch_body(entries)))
         })
         .await;
         let endpoint = server.url();
@@ -383,6 +440,98 @@ mod tests {
                 .contains("none of Metric's 2 quotable pools"),
             "{error}"
         );
+    }
+
+    /// The batch endpoint quotes at most 100 pools per request, so a venue listing more is
+    /// quoted over several requests, and every pool still makes it into the book.
+    #[tokio::test]
+    async fn pools_beyond_one_batch_are_quoted_in_further_batches() {
+        const POOLS: usize = 150;
+        const SERVER_TS: u64 = 1_700_000_000;
+        let pools: Vec<String> = (1..=POOLS)
+            .map(|n| format!("0x{n:040x}"))
+            .collect();
+        let page = metadata_page(
+            &pools
+                .iter()
+                .map(|pool| pool_json(pool, Some(1_000.0)))
+                .collect::<Vec<_>>(),
+            None,
+        );
+        let batch_sizes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&batch_sizes);
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
+                return Some(("200 OK", page.clone()));
+            }
+            let requested = requested_pools(request);
+            seen.lock()
+                .unwrap()
+                .push(requested.len());
+            let entries = requested
+                .iter()
+                .map(|pool| quote_entry(pool, &bid_ask_json(SERVER_TS, false)))
+                .collect();
+            Some(("200 OK", batch_body(entries)))
+        })
+        .await;
+        let mut source = source(Chain::Ethereum, &server.url(), "key");
+        source.book_config.tokens = Arc::new(test_token_map(&[
+            (&weth().address, "WETH", 18),
+            (&usdc().address, "USDC", 6),
+        ]));
+
+        let books = source.fetch().await.unwrap().books;
+
+        assert_eq!(books.len(), POOLS);
+        let mut batch_sizes = batch_sizes.lock().unwrap().clone();
+        batch_sizes.sort_unstable();
+        assert_eq!(batch_sizes, vec![50, 100]);
+    }
+
+    /// A batch that never answers fails on its own deadline, inside the poll's
+    /// `request_timeout`, so the feed loop sees a failed poll it can back off from instead of a
+    /// poll that hangs to the whole-poll deadline.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_batch_fails_the_poll_within_the_request_timeout() {
+        let page = metadata_page(&[pool_json(FIRST_POOL, Some(1_000.0))], None);
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
+                return Some(MockResponse::from(("200 OK", page.clone())));
+            }
+            Some(MockResponse {
+                status: "200 OK",
+                body: batch_body(vec![]),
+                delay: Duration::from_secs(3600),
+            })
+        })
+        .await;
+        let mut source = source(Chain::Ethereum, &server.url(), "key");
+        source.book_config.tokens = Arc::new(test_token_map(&[
+            (&weth().address, "WETH", 18),
+            (&usdc().address, "USDC", 6),
+        ]));
+        let started = tokio::time::Instant::now();
+
+        let error = source
+            .fetch()
+            .await
+            .expect_err("a hung batch must fail the poll");
+
+        assert!(matches!(error, FeedError::Connection(_)), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("batch bid/ask request timed out"),
+            "{error}"
+        );
+        assert!(started.elapsed() < MetricFeedBuilder::default_feed_config().request_timeout);
     }
 
     /// One poll fetches every pool's bid/ask and shares a single `request_timeout`, so the
