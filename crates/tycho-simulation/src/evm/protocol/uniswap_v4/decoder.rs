@@ -28,6 +28,10 @@ use crate::{
     },
 };
 
+/// Protocol systems whose pool manager reads hook permissions from the pool key rather than the
+/// hook address, and which only emit pools whose hook takes part in swaps.
+const POOL_KEY_PERMISSION_SYSTEMS: [&str; 1] = ["pancakeswap_infinity_cl_hooks"];
+
 /// Whether a hook can take part in a swap at all, which it can exactly when its address carries
 /// the `beforeSwap` or the `afterSwap` permission bit. Uniswap V4 encodes a hook's permissions in
 /// the low bits of its address and the pool manager calls only the callbacks those bits allow, so
@@ -182,7 +186,15 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV4State {
         // wire, and the length check rejects a malformed value. A pool whose hook cannot take part
         // in a swap is a plain V4 pool too, on every chain: no handler, no chain needed. A hook
         // with a native handler registered on this chain is always simulated by it, because some
-        // pool managers (PancakeSwap Infinity) do not encode permissions in the hook address.
+        // pool managers (PancakeSwap Infinity) do not encode permissions in the hook address. For
+        // the systems that only emit such hooks the address bits are never consulted, so a missing
+        // chain or handler fails the decode instead of hinging on whatever bits the address has.
+        let permissions_in_pool_key = POOL_KEY_PERMISSION_SYSTEMS.contains(
+            &snapshot
+                .component
+                .protocol_system
+                .as_str(),
+        );
         let hook_address = hook_attribute
             .map(bytes_to_address)
             .transpose()
@@ -193,6 +205,7 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV4State {
             })?
             .filter(|address| {
                 hook_participates_in_swaps(*address) ||
+                    (permissions_in_pool_key && !address.is_zero()) ||
                     decoder_context
                         .chain
                         .is_some_and(|chain| has_native_hook_handler(chain, address))
@@ -727,6 +740,7 @@ mod tests {
 
     fn clalpha_snapshot(start_timestamp: u64) -> ComponentWithState {
         let mut snapshot = hookless_snapshot_with_hook(CLALPHA_HOOK);
+        snapshot.component.protocol_system = "pancakeswap_infinity_cl_hooks".to_string();
         snapshot.state.attributes.insert(
             "alpha_start_timestamp".to_string(),
             Bytes::from(start_timestamp.to_be_bytes().to_vec()),
@@ -883,14 +897,27 @@ mod tests {
         assert!(quote(&state).is_ok());
     }
 
-    /// The registration is per chain: the same address elsewhere is an ordinary hook, judged by
-    /// its address bits, which for this one say it cannot take part in a swap.
+    /// The registration is per chain: the same address in an ordinary Uniswap V4 pool elsewhere
+    /// is judged by its address bits, which for this one say it cannot take part in a swap.
     #[tokio::test]
     async fn clalpha_address_on_another_chain_is_not_a_clalpha_hook() {
-        let decoded = decode_at(clalpha_snapshot(2_000), Chain::Robinhood, 1_000)
+        let decoded = decode_at(hookless_snapshot_with_hook(CLALPHA_HOOK), Chain::Robinhood, 1_000)
             .await
             .unwrap();
         assert!(decoded.hook.is_none());
+    }
+
+    /// An Infinity hooks pool never falls back to the address bits, which for `0xb0ba…4d0f` say
+    /// it cannot take part in a swap: without a chain it is rejected like any other hooked pool
+    /// rather than decoded as a hookless pool that quotes while the hook refuses swaps.
+    #[tokio::test]
+    async fn clalpha_pool_without_a_chain_is_rejected() {
+        let result = decode_with_chain(clalpha_snapshot(2_000), None).await;
+
+        let Err(InvalidSnapshotError::ValueError(message)) = result else {
+            panic!("an Infinity hooks pool must not decode without a chain: {result:?}");
+        };
+        assert!(message.contains("DecoderContext.chain"), "{message}");
     }
 
     #[tokio::test]
