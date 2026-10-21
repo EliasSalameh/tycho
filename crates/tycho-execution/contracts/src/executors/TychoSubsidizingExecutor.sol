@@ -19,24 +19,6 @@ error TychoSubsidizingExecutor__UnapprovedInnerExecutor(address executor);
  *      [signature: 65][innerExecutor: 20][innerData: ...]
  */
 contract TychoSubsidizingExecutor is IExecutor {
-    // The offsets below are used only as calldata slice bounds, which Slither
-    // does not count as a use.
-    // slither-disable-next-line unused-state
-    uint256 private constant _BOUND_TO_OFFSET = 0;
-    // slither-disable-next-line unused-state
-    uint256 private constant _AMOUNT_OFFSET = 20;
-    // slither-disable-next-line unused-state
-    uint256 private constant _MIN_AMOUNT_IN_OFFSET = 52;
-    // slither-disable-next-line unused-state
-    uint256 private constant _NONCE_OFFSET = 84;
-    // slither-disable-next-line unused-state
-    uint256 private constant _DEADLINE_OFFSET = 116;
-    // slither-disable-next-line unused-state
-    uint256 private constant _SIGNATURE_OFFSET = 122;
-    // slither-disable-next-line unused-state
-    uint256 private constant _INNER_EXECUTOR_OFFSET = 187;
-    uint256 private constant _INNER_DATA_OFFSET = 207;
-
     // Must equal Dispatcher._CURRENTLY_SWAPPING_EXECUTOR_SLOT, so the router's
     // fallback sends callbacks to the inner executor.
     uint256 internal constant _CURRENTLY_SWAPPING_EXECUTOR_SLOT =
@@ -129,27 +111,17 @@ contract TychoSubsidizingExecutor is IExecutor {
         address to
     ) internal {
         Subsidy memory subsidy = Subsidy({
-            boundTo: address(bytes20(data[_BOUND_TO_OFFSET:_AMOUNT_OFFSET])),
+            boundTo: address(bytes20(data[0:20])),
             token: token,
-            amount: uint256(
-                bytes32(data[_AMOUNT_OFFSET:_MIN_AMOUNT_IN_OFFSET])
-            ),
-            minAmountIn: uint256(
-                bytes32(data[_MIN_AMOUNT_IN_OFFSET:_NONCE_OFFSET])
-            ),
-            innerSwapHash: keccak256(data[_INNER_EXECUTOR_OFFSET:]),
-            nonce: uint256(bytes32(data[_NONCE_OFFSET:_DEADLINE_OFFSET])),
-            deadline: uint48(bytes6(data[_DEADLINE_OFFSET:_SIGNATURE_OFFSET]))
+            amount: uint256(bytes32(data[20:52])),
+            minAmountIn: uint256(bytes32(data[52:84])),
+            innerSwapHash: keccak256(data[187:]),
+            nonce: uint256(bytes32(data[84:116])),
+            deadline: uint48(bytes6(data[116:122]))
         });
         // msg.sender is the router's caller: the router delegatecalls swap.
         // slither-disable-next-line unused-return
-        try payer.pay(
-            subsidy,
-            amountIn,
-            msg.sender,
-            to,
-            data[_SIGNATURE_OFFSET:_INNER_EXECUTOR_OFFSET]
-        ) {}
+        try payer.pay(subsidy, amountIn, msg.sender, to, data[122:187]) {}
         catch {
             // Reentrancy cannot happen: every router entry point is
             // nonReentrant.
@@ -171,11 +143,10 @@ contract TychoSubsidizingExecutor is IExecutor {
         view
         returns (IExecutor inner, bytes calldata innerData)
     {
-        if (data.length < _INNER_DATA_OFFSET) {
+        if (data.length < 207) {
             revert TychoSubsidizingExecutor__InvalidDataLength();
         }
-        address innerAddress =
-            address(bytes20(data[_INNER_EXECUTOR_OFFSET:_INNER_DATA_OFFSET]));
+        address innerAddress = address(bytes20(data[187:207]));
         uint256 activation = TychoRouterV3(payable(router))
             .executorsActivationTimestamp(innerAddress);
         // slither-disable-next-line incorrect-equality
@@ -187,6 +158,6 @@ contract TychoSubsidizingExecutor is IExecutor {
             revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(innerAddress);
         }
         inner = IExecutor(innerAddress);
-        innerData = data[_INNER_DATA_OFFSET:];
+        innerData = data[207:];
     }
 }
