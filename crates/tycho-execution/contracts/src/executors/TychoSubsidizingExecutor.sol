@@ -63,8 +63,8 @@ contract TychoSubsidizingExecutor is IExecutor {
             }
         }
 
-        // The payer calls out to `to`; nothing may reach the inner executor
-        // through the router's fallback from there.
+        // The payer calls out to `subsidyReceiver`; nothing may reach the inner
+        // executor through the router's fallback from there.
         // slither-disable-next-line assembly
         assembly {
             tstore(_CURRENTLY_SWAPPING_EXECUTOR_SLOT, 0)
@@ -72,8 +72,8 @@ contract TychoSubsidizingExecutor is IExecutor {
 
         // Must equal the Dispatcher's measureAt in _callSwapOnExecutor, so the
         // Dispatcher counts the subsidy as hop output.
-        address to = outputToRouter ? address(this) : receiver;
-        _addSubsidy(data, tokenOut, amountIn, to);
+        address subsidyReceiver = outputToRouter ? address(this) : receiver;
+        _addSubsidy(data, tokenOut, amountIn, subsidyReceiver);
     }
 
     function getTransferData(bytes calldata data)
@@ -110,7 +110,7 @@ contract TychoSubsidizingExecutor is IExecutor {
         bytes calldata data,
         address token,
         uint256 amountIn,
-        address to
+        address receiver
     ) internal {
         Subsidy memory subsidy = Subsidy({
             boundTo: address(bytes20(data[0:20])),
@@ -123,7 +123,7 @@ contract TychoSubsidizingExecutor is IExecutor {
         });
         // msg.sender is the router's caller: the router delegatecalls swap.
         // slither-disable-next-line unused-return
-        try payer.pay(subsidy, amountIn, msg.sender, to, data[122:187]) {}
+        try payer.pay(subsidy, amountIn, msg.sender, receiver, data[122:187]) {}
         catch {
             // Reentrancy cannot happen: every router entry point is
             // nonReentrant.
