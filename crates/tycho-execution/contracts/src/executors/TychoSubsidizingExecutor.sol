@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IExecutor} from "@interfaces/IExecutor.sol";
 import {ISubsidyPayer, Subsidy} from "@interfaces/ISubsidyPayer.sol";
+import {CURRENTLY_SWAPPING_EXECUTOR_SLOT} from "../Dispatcher.sol";
 import {TransferManager} from "../TransferManager.sol";
 import {TychoRouterV3} from "../TychoRouterV3.sol";
 
@@ -19,11 +20,6 @@ error TychoSubsidizingExecutor__UnapprovedInnerExecutor(address executor);
  *      [signature: 65][innerExecutor: 20][innerData: ...]
  */
 contract TychoSubsidizingExecutor is IExecutor {
-    // Must equal Dispatcher._CURRENTLY_SWAPPING_EXECUTOR_SLOT, so the router's
-    // fallback sends callbacks to the inner executor.
-    uint256 internal constant _CURRENTLY_SWAPPING_EXECUTOR_SLOT =
-        0x098a7a3b47801589e8cdf9ec791b93ad44273246946c32ef1fc4dbe45390c80e;
-
     ISubsidyPayer public immutable payer;
     address private immutable _self;
 
@@ -46,7 +42,7 @@ contract TychoSubsidizingExecutor is IExecutor {
 
         // slither-disable-next-line assembly
         assembly {
-            tstore(_CURRENTLY_SWAPPING_EXECUTOR_SLOT, inner)
+            tstore(CURRENTLY_SWAPPING_EXECUTOR_SLOT, inner)
         }
 
         // The router approved the inner executor, and the Dispatcher sets
@@ -67,7 +63,7 @@ contract TychoSubsidizingExecutor is IExecutor {
         // executor through the router's fallback from there.
         // slither-disable-next-line assembly
         assembly {
-            tstore(_CURRENTLY_SWAPPING_EXECUTOR_SLOT, 0)
+            tstore(CURRENTLY_SWAPPING_EXECUTOR_SLOT, 0)
         }
 
         // Must equal the Dispatcher's measureAt in _callSwapOnExecutor, so the

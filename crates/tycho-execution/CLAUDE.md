@@ -346,10 +346,9 @@ pool and the hop. Data shorter than 207 bytes reverts `TychoSubsidizingExecutor_
 - The inner executor must be approved on the router with its timelock passed, and may not be the wrapper itself;
   otherwise `TychoSubsidizingExecutor__UnapprovedInnerExecutor`. `getTransferData` and `fundsExpectedAddress` forward to
   it and map the wrapper's own address back to the router, so every transfer type and sequential hops work unchanged.
-- Before the inner swap, the wrapper writes the inner executor into `_CURRENTLY_SWAPPING_EXECUTOR_SLOT`, so the
+- Before the inner swap, the wrapper writes the inner executor into `CURRENTLY_SWAPPING_EXECUTOR_SLOT`, so the
   router's fallback sends pool callbacks straight to it. It clears the slot before calling the payer, so a contract
-  the payer sends funds to cannot reach the inner executor through the fallback. The wrapper keeps its own copy of the Dispatcher's slot
-  constant; if the two drift apart, the callback tests fail.
+  the payer sends funds to cannot reach the inner executor through the fallback.
 - The payer pays into the Dispatcher's `measureAt` (`outputToRouter ? router : receiver`), inside `swap()`, so the
   Dispatcher counts the subsidy as hop output. Fees, slippage capture, `minAmountOut`, vault credits and later hops
   then see it like any other output. The quote's `expectedAmountOut` has to include the subsidy, or positive slippage
