@@ -144,12 +144,12 @@ receivers, and `outputToRouter` are hardcoded per-executor -- not encodable in c
 simple: they just call the protocol. All balance tracking, output verification, and transfer logic lives in the
 Dispatcher/TransferManager.
 
-Supported: UniswapV2, UniswapV3, UniswapV4, PancakeswapInfinity, BalancerV2, BalancerV3, Curve, Ekubo, EkuboV3, Slipstreams, MaverickV2,
-AerodromeV1, LiquidityParty, BopAMM, FermiSwap, LunarBase, RingSwapV2, Sky, Bebop (RFQ), Hashflow (RFQ),
-Liquorice (RFQ), Metric (RFQ), FluidV1, Rocketpool, ERC4626, Etherfi, NativeWrap (ETH↔WETH and other native wrappers),
-PropAMM (a single generic executor shared by all pAMMs implementing the standard `IPropAMM` interface; the pAMM
-address travels in the swap data), and Fallback (runs one leg through `TychoFallbackRouter` -- see "Protocol
-fallback").
+Supported: UniswapV2, UniswapV3, UniswapV4, PancakeswapInfinity, BalancerV2, BalancerV3, Curve, Ekubo, EkuboV3,
+Slipstreams, MaverickV2, AerodromeV1, LiquidityParty, BopAMM, FermiSwap, LunarBase, RingSwapV2, Sky, Bebop (RFQ),
+Hashflow (RFQ), Liquorice (RFQ), Metric (RFQ), FluidV1, Rocketpool, ERC4626, Etherfi, NativeWrap (ETH↔WETH and other
+native wrappers), PropAMM (a single generic executor shared by all pAMMs implementing the standard `IPropAMM` interface;
+the pAMM address travels in the swap data), Fallback (runs one leg through `TychoFallbackRouter` -- see "Protocol
+fallback"), and TychoSubsidizing (runs one hop through an inner executor and pays a signed subsidy -- see "Subsidies").
 
 ### Protocol fallback (`fallback/TychoFallbackRouter.sol`, `fallback/*FallbackRouter.sol`, `executors/*FallbackExecutor.sol`)
 
@@ -353,9 +353,9 @@ pool and the hop. Data shorter than 207 bytes reverts `TychoSubsidizingExecutor_
   Dispatcher counts the subsidy as hop output. Fees, slippage capture, `minAmountOut`, vault credits and later hops
   then see it like any other output. The quote's `expectedAmountOut` has to include the subsidy, or positive slippage
   capture takes it.
-- `pay` runs in `try/catch`. A payer revert emits `SubsidyPaymentFailed(nonce)` from the router and the swap fills
-  without the subsidy. Calling a payer address with no code, or a payer that returns malformed data, would still
-  revert.
+- `pay` runs in `try/catch`. A payer revert emits `SubsidyPayerReverted(nonce, reason)` from the router, with `nonce`
+  indexed like in the payer's events, and the swap fills without the subsidy. A payer that returns malformed data would
+  still revert; the constructor rejects a payer address with no code.
 - The payer, a separate contract, holds the budget, the signer and the nonces. The wrapper writes no storage and moves
   no tokens. Tokens already held by the router would not raise the balance at `measureAt`, so a payment from them
   would not count as output.
