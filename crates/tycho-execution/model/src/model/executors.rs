@@ -360,8 +360,6 @@ impl Executor {
                 output_to_router: false,
             }),
             // https://github.com/propeller-heads/tycho/blob/main/crates/tycho-execution/contracts/src/executors/TychoSubsidizingExecutor.sol
-            // The router-address mapping in `getTransferData` is already folded into
-            // inner executors that report the router.
             Self::TychoSubsidizing => {
                 subsidizing_inner(params, swap_index)?.get_transfer_data(params, _state, swap_index)
             }
@@ -677,7 +675,9 @@ impl Executor {
             Self::TychoSubsidizing => {
                 let inner = subsidizing_inner(params, swap_index)?;
                 state.tstore("currently_swapping_executor", inner);
-                inner.swap(params, state, vault, log, amount, _receiver, swap_index)
+                inner.swap(params, state, vault, log, amount, _receiver, swap_index)?;
+                state.tdelete("currently_swapping_executor");
+                Ok(())
             }
         }
     }
@@ -828,6 +828,9 @@ impl Executor {
 
 /// The inner executor the caller names in a [Executor::TychoSubsidizing] swap's data. The
 /// executor rejects itself as its inner executor, and the model only has approved executors.
+///
+/// The contract maps its own address back to the router. The model needs no mapping: its inner
+/// executors already report the router.
 fn subsidizing_inner(params: &Params, swap_index: u8) -> Result<Executor, Error> {
     Ok(params.request(
         ParamKey::SwapIndexed { prefix: "subsidizing_inner_executor", swap_index },
