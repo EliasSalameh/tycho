@@ -73,7 +73,7 @@ contract TychoSubsidizingExecutor is IExecutor {
         // Must equal the Dispatcher's measureAt in _callSwapOnExecutor, so the
         // Dispatcher counts the subsidy as hop output.
         address to = outputToRouter ? address(this) : receiver;
-        _pay(data, tokenOut, amountIn, to);
+        _addSubsidy(data, tokenOut, amountIn, to);
     }
 
     function getTransferData(bytes calldata data)
@@ -106,7 +106,7 @@ contract TychoSubsidizingExecutor is IExecutor {
 
     /// @dev A payer revert emits SubsidyPaymentFailed instead of reverting the
     ///      swap. The payer emits the events for paid and skipped subsidies.
-    function _pay(
+    function _addSubsidy(
         bytes calldata data,
         address token,
         uint256 amountIn,
