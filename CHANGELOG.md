@@ -1,3 +1,11 @@
+## [0.475.1](https://github.com/propeller-heads/tycho/compare/0.475.0...0.475.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **simulation:** report Bebop quote HTTP errors with status and body ([1e5d82e](https://github.com/propeller-heads/tycho/commit/1e5d82e803e6632404ce67fd3776df68f77cbe87))
+* **simulation:** report Bebop quote HTTP errors with status and body ([#1652](https://github.com/propeller-heads/tycho/issues/1652)) ([3b3574c](https://github.com/propeller-heads/tycho/commit/3b3574c4852e1329d14fcc5243a473b4a903ab14))
+
 ## [0.475.0](https://github.com/propeller-heads/tycho/compare/0.474.0...0.475.0) (2026-10-21)
 
 
