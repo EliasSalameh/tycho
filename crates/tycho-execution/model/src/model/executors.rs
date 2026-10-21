@@ -360,7 +360,7 @@ impl Executor {
                 output_to_router: false,
             }),
             // https://github.com/propeller-heads/tycho/blob/main/crates/tycho-execution/contracts/src/executors/TychoSubsidizingExecutor.sol
-            // The router-address mapping in `_routerIfSelf` is already folded into
+            // The router-address mapping in `getTransferData` is already folded into
             // inner executors that report the router.
             Self::TychoSubsidizing => {
                 subsidizing_inner(params, swap_index)?.get_transfer_data(params, _state, swap_index)

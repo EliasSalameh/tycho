@@ -91,7 +91,9 @@ contract TychoSubsidizingExecutor is IExecutor {
         _checkInnerExecutorApproval(address(inner), msg.sender);
         (transferType, receiver, tokenIn, tokenOut, outputToRouter) =
             inner.getTransferData(innerData);
-        receiver = _routerIfSelf(receiver);
+        // The inner executor names its caller, this contract, to mean the
+        // router.
+        if (receiver == address(this)) receiver = msg.sender;
     }
 
     function fundsExpectedAddress(bytes calldata data)
@@ -101,7 +103,10 @@ contract TychoSubsidizingExecutor is IExecutor {
     {
         (IExecutor inner, bytes calldata innerData) = _decodeInner(data);
         _checkInnerExecutorApproval(address(inner), msg.sender);
-        receiver = _routerIfSelf(inner.fundsExpectedAddress(innerData));
+        receiver = inner.fundsExpectedAddress(innerData);
+        // The inner executor names its caller, this contract, to mean the
+        // router.
+        if (receiver == address(this)) receiver = msg.sender;
     }
 
     /// @dev A payer revert emits SubsidyPaymentFailed instead of reverting the
@@ -132,12 +137,6 @@ contract TychoSubsidizingExecutor is IExecutor {
             // slither-disable-next-line reentrancy-events
             emit SubsidyPaymentFailed(subsidy.nonce);
         }
-    }
-
-    /// @dev The inner executor names its caller, this contract, to mean the
-    ///      router.
-    function _routerIfSelf(address receiver) internal view returns (address) {
-        return receiver == address(this) ? msg.sender : receiver;
     }
 
     function _decodeInner(bytes calldata data)
