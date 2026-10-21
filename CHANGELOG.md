@@ -1,3 +1,11 @@
+## [0.472.2](https://github.com/propeller-heads/tycho/compare/0.472.1...0.472.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** resolve rustls-webpki and webpki-roots advisories ([47e9db0](https://github.com/propeller-heads/tycho/commit/47e9db0b776e7c34974a28318e874472d614c66d))
+* **deps:** resolve rustls-webpki and webpki-roots advisories ([#1661](https://github.com/propeller-heads/tycho/issues/1661)) ([7bdea01](https://github.com/propeller-heads/tycho/commit/7bdea013449f96a52335d16b21b6919e3651903b))
+
 ## [0.472.1](https://github.com/propeller-heads/tycho/compare/0.472.0...0.472.1) (2026-10-20)
 
 
