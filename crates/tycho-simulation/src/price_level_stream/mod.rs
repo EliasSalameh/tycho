@@ -107,7 +107,7 @@
 //! the block the entry was simulated for is still the block being quoted, and one slot has not
 //! yet passed since Titan's build stamp. Both are functions of what Titan sent, so every
 //! admission of one build computes the same deadline and a re-send changes nothing — which is why
-//! the buffer keeps no record of what it dropped. Only a contradicted build is pinned, until its
+//! the buffer keeps no record of what it dropped.
 //! own deadline. The result is read back by
 //! [`simulation_overrides`](state::PriceLevelStreamState::simulation_overrides) reads back as
 //! [`PammSimulationOverrides`](overrides::PammSimulationOverrides).
@@ -117,7 +117,6 @@
 //!   advertising the sequence under a different pair is no match either, so nothing substitutes a
 //!   neighboring pair's snapshot for the one the ladders name.
 //! - **Five outcomes per served pair, plus one case that is none of them:** `matched`, `missing`,
-//!   `ambiguous` (the pair's books disagreed about their version), `expired`, `poisoned` (two
 //!   payloads claimed one build) — and a pair whose books named no readable version, which reaches
 //!   no lookup at all and so appears under no outcome.
 //! - **The stamped copy carries the narrower deadline:** `min(ladder deadline, snapshot deadline)`
@@ -185,18 +184,19 @@
 //!   that one trade direction unquotable while the opposite one is served.
 //! - `price_level_stream_reconnects_total{socket, reason}`: `idle_timeout`, `ended`, `closed`,
 //!   `read_error`, `connect_failed`, `connect_timeout`, each on `price_levels` or `quote_stream`.
-//! - `price_level_stream_override_match_total{outcome}`: `matched`, `missing`, `ambiguous`,
-//!   `expired`, `poisoned`. One increment per pair whose ladders were joined to the snapshots held
-//!   for its venue, so `matched` against the rest is the share of served pairs carrying the state
-//!   they were priced on. A pair whose books named no build is no join and appears under no
-//!   outcome.
+//! - `price_level_stream_override_match_total{outcome}`: `matched`, `missing`, `expired`,
+//!   `unreferenced`. One increment per pair whose ladders were joined to the snapshots held for its
+//!   venue, so `matched` against the rest is the share of served pairs carrying the state they were
+//!   priced on. A pair whose book named no sequence is counted under `unreferenced`, so the sum
+//!   over the label equals the pairs served.
 //! - `price_level_stream_override_buffer_total{event}`: every event of an ingest of the override
-//!   buffer — `admitted`, `restamped`, `replayed`, `older_build`, `conflict_poisoned`,
-//!   `rejected_contradicted`, `rejected_future_skew`, `rejected_expired`, `rejected_key_saturated`,
-//!   `rejected_keys_exhausted`, `rejected_frame_entry_cap`, `rejected_entry_pair_cap`,
+//!   buffer — `admitted`, `restamped`, `replayed`, `older_build`,
+//!   `reissued_with_different_accounts`, `rejected_future_skew`, `rejected_expired`,
 //!   `degenerate_pair`, `evicted_entry`, `evicted_key`, `swept_expired`. These are buffer events,
-//!   not lookup misses: an eviction here says a held build was dropped, never that a ladder failed
-//!   to find one.
+//!   not lookup misses: an eviction here says a held snapshot was dropped, never that a ladder
+//!   failed to find one. The buffer also holds snapshots for venues this consumer does not serve,
+//!   so `admitted` must never be divided by the match total — see
+//!   `price_level_stream_unserved_venue_entries_total`.
 //! - `price_level_stream_refused_override_entries_total{reason}`: `not_a_venue`, `not_an_account`,
 //!   `malformed_pair`, `malformed_storage`, `malformed_quantity`, `unstamped`, `sequence_mismatch`,
 //!   `no_data`, `unsupported_override`, `over_cap`. One increment per venue entry the validation

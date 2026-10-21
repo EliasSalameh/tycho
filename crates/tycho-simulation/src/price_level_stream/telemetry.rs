@@ -101,6 +101,54 @@ pub(super) const REFUSED_OVERRIDE_ENTRIES: &str =
 /// pair twice contributes two here and one there — so the two must not be ratioed against each
 /// other.
 pub(super) const INVALID_PROVENANCE: &str = "price_level_stream_invalid_provenance_total";
+/// Counter, label `reason`, one of [`QuoteRefusedReason`]. Incremented once per quote **Tycho
+/// itself refused** — not a node simulation, a refusal by `get_amount_out`, `spot_price` or
+/// `get_limits` before any RPC is involved.
+///
+/// This is the series that bears on the one outcome that matters most: a quote Tycho answers and
+/// the chain then refuses. Tycho's arithmetic cannot detect a stale price, so `ladders_expired` is
+/// the only thing standing between a consumer and a quote built for a block that has been built.
+/// Watch its ratio against your own quote rate: a consumer that quotes promptly should almost
+/// never see it, and a rising rate means ladders are going stale before they are used.
+pub(super) const QUOTES_REFUSED: &str = "price_level_stream_quotes_refused_total";
+/// Counter. Incremented once per served book whose `calculated_from` does not carry the message's
+/// own beacon slot in its high 64 bits.
+///
+/// **This series exists to watch an assumption, not a fault.** The sequence encoding the slot is
+/// why the buffer does not compare the block a snapshot was simulated for against the block being
+/// quoted: the two cannot disagree. Measured over 28,825 books on 2026-10-21, it held every time.
+/// If this counter ever moves, that reasoning is void and the block needs checking explicitly.
+pub(super) const SEQUENCE_SLOT_MISMATCH: &str = "price_level_stream_sequence_slot_mismatch_total";
+/// Counter, label `field`. Incremented once per accepted venue entry that omits a field a consumer
+/// needs in order to verify a quote: `block_number`, without which it cannot tell which block to
+/// simulate at, or `slot`, without which the snapshot carries no block timestamp and the venue's
+/// own time check reads the mined block's instead.
+///
+/// Measured over 71,762 entries on 2026-10-21, Titan sent both on every one. A sustained non-zero
+/// rate is a change in the producer, not a fault in this code.
+pub(super) const OVERRIDE_ENTRY_MISSING_FIELD: &str =
+    "price_level_stream_override_entry_missing_field_total";
+/// Counter. Incremented once per price level message that carries two or more books for one venue
+/// and pair, where the last one's ladders are the ones served.
+///
+/// Never observed: 0 of 774 messages on 2026-10-21. It is counted because the replacement changes
+/// a served price silently, and because this is the shape a producer-side regression would take.
+pub(super) const DUPLICATE_BOOKS: &str = "price_level_stream_duplicate_books_total";
+/// Counter. Incremented once per venue entry buffered for a venue this consumer does not serve.
+///
+/// The override socket carries every venue Titan streams, including ones absent from the registry,
+/// and the buffer holds their snapshots because it is keyed before the registry is consulted.
+/// Measured on 2026-10-21, 21.2% of entries belonged to venues nothing served.
+///
+/// **Consequence for reading the other series:** `override_buffer_total{event="admitted"}` counts
+/// those entries and `override_match_total` cannot, so the two must never be divided by one
+/// another. Use this counter to size the difference.
+pub(super) const UNSERVED_VENUE_ENTRIES: &str = "price_level_stream_unserved_venue_entries_total";
+/// Histogram. The storage words one accepted venue entry overrode.
+///
+/// Recorded so that growth toward the per-entry cap is visible before the cap refuses anything.
+/// Measured on 2026-10-21: p50 6, p99 16, max 16, against a cap of 512.
+pub(super) const OVERRIDE_ENTRY_SLOTS: &str = "price_level_stream_override_entry_storage_slots";
 
 /// The `reason` label of [`FRAMES_REJECTED`]: why the stream dropped a frame. The label value
 /// is the variant name in snake case.
@@ -218,22 +266,54 @@ impl SideRejectReason {
 pub(super) enum MatchOutcome {
     /// The pair's ladders carry the snapshot the venue priced them on.
     Matched,
-    /// No build of that pair version is held.
+    /// No snapshot of that pair's sequence is held.
     Missing,
-    /// The pair's books did not agree on one version, so nothing attributes the served ladders to
-    /// a single snapshot.
-    Ambiguous,
-    /// A build of it was held, and its one slot of lifetime has passed.
+    /// One was held, and its slot of lifetime has passed.
     Expired,
-    /// Two payloads claimed to be the build that priced it.
-    Poisoned,
+    /// The pair's book named no sequence, so no lookup was made.
+    ///
+    /// Counted so that the sum over this label equals the pairs served. Without it a producer that
+    /// stopped sending `calculated_from` would show only as this series going quiet.
+    Unreferenced,
 }
 
 impl MatchOutcome {
     /// Every outcome, so [`init_override_counters`] can register all of them. A new variant
     /// belongs here too.
-    const ALL: [Self; 5] =
-        [Self::Matched, Self::Missing, Self::Ambiguous, Self::Expired, Self::Poisoned];
+    const ALL: [Self; 4] = [Self::Matched, Self::Missing, Self::Expired, Self::Unreferenced];
+}
+
+/// The `reason` label of [`QUOTES_REFUSED`]: why Tycho's own quoting declined, before any node
+/// call. The label value is the variant name in snake case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub(super) enum QuoteRefusedReason {
+    /// The message that carried the ladders is older than one slot. The only guard between a
+    /// consumer and a price built for a block that has already been built.
+    LaddersExpired,
+    /// The ladder's cumulative output falls between two levels, so no interpolation is safe.
+    NotMonotonic,
+    /// The two tokens asked for are not this component's pair.
+    UnknownPair,
+    /// The direction asked for carries no levels: a one-sided book, or a side the conversion
+    /// declined.
+    NoLiquidity,
+    /// The amount asked for is below the smallest level the venue quoted.
+    BelowSmallestQuote,
+    /// A ladder amount does not fit the `f64` a spot price is returned in.
+    SpotPriceUnrepresentable,
+}
+
+impl QuoteRefusedReason {
+    /// Every reason, so [`init_counters`] can register all of them.
+    const ALL: [Self; 6] = [
+        Self::LaddersExpired,
+        Self::NotMonotonic,
+        Self::UnknownPair,
+        Self::NoLiquidity,
+        Self::BelowSmallestQuote,
+        Self::SpotPriceUnrepresentable,
+    ];
 }
 
 /// The `reason` label of [`REFUSED_OVERRIDE_ENTRIES`]: why a venue entry was refused whole. The
@@ -356,6 +436,30 @@ pub(super) fn record_refused_override_entry(reason: EntryRefusalReason) {
     counter!(REFUSED_OVERRIDE_ENTRIES, "reason" => <&'static str>::from(reason)).increment(1);
 }
 
+pub(super) fn record_quote_refused(reason: QuoteRefusedReason) {
+    counter!(QUOTES_REFUSED, "reason" => <&'static str>::from(reason)).increment(1);
+}
+
+pub(super) fn record_sequence_slot_mismatch() {
+    counter!(SEQUENCE_SLOT_MISMATCH).increment(1);
+}
+
+pub(super) fn record_override_entry_missing_field(field: &'static str) {
+    counter!(OVERRIDE_ENTRY_MISSING_FIELD, "field" => field).increment(1);
+}
+
+pub(super) fn record_duplicate_books() {
+    counter!(DUPLICATE_BOOKS).increment(1);
+}
+
+pub(super) fn record_unserved_venue_entry() {
+    counter!(UNSERVED_VENUE_ENTRIES).increment(1);
+}
+
+pub(super) fn record_override_entry_slots(slots: usize) {
+    histogram!(OVERRIDE_ENTRY_SLOTS).record(slots as f64);
+}
+
 pub(super) fn record_invalid_provenance() {
     counter!(INVALID_PROVENANCE).increment(1);
 }
@@ -373,7 +477,12 @@ pub(super) fn init_book_counters() {
     for reason in SideRejectReason::ALL {
         counter!(REJECTED_SIDES, "reason" => <&'static str>::from(reason)).increment(0);
     }
+    for reason in QuoteRefusedReason::ALL {
+        counter!(QUOTES_REFUSED, "reason" => <&'static str>::from(reason)).increment(0);
+    }
     counter!(INVALID_PROVENANCE).increment(0);
+    counter!(SEQUENCE_SLOT_MISMATCH).increment(0);
+    counter!(DUPLICATE_BOOKS).increment(0);
 }
 
 /// Registers every series of the override path at zero, for the same reason: a join that never
@@ -390,6 +499,10 @@ pub(super) fn init_override_counters() {
     }
     for event in IngestEvent::iter() {
         counter!(OVERRIDE_BUFFER, "event" => <&'static str>::from(event)).increment(0);
+    }
+    counter!(UNSERVED_VENUE_ENTRIES).increment(0);
+    for field in ["block_number", "slot"] {
+        counter!(OVERRIDE_ENTRY_MISSING_FIELD, "field" => field).increment(0);
     }
     for reason in EntryRefusalReason::ALL {
         counter!(REFUSED_OVERRIDE_ENTRIES, "reason" => <&'static str>::from(reason)).increment(0);
@@ -572,7 +685,7 @@ mod tests {
             record_skipped_book(SkipReason::MalformedAddress);
             record_rejected_side(SideRejectReason::ConflictingKnots);
             record_override_match(MatchOutcome::Matched);
-            record_override_buffer_event(IngestEvent::ConflictPoisoned);
+            record_override_buffer_event(IngestEvent::ReissuedWithDifferentAccounts);
             record_refused_override_entry(EntryRefusalReason::SequenceMismatch);
             record_invalid_provenance();
         });
@@ -654,7 +767,7 @@ mod tests {
             counter_value(
                 &snapshot,
                 "price_level_stream_override_buffer_total",
-                &[("event", "conflict_poisoned")]
+                &[("event", "reissued_with_different_accounts")]
             ),
             1
         );
@@ -712,20 +825,15 @@ mod tests {
     #[test]
     fn override_counters_start_at_zero_under_every_label() {
         let ((), snapshot) = record_async(async { init_override_counters() });
-        let outcomes = ["matched", "missing", "ambiguous", "expired", "poisoned"];
+        let outcomes = ["matched", "missing", "expired", "unreferenced"];
         let events = [
             "admitted",
             "restamped",
             "replayed",
             "older_build",
-            "conflict_poisoned",
-            "rejected_contradicted",
+            "reissued_with_different_accounts",
             "rejected_future_skew",
             "rejected_expired",
-            "rejected_key_saturated",
-            "rejected_keys_exhausted",
-            "rejected_frame_entry_cap",
-            "rejected_entry_pair_cap",
             "degenerate_pair",
             "evicted_entry",
             "evicted_key",

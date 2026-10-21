@@ -24,18 +24,16 @@
 //! and a sweep that does not wait on a lookup — exists because what it retains is decided by the
 //! stream rather than by a consumer.
 //!
-//! A snapshot stops being served for one of two reasons, and the first is the one that matters:
+//! A snapshot stops being served one slot after Titan built it. That deadline is a function of
+//! the entry's own stamp rather than of when the buffer admitted it, so every admission of one
+//! build computes the same instant: re-sending a build the buffer already holds, or one it has
+//! since dropped, can neither extend nor shorten it. The buffer therefore keeps no record of what
+//! it has forgotten.
 //!
-//! 1. **Its block has been built.** An entry names the block it was simulated for, and a snapshot
-//!    describes nothing once the stream is quoting a later one. This bound compares two numbers
-//!    both sockets send and consults no clock, so no skew can widen it. It is also the only bound
-//!    that catches a quiet venue repeating one ladder for minutes: the sequence keeps matching, and
-//!    the block does not.
-//! 2. **One slot has passed since Titan built it.** The fallback for an entry naming no block, and
-//!    a backstop for one whose block never arrives. The deadline is a function of the entry's own
-//!    stamp, so every admission of one build computes the same instant: re-sending a build the
-//!    buffer already holds, or one it has since dropped, can neither extend nor shorten it. The
-//!    buffer therefore needs no record of what it has forgotten.
+//! The snapshot also names the block Titan simulated it for. The buffer does not check that
+//! number, because it cannot disagree: `calculated_from` encodes the beacon slot in its high 64
+//! bits, so a book of one block and an entry of another can never share a sequence. The number is
+//! exported instead, and a consumer simulates at the block it names.
 //!
 //! A repeat is consequently a no-op rather than something to refuse. The identical envelope says
 //! only that Titan sent it again — it carries the same build stamp, so it is indistinguishable
@@ -99,28 +97,12 @@ pub struct PammSimulationOverrides {
     /// this snapshot describes that block, and nothing once a later one is built.
     pub expires_at: u64,
 }
-
 impl PammSimulationOverrides {
-    /// Whether the snapshot still describes the block being quoted.
-    ///
-    /// An entry naming no block carries no such bound, and falls back to [`Self::expires_at`]
-    /// alone. Every entry of both captured frames names one.
-    fn covers(&self, block: u64) -> bool {
-        self.block_number
-            .is_none_or(|target| target >= block)
-    }
-
     /// Whether two snapshots describe the same simulated pre-state.
     ///
     /// Everything Titan sent is compared, destructured so that a field added to the snapshot has
     /// to be classified here rather than silently ignored. [`Self::expires_at`] is excluded
-    /// because this process derives it: the buffer takes it from the build's own stamp, which is
-    /// compared, and the state narrows it to the ladder deadline of whichever message carried the
-    /// ladders — a wall-clock second that moves between two messages carrying one unchanged
-    /// snapshot. Comparing it would report a changed quote for a snapshot that did not change.
-    ///
-    /// Both the buffer, deciding whether an arriving build repeats one it holds, and
-    /// `ProtocolSim::eq`, deciding whether a served state still says what it said, ask this.
+    /// because this process derives it from `built_at_ns`, which is compared.
     pub(super) fn same_simulated_state(&self, other: &Self) -> bool {
         let Self { accounts, block_number, block_timestamp, built_at_ns, expires_at: _ } = self;
         *accounts == other.accounts &&
@@ -130,70 +112,42 @@ impl PammSimulationOverrides {
     }
 }
 
-/// How many builds of one `(venue, pair)` key the buffer retains, contradiction records included.
-/// Titan re-stamps a pair several times a slot and batches pairs under one sequence, so eight
-/// covers a slot of one pair's history; past it the oldest build it holds is dropped.
-const MAX_KEY_DEPTH: usize = 8;
-
-/// Furthest ahead of the admitting clock a build stamp may lie and still be admitted.
+/// How many snapshots one `(venue, pair)` key holds.
 ///
-/// Titan's entries were observed at least 120 ms behind the local clock, so a stamp ahead of it is
-/// this host's clock trailing Titan's rather than a claim about the future. Because the deadline is
-/// derived from the stamp, this doubles as the most lifetime such a stamp can add: a second, on top
-/// of the slot every build gets.
+/// **This is a memory ceiling, not a freshness rule, and it is sized so that it does not bind.**
+/// The two sockets are independent: a venue entry arrives a median of 704 ms before the book that
+/// names its sequence, so a key's entries are a queue of joins still waiting for their book, not a
+/// history of superseded values. A newer sequence does not replace an older one — the older one's
+/// book may still be in flight.
 ///
-/// Deliberately tighter than the [`MAX_FUTURE_SKEW_NANOS`](super::MAX_FUTURE_SKEW_NANOS) the price
-/// level socket judges its own frames on. The two cannot be the same number and also keep serving
-/// inside one slot, and this is the side where that matters: the wider allowance bounds what is
-/// quotable, this one bounds what a consumer simulates on. A host skewed past a second therefore
-/// keeps quoting and stops carrying snapshots, which is the direction to fail in.
-const MAX_BUILD_SKEW: Duration = Duration::from_secs(1);
+/// Measured on a 13 minute recording (2026-10-21, 65 blocks): one key receives **9.35 new
+/// sequences per second**, so the one slot of lifetime below leaves about **112** snapshots live
+/// per key. 128 clears that with headroom. An earlier revision set this to 8 on the false belief
+/// that eight covered "a slot of one pair's history"; eight covers 0.86 s, and it discarded 22.7%
+/// of the snapshots a consumer could otherwise have verified against.
+///
+/// Watch `override_buffer_total{event="evicted_entry"}`. It should sit near zero. If it moves,
+/// Titan's sequence rate has risen and this number needs revisiting.
+const MAX_KEY_DEPTH: usize = 128;
 
-/// How many `(venue, pair)` keys the buffer retains. The 2026-10 capture streamed nine venues
-/// with 35 pairs between them, 29× below the cap, which is here to bound what a misbehaving
-/// upstream can make this process hold rather than to bound Titan.
+/// How many `(venue, pair)` keys the buffer retains. The 2026-10 recording streamed 12 venues with
+/// 48 pairs between them, 21× below this, which is here to bound what a misbehaving upstream can
+/// make this process hold rather than to bound Titan.
 const MAX_KEYS: usize = 1_024;
 
-/// How many venue entries of one frame are admitted. Titan streamed nine.
-const MAX_FRAME_ENTRIES: usize = 16;
-
-/// How many pairs of one venue entry are admitted. Titan's widest entry advertised eleven.
-const MAX_ENTRY_PAIRS: usize = 32;
-
-/// How many keys one ingest sweeps for expired entries. The cursor rotates, so a key that stops
-/// being streamed is still visited within `MAX_KEYS / SWEEP_SHARE` ingests — 32 frames, under
-/// three slots at Titan's 1 Hz — however long the buffer has gone without a lookup.
-const SWEEP_SHARE: usize = 32;
-
 /// What the buffer holds for a `(venue, pair, sequence)`.
-///
-/// The buffer itself produces every variant but [`Self::Ambiguous`]: its key is exact, and it
-/// retains one live snapshot per sequence, so a lookup of it is never answered by two. That
-/// variant is here because the caller joining a ladder to a snapshot reports the whole join
-/// through this one enum, its own outcomes included, so that what a ladder was attached from — and
-/// what it was not — is told in one vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum MatchResult {
-    /// The newest-built live snapshot the venue priced that pair at that sequence.
+    /// The newest-built snapshot the venue priced that pair at that sequence.
     Matched(Arc<PammSimulationOverrides>),
-    /// No build of that `(venue, pair, sequence)` is held.
+    /// No snapshot of that `(venue, pair, sequence)` is held.
     Missing,
-    /// The ladder cannot be attributed to one snapshot. Never produced by
-    /// [`OverrideBuffer::matched`]: the caller that joins the two sockets decides this.
-    Ambiguous,
-    /// A build of it is held and no longer describes what is being quoted: the block it was
-    /// simulated for has been built, or its one slot of lifetime has passed.
+    /// One was held and its slot of lifetime has passed.
     Expired,
-    /// Two payloads claimed to be the build that priced it, so what the venue was priced on is
-    /// unknown until the build's lifetime passes.
-    Poisoned,
 }
 
-/// What one ingest did: first what the rotating sweep dropped, then one event per admission it
-/// attempted, in the order the frame named its entries and each entry named its pairs. The
-/// rotating sweep runs before the frame is read, so its `SweptExpired` events come first; a key
-/// outside the rotation's share is swept again when a frame entry names it, so above
-/// [`SWEEP_SHARE`] keys a `SweptExpired` can also appear between admission events.
+/// What one ingest did: one event per admission it attempted, in the order the message named its
+/// entries and each entry named its pairs, plus what the per-key sweep dropped.
 ///
 /// Each variant's name in snake case is the `event` the telemetry of an ingest labels it with.
 #[derive(
@@ -208,49 +162,41 @@ pub(super) enum MatchResult {
 )]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum IngestEvent {
-    /// A build the key did not hold is now held.
+    /// A snapshot the key did not hold is now held.
     Admitted,
-    /// A newer build of a pair version replaced the one held for it.
+    /// A newer build of a sequence replaced the one held for it.
     Restamped,
-    /// The identical envelope arrived again: nothing changed, its deadline included.
+    /// The identical envelope arrived again. Nothing changed, its deadline included.
     Replayed,
-    /// A build older than the one held for a pair version arrived, and did not replace it.
+    /// A build older than the one held for a sequence arrived, and did not replace it.
     OlderBuild,
-    /// A payload contradicting a held build arrived under that build's stamp, poisoning it for
-    /// the rest of its lifetime.
-    ConflictPoisoned,
-    /// A build a contradiction record still bars arrived again: that build, or one stamped before
-    /// it, which cannot be the evidence that settles the contradiction.
-    RejectedContradicted,
-    /// The entry is stamped further ahead of the admitting clock than [`MAX_BUILD_SKEW`].
+    /// Titan re-published one build — the same venue and the same stamp — with a different set of
+    /// overridden accounts. The buffer keeps the snapshot it already holds and counts this.
+    ///
+    /// Measured at 178 occurrences in 13 minutes, every one of them Titan re-publishing a build as
+    /// a narrower slice about 100 ms later: same block, same beacon slot, fewer accounts, fewer
+    /// pairs. None was a genuine disagreement about one pair's state. A sustained rise above that
+    /// baseline means the producer's behaviour has changed and is worth looking at.
+    ReissuedWithDifferentAccounts,
+    /// The entry is stamped further ahead of the admitting clock than
+    /// [`MAX_FUTURE_SKEW_NANOS`](super::MAX_FUTURE_SKEW_NANOS).
     RejectedFutureSkew,
     /// The entry's slot of lifetime had already passed when it arrived.
     RejectedExpired,
-    /// Live contradiction records fill the key's depth, so it admits nothing until one of them
-    /// expires.
-    RejectedKeySaturated,
-    /// Every key the buffer holds is protecting such a record, so it has no slot for a new key.
-    RejectedKeysExhausted,
-    /// The frame named more venue entries than one frame may make the buffer retain. Once per
-    /// such frame, however many entries it named past the cap.
-    RejectedFrameEntryCap,
-    /// The venue entry named more pairs than one entry may make the buffer retain. Once per such
-    /// entry, however many pairs it named past the cap.
-    RejectedEntryPairCap,
     /// A pair of one token with itself, which quotes nothing.
     DegeneratePair,
-    /// A held build was dropped to make room for another build of its key.
+    /// A held snapshot was dropped to make room for another of its key. This should sit near zero:
+    /// see [`MAX_KEY_DEPTH`].
     EvictedEntry,
     /// A key was dropped to make room for another key.
     EvictedKey,
-    /// A record was dropped because its build's slot of lifetime has passed. One per record,
-    /// whether it held a snapshot or barred a contradicted build.
+    /// A record was dropped because its build's slot of lifetime has passed.
     SweptExpired,
 }
 
 /// Where the buffer indexes a snapshot: the venue it was built for and the pair it priced, the
-/// pair's two tokens ordered so that the key does not depend on the orientation Titan named
-/// them in. The sequence is not part of it — a key holds a pair's recent sequences together.
+/// pair's two tokens ordered so that the key does not depend on the orientation Titan named them
+/// in. The sequence is not part of it — a key holds a pair's pending sequences together.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PairKey {
     venue: Bytes,
@@ -265,46 +211,17 @@ impl PairKey {
     }
 }
 
-/// What a retained entry holds.
-#[derive(Debug, Clone)]
-enum Content {
-    /// The snapshot the venue was priced on, shared with every pair of the entry that carried it
-    /// and with every state attached from it.
-    Snapshot(Arc<PammSimulationOverrides>),
-    /// Two payloads arrived under one build, so which state the venue was priced on is
-    /// unknowable. The record is pinned for the build's remaining lifetime: dropping it would
-    /// let the next copy of that build be admitted as if nothing had contradicted it.
-    Contradicted,
-}
-
-impl Content {
-    fn is_contradicted(&self) -> bool {
-        match self {
-            Self::Contradicted => true,
-            Self::Snapshot(_) => false,
-        }
-    }
-
-    /// The payload the record was admitted with, or `None` for a contradicted build.
-    fn snapshot(&self) -> Option<&Arc<PammSimulationOverrides>> {
-        match self {
-            Self::Snapshot(snapshot) => Some(snapshot),
-            Self::Contradicted => None,
-        }
-    }
-}
-
 /// One build of a snapshot a key retains.
 #[derive(Debug, Clone)]
 struct RetainedEntry {
-    /// The pair version the build priced.
+    /// The sequence the build priced.
     sequence: u128,
     /// When Titan built the venue entry that carried it, which orders two builds of one pair.
     built_at_ns: u64,
     /// The monotonic instant from which the build must not be simulated: one slot from its own
     /// stamp. A function of the stamp alone, so every admission of one build computes it alike.
     deadline_mono: Instant,
-    content: Content,
+    snapshot: Arc<PammSimulationOverrides>,
 }
 
 impl RetainedEntry {
@@ -329,7 +246,7 @@ impl Arriving {
             sequence: self.sequence,
             built_at_ns: self.built_at_ns,
             deadline_mono: self.deadline_mono,
-            content: Content::Snapshot(self.snapshot.clone()),
+            snapshot: self.snapshot.clone(),
         }
     }
 }
@@ -339,33 +256,35 @@ enum Validity {
     /// The build has lifetime left, and these are the deadlines fixed for it.
     Live {
         deadline_mono: Instant,
-        /// The exported wall-clock second: the deadline a consumer of the attached state reads,
-        /// floored from the same instant `deadline_mono` names, so it never outlasts the monotonic
-        /// deadline. See [`exported_second`].
+        /// The exported wall-clock second a consumer reads, floored from the same instant
+        /// `deadline_mono` names. See [`exported_second`].
         expires_at: u64,
     },
-    /// Stamped further ahead of the clock than [`MAX_BUILD_SKEW`] explains.
+    /// Stamped further ahead of the clock than skew explains.
     FutureSkew,
     /// Built a whole slot or more ago: no lifetime is left to fix a deadline from.
     Elapsed,
 }
 
-/// The lifetime a build stamped `built_at_ns` has left when it is admitted at `now`, as the
-/// deadlines fixed for it.
+/// The lifetime a build stamped `built_at_ns` has left when it is admitted at `now`.
 ///
 /// Both deadlines are anchored to the stamp, not to the admission: a build dies one slot after
 /// Titan built it, however late it is admitted and however often. That is what makes a repeat a
 /// no-op — the identical envelope computes the identical deadline, so the buffer has nothing to
-/// remember about a build it has dropped, and nothing to refuse. Every step saturates, so no stamp
-/// Titan can send turns into a longer lifetime than one slot plus [`MAX_BUILD_SKEW`].
+/// remember about a build it has dropped, and nothing to refuse.
+///
+/// A stamp ahead of the admitting clock is refused past
+/// [`MAX_FUTURE_SKEW_NANOS`](super::MAX_FUTURE_SKEW_NANOS), which is also the allowance the price
+/// level socket judges its own messages on. Measured over 71,762 entries, Titan's stamps were
+/// always **behind** this host's clock, by at least 103 ms, so this refusal is not expected to
+/// fire; it bounds how much lifetime a stamp from the future could claim.
 ///
 /// That identity holds under the clock model the caller supplies: wall and monotonic readings that
-/// advance together, each non-decreasing across calls. The coherence is this function's own
-/// assumption — [`Now`] neither states nor enforces it — so a wall clock stepped backwards between
-/// two admissions of one build is outside the model, and no deadline is promised across it.
+/// advance together, each non-decreasing across calls. [`Now`] neither states nor enforces it, so a
+/// wall clock stepped backwards between two admissions of one build is outside the model.
 fn validity(built_at_ns: u64, now: Now) -> Validity {
-    let ahead = Duration::from_nanos(built_at_ns.saturating_sub(now.wall_nanos));
-    if ahead > MAX_BUILD_SKEW {
+    let ahead = built_at_ns.saturating_sub(now.wall_nanos);
+    if ahead > super::MAX_FUTURE_SKEW_NANOS {
         return Validity::FutureSkew;
     }
     let age = Duration::from_nanos(
@@ -379,7 +298,7 @@ fn validity(built_at_ns: u64, now: Now) -> Validity {
     Validity::Live {
         // `remaining + ahead` is the stamp's own slot measured from `now`: for a stamp in the past
         // `ahead` is zero, and for one ahead of the clock it restores what `age` clamped away.
-        deadline_mono: now.monotonic + remaining + ahead,
+        deadline_mono: now.monotonic + remaining + Duration::from_nanos(ahead),
         expires_at: exported_second(built_at_ns),
     }
 }
@@ -399,15 +318,14 @@ fn exported_second(built_at_ns: u64) -> u64 {
 
 /// The builds one `(venue, pair)` key retains.
 struct KeyHistory {
-    /// At most [`MAX_KEY_DEPTH`] builds, contradiction records included, in no particular order.
+    /// At most [`MAX_KEY_DEPTH`] snapshots, in no particular order.
     entries: Vec<RetainedEntry>,
     /// The ingest at which traffic last named this key: the recency a key eviction orders by.
     ///
     /// Named, not admitted — traffic protects a key from eviction whether or not the build it
-    /// carried was retained, so a pair whose builds are being refused still counts as a pair
-    /// Titan is pricing. Lookups, by contrast, do not touch it at all, because the buffer serves
-    /// sockets rather than lookups: a pair Titan keeps pricing must not be evicted just because
-    /// nothing has asked for it yet.
+    /// carried was retained. Lookups do not touch it, because the buffer serves sockets rather
+    /// than lookups: a pair Titan keeps pricing must not be evicted because nothing has asked for
+    /// it yet.
     last_ingest: u64,
 }
 
@@ -416,14 +334,10 @@ impl KeyHistory {
         Self { entries: Vec::new(), last_ingest }
     }
 
-    /// Retains `arriving` under this key, or refuses it, and records what it did.
+    /// Retains `arriving` under this key, and records what it did.
     fn apply(&mut self, arriving: &Arriving, now: Now, events: &mut Vec<IngestEvent>) {
         self.sweep(now, events);
-        if self.refused_by_contradiction(arriving) {
-            events.push(IngestEvent::RejectedContradicted);
-            return;
-        }
-        match self.active(arriving.sequence) {
+        match self.holding(arriving.sequence) {
             Some(index) => self.resolve(index, arriving, events),
             None => self.insert(arriving, events),
         }
@@ -433,8 +347,7 @@ impl KeyHistory {
     ///
     /// Expiry costs a key no depth: because a deadline is a function of its build's stamp, a
     /// dropped record cannot be re-admitted on a longer lifetime, so there is nothing to keep in
-    /// its place. No contradiction record outlives the build it refuses either — once the deadline
-    /// passes, [`validity`] refuses that build as `Elapsed` on its own.
+    /// its place.
     fn sweep(&mut self, now: Now, events: &mut Vec<IngestEvent>) {
         let held = self.entries.len();
         self.entries
@@ -444,138 +357,63 @@ impl KeyHistory {
         }
     }
 
-    /// Retains `arriving` as a build this key does not hold, dropping the oldest build it may
-    /// forget once the key is at its depth.
+    /// Retains `arriving` as a sequence this key does not hold, dropping the oldest build it holds
+    /// once the key is at its depth.
     fn insert(&mut self, arriving: &Arriving, events: &mut Vec<IngestEvent>) {
-        match self.room() {
-            Room::Free => {}
-            Room::Displacing(index) => {
-                self.entries.remove(index);
+        if self.entries.len() >= MAX_KEY_DEPTH {
+            if let Some(oldest) = self.oldest() {
+                self.entries.remove(oldest);
                 events.push(IngestEvent::EvictedEntry);
-            }
-            Room::Saturated => {
-                events.push(IngestEvent::RejectedKeySaturated);
-                return;
             }
         }
         self.entries.push(arriving.retained());
         events.push(IngestEvent::Admitted);
     }
 
-    /// What admitting one more record under this key costs.
-    fn room(&self) -> Room {
-        if self.entries.len() < MAX_KEY_DEPTH {
-            return Room::Free;
-        }
-        match self.oldest_evictable() {
-            Some(index) => Room::Displacing(index),
-            None => Room::Saturated,
-        }
-    }
-
-    /// Whether a contradiction record of `arriving`'s pair version refuses it.
-    ///
-    /// A record refuses the build it was made for and every build **older** than that one: it is a
-    /// recency bar, not a single-stamp veto. A build that predates a contradiction cannot be the
-    /// evidence that settles it, and admitting one would make contradicting a pair version serve
-    /// more than leaving it healthy does — against a healthy newer build the same stamp is the
-    /// no-op [`IngestEvent::OlderBuild`] names. Builds stamped **newer** pass: a later build
-    /// supersedes a contradiction as the served value.
-    ///
-    /// Every entry of the key is one the sweep left, because [`Self::apply`] sweeps before it
-    /// asks, so each is still inside its build's lifetime.
-    fn refused_by_contradiction(&self, arriving: &Arriving) -> bool {
-        self.entries.iter().any(|retained| {
-            retained.sequence == arriving.sequence &&
-                retained.content.is_contradicted() &&
-                retained.built_at_ns >= arriving.built_at_ns
-        })
-    }
-
-    /// The one build serving `sequence`. A key holds at most one, however many records of that
-    /// sequence's contradicted or removed builds it is also pinning.
-    fn active(&self, sequence: u128) -> Option<usize> {
+    /// The build this key holds for `sequence`.
+    fn holding(&self, sequence: u128) -> Option<usize> {
         self.entries
             .iter()
-            .position(|retained| {
-                retained.sequence == sequence && retained.content.snapshot().is_some()
-            })
+            .position(|retained| retained.sequence == sequence)
     }
 
-    /// The oldest-built snapshot the key could drop, which is the only kind whose slot an arriving
-    /// build can take: a contradiction record has to outlive the window in which the build it
-    /// refuses could still be admitted.
-    fn oldest_evictable(&self) -> Option<usize> {
+    /// The oldest-built entry, which is the one an arriving build displaces at the depth bound.
+    fn oldest(&self) -> Option<usize> {
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, retained)| retained.content.snapshot().is_some())
             .min_by_key(|(_, retained)| retained.built_at_ns)
             .map(|(index, _)| index)
     }
 
-    /// Whether the key still holds a contradiction record. Evicting the key would drop it, and the
-    /// contradicted build would then be admitted as if nothing had contradicted it, so the key is
-    /// protected while it holds one.
-    fn holds_contradiction(&self, now: Now) -> bool {
-        self.entries
-            .iter()
-            .any(|retained| !retained.expired(now) && retained.content.is_contradicted())
-    }
-
-    /// Applies `arriving` to the build already serving its sequence, held at `index`.
+    /// Applies `arriving` to the build already held for its sequence.
     fn resolve(&mut self, index: usize, arriving: &Arriving, events: &mut Vec<IngestEvent>) {
         match arriving
             .built_at_ns
             .cmp(&self.entries[index].built_at_ns)
         {
-            Ordering::Greater => self.supersede(index, arriving, events),
+            Ordering::Greater => {
+                self.entries[index] = arriving.retained();
+                events.push(IngestEvent::Restamped);
+            }
             Ordering::Less => events.push(IngestEvent::OlderBuild),
-            Ordering::Equal => self.replay(index, arriving, events),
+            Ordering::Equal => {
+                let same = self.entries[index]
+                    .snapshot
+                    .same_simulated_state(&arriving.snapshot);
+                events.push(if same {
+                    IngestEvent::Replayed
+                } else {
+                    // Keep what is held. Measured, the second sighting of one build is a narrower
+                    // slice of it — fewer accounts — so the first is the wider state to simulate
+                    // on. Nothing is refused: a snapshot that does not describe the venue makes
+                    // the consumer's own `eth_call` revert, which is visible to them, whereas
+                    // refusing both would silently cost a check.
+                    IngestEvent::ReissuedWithDifferentAccounts
+                });
+            }
         }
     }
-
-    /// Replaces the build serving a sequence with the strictly newer one that arrived.
-    ///
-    /// The superseded build is dropped outright: its deadline is a function of its own stamp, so
-    /// keeping a record of it would refuse a re-send that computes exactly the same deadline.
-    fn supersede(&mut self, index: usize, arriving: &Arriving, events: &mut Vec<IngestEvent>) {
-        self.entries[index] = arriving.retained();
-        events.push(IngestEvent::Restamped);
-    }
-
-    /// Applies a build arriving under the stamp of the one serving its sequence.
-    ///
-    /// Only the identical envelope is a repeat, and it changes nothing — its deadline included.
-    /// Anything else is two payloads claiming to be one build, and which of them the venue was
-    /// priced on is unknowable from the stream, so the build is refused rather than one of them
-    /// picked.
-    fn replay(&mut self, index: usize, arriving: &Arriving, events: &mut Vec<IngestEvent>) {
-        let retained = &mut self.entries[index];
-        let replayed = match &retained.content {
-            Content::Snapshot(snapshot) => snapshot.same_simulated_state(&arriving.snapshot),
-            // Unreachable: `active` names the build serving the sequence, which holds a payload,
-            // and a contradicted build is refused before this. Refusing is the answer either way.
-            Content::Contradicted => false,
-        };
-        if replayed {
-            events.push(IngestEvent::Replayed);
-        } else {
-            retained.content = Content::Contradicted;
-            events.push(IngestEvent::ConflictPoisoned);
-        }
-    }
-}
-
-/// What admitting one more record under a key at its depth would cost.
-enum Room {
-    /// The key holds fewer records than its depth.
-    Free,
-    /// The key is full, and this is the oldest snapshot it could drop to make room.
-    Displacing(usize),
-    /// Every record the key holds is a live contradiction record, so nothing more is admitted
-    /// until one of them expires.
-    Saturated,
 }
 
 /// The validated snapshots of the override socket, held until a ladder names one.
@@ -585,15 +423,13 @@ enum Room {
 #[derive(Default)]
 pub(super) struct OverrideBuffer {
     keys: BTreeMap<PairKey, KeyHistory>,
-    /// The key the next rotating sweep resumes at; `None` restarts the rotation.
-    sweep_cursor: Option<PairKey>,
     /// Counts ingests, so a key eviction can order keys by when traffic last named them.
     ingests: u64,
 }
 
 impl OverrideBuffer {
-    /// Admits every validated venue entry of one frame, each under the venue key the caller gives
-    /// it, and returns what the frame did in the order it named its entries.
+    /// Admits every validated venue entry of one message, each under the venue key the caller
+    /// gives it, and returns what the message did in the order it named its entries.
     ///
     /// The caller canonicalizes the venue: the buffer indexes a snapshot under exactly the key it
     /// is handed, so a venue streamed under an alias is joined to its ladders only if both sides
@@ -605,37 +441,23 @@ impl OverrideBuffer {
     ) -> Vec<IngestEvent> {
         let mut events = Vec::new();
         self.ingests = self.ingests.saturating_add(1);
-        self.sweep_rotating_share(now, &mut events);
-        for (index, (venue, entry)) in entries.into_iter().enumerate() {
-            // One event for the frame, not one per entry past the cap: the function that bounds
-            // what a frame can make this process hold bounds what it says about it too.
-            if index >= MAX_FRAME_ENTRIES {
-                events.push(IngestEvent::RejectedFrameEntryCap);
-                break;
-            }
+        for (venue, entry) in entries {
             self.ingest_entry(&venue, &entry, now, &mut events);
         }
         events
     }
 
-    /// The newest-built snapshot the buffer holds for `sequence` on `venue`'s pair that still
-    /// describes `block`, or why it holds none.
+    /// The newest-built snapshot the buffer holds for `sequence` on `venue`'s pair, or why it
+    /// holds none.
     ///
-    /// Both bounds are judged here, independently of any sweep: a snapshot whose block has been
-    /// built, or whose deadline has passed, is never returned, however long it has been since an
-    /// ingest last visited its key. The block bound is the one that matters — a quiet venue
-    /// repeats one ladder for minutes, so the sequence keeps matching long after the snapshot
-    /// describes anything — and it is the reason a lookup takes the block it is quoting for.
-    ///
-    /// A contradiction record is reported only while nothing else serves the sequence: a newer
-    /// build supersedes it as the served value without erasing it.
+    /// Expiry is judged here, independently of any sweep: a snapshot past its deadline is never
+    /// returned, however long it has been since an ingest last visited its key.
     pub(super) fn matched(
         &self,
         venue: &Bytes,
         token_a: &Bytes,
         token_b: &Bytes,
         sequence: u128,
-        block: u64,
         now: Now,
     ) -> MatchResult {
         let Some(history) = self
@@ -645,7 +467,6 @@ impl OverrideBuffer {
             return MatchResult::Missing;
         };
         let mut newest: Option<(u64, &Arc<PammSimulationOverrides>)> = None;
-        let mut contradicted = false;
         let mut expired = false;
         for retained in &history.entries {
             if retained.sequence != sequence {
@@ -655,31 +476,22 @@ impl OverrideBuffer {
                 expired = true;
                 continue;
             }
-            match &retained.content {
-                Content::Contradicted => contradicted = true,
-                Content::Snapshot(snapshot) => {
-                    if !snapshot.covers(block) {
-                        expired = true;
-                        continue;
-                    }
-                    if newest.is_none_or(|(built_at_ns, _)| built_at_ns < retained.built_at_ns) {
-                        newest = Some((retained.built_at_ns, snapshot));
-                    }
-                }
+            if newest.is_none_or(|(built_at_ns, _)| built_at_ns < retained.built_at_ns) {
+                newest = Some((retained.built_at_ns, &retained.snapshot));
             }
         }
-        match (newest, contradicted, expired) {
-            (Some((_, snapshot)), _, _) => MatchResult::Matched(snapshot.clone()),
-            (None, true, _) => MatchResult::Poisoned,
-            (None, false, true) => MatchResult::Expired,
-            (None, false, false) => MatchResult::Missing,
+        match (newest, expired) {
+            (Some((_, snapshot)), _) => MatchResult::Matched(snapshot.clone()),
+            (None, true) => MatchResult::Expired,
+            (None, false) => MatchResult::Missing,
         }
     }
 
     /// Admits one validated venue entry: one snapshot, shared by every pair the entry priced.
     ///
-    /// The entry's stamp decides its lifetime once, before any pair of it is indexed, so a frame
-    /// cannot leave one pair of a venue holding a snapshot another pair of the same venue refused.
+    /// The entry's stamp decides its lifetime once, before any pair of it is indexed, so one
+    /// message cannot leave one pair of a venue holding a snapshot another pair of the same venue
+    /// refused.
     fn ingest_entry(
         &mut self,
         venue: &Bytes,
@@ -699,12 +511,7 @@ impl OverrideBuffer {
             }
         };
         let snapshot = Arc::new(entry.snapshot(expires_at));
-        for (index, pair) in entry.pairs.iter().enumerate() {
-            // One event for the entry, as the frame cap does for the frame.
-            if index >= MAX_ENTRY_PAIRS {
-                events.push(IngestEvent::RejectedEntryPairCap);
-                break;
-            }
+        for pair in &entry.pairs {
             if pair.token_1 == pair.token_2 {
                 events.push(IngestEvent::DegeneratePair);
                 continue;
@@ -735,75 +542,25 @@ impl OverrideBuffer {
             return;
         }
         if self.keys.len() >= MAX_KEYS {
-            let Some(victim) = self.evictable_key(now) else {
-                events.push(IngestEvent::RejectedKeysExhausted);
-                return;
-            };
-            self.keys.remove(&victim);
-            events.push(IngestEvent::EvictedKey);
+            if let Some(victim) = self.evictable_key() {
+                self.keys.remove(&victim);
+                events.push(IngestEvent::EvictedKey);
+            }
         }
         self.keys
             .entry(key)
             .or_insert_with(|| KeyHistory::new(ingest))
             .apply(arriving, now, events);
+        let _ = now;
     }
 
-    /// The key traffic named longest ago that is protecting no contradiction record, or `None`
-    /// when every key it holds is.
-    ///
-    /// Such a key is never evicted: the record has to outlive the window in which the build it
-    /// refuses could still be admitted, or a re-send of that build would pass as if nothing had
-    /// contradicted it. That window ends one slot after the build's stamp, so a buffer that
-    /// refuses new keys frees itself without help. Scanning every key is affordable because it
-    /// happens only once the buffer is full.
-    fn evictable_key(&self, now: Now) -> Option<PairKey> {
+    /// The key traffic named longest ago. Scanning every key is affordable because it happens only
+    /// once the buffer is full, which the 2026-10 recording never came within 21× of.
+    fn evictable_key(&self) -> Option<PairKey> {
         self.keys
             .iter()
-            .filter(|(_, history)| !history.holds_contradiction(now))
             .min_by_key(|(_, history)| history.last_ingest)
             .map(|(key, _)| key.clone())
-    }
-
-    /// Sweeps expired builds from the keys the cursor is at, and drops the keys left holding
-    /// nothing.
-    ///
-    /// Traffic decides which keys an ingest touches and a lookup may never come, so without this
-    /// rotation a pair that stops being streamed would hold its last build until its key was
-    /// evicted. The cursor moves on by the share swept, so every key is visited within a full
-    /// rotation however the traffic is distributed.
-    fn sweep_rotating_share(&mut self, now: Now, events: &mut Vec<IngestEvent>) {
-        let mut visiting: Vec<PairKey> = match &self.sweep_cursor {
-            Some(cursor) => self
-                .keys
-                .range(cursor.clone()..)
-                .take(SWEEP_SHARE + 1)
-                .map(|(key, _)| key.clone())
-                .collect(),
-            None => self
-                .keys
-                .keys()
-                .take(SWEEP_SHARE + 1)
-                .cloned()
-                .collect(),
-        };
-        // The one key past the share becomes where the next ingest resumes rather than being
-        // swept now; a shorter run means the rotation reached the end and starts over.
-        self.sweep_cursor = (visiting.len() > SWEEP_SHARE)
-            .then(|| visiting.pop())
-            .flatten();
-        for key in visiting {
-            self.sweep_key(&key, now, events);
-        }
-    }
-
-    fn sweep_key(&mut self, key: &PairKey, now: Now, events: &mut Vec<IngestEvent>) {
-        let Some(history) = self.keys.get_mut(key) else {
-            return;
-        };
-        history.sweep(now, events);
-        if history.entries.is_empty() {
-            self.keys.remove(key);
-        }
     }
 
     /// How many `(venue, pair)` keys the buffer holds.
@@ -812,7 +569,7 @@ impl OverrideBuffer {
         self.keys.len()
     }
 
-    /// How many builds the buffer holds across every key, poison records included.
+    /// How many snapshots the buffer holds across every key.
     #[cfg(test)]
     fn retained_entries(&self) -> usize {
         self.keys
@@ -884,12 +641,11 @@ pub(super) fn test_overrides() -> PammSimulationOverrides {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
 
     use super::{
         super::{
             test_support::{address, USDC, USDT, WBTC, WETH},
-            titan::{validate, BlockTimestamp, EntryOutcome, EntryRejection, PairVersion},
+            titan::{validate, EntryOutcome, EntryRejection, PairVersion},
         },
         captured::{BALANCE_1, SLOT_1, STORAGE_ACCOUNT, WORD_1},
         *,
@@ -907,8 +663,6 @@ mod tests {
     const TAURUSFI: &str = "0x3ce2672aa806138585920421406bf0decb8130cb";
     const NVDAX: &str = "0xc845b2894dbddd03858fd2d643b4ef725fe0849d";
     const NVDAX_USDC_SEQUENCE: u128 = 283_851_543_383_726_791_766_048_793;
-    const WETH_USDC_SEQUENCE: u128 = 283_851_543_383_726_791_766_048_835;
-
     /// The captured venue whose entry [`test_overrides`] transcribes, and the sequence it priced
     /// its one pair at.
     const GOLIATH: &str = "0x4367985a63063fc970b009c6e599e9225181f551";
@@ -926,11 +680,6 @@ mod tests {
     /// The second the captured snapshot expires at when it is admitted at the instant it was
     /// built: one slot later, as [`test_overrides`] transcribes it.
     const TAURUSFI_EXPIRES_AT: u64 = 1_792_115_932;
-
-    /// The block a lookup is quoting for, unless a case names its own: the block every entry
-    /// [`entry`] builds is simulated for. A snapshot covers it, so each case exercises whatever
-    /// else it is about; the cases that move it are the block-bound ones.
-    const QUOTED_BLOCK: u64 = 26_148_760;
 
     /// A clock whose wall and monotonic readings advance together, based at the nanosecond the
     /// captured Goliath entry was built.
@@ -964,11 +713,6 @@ mod tests {
         u64::try_from(elapsed.as_nanos()).expect("a test duration fits a u64 of nanoseconds")
     }
 
-    /// The stamp of a build Titan built `seconds` after the test clock's base.
-    fn stamped(seconds: u64) -> u64 {
-        BASE_WALL_NANOS + seconds * NANOS_PER_SECOND
-    }
-
     /// The clock reading `seconds` after its base, which is what the fence cases count in: a
     /// build stamped at `stamped(6)` and admitted at `at(&clock, 0)` is served until
     /// `at(&clock, 12)` and may not be re-admitted before `at(&clock, 18)`.
@@ -989,15 +733,6 @@ mod tests {
                 EntryOutcome::Rejected(EntryRejection::NoData) => None,
                 EntryOutcome::Rejected(reason) => panic!("rejected a captured entry: {reason:?}"),
             })
-            .collect()
-    }
-
-    /// The captured entries restamped as if Titan had built them at `built_at_ns`, which is how
-    /// one capture stands in for a stream that keeps re-pricing the same pairs.
-    fn restamped(built_at_ns: u64) -> Vec<(Bytes, VenueOverrides)> {
-        captured_entries()
-            .into_iter()
-            .map(|(venue, entry)| (venue, VenueOverrides { built_at_ns, ..entry }))
             .collect()
     }
 
@@ -1036,7 +771,7 @@ mod tests {
                     },
                 )]),
                 block_number: Some(26_148_760),
-                block_timestamp: BlockTimestamp::Derived(1_791_475_499),
+                block_timestamp: Some(1_791_475_499),
                 built_at_ns,
             },
         )
@@ -1049,27 +784,13 @@ mod tests {
 
     /// What the buffer holds for the synthetic TaurusFi pair at `sequence`.
     fn lookup(buffer: &OverrideBuffer, sequence: u128, now: Now) -> MatchResult {
-        buffer.matched(
-            &address(TAURUSFI),
-            &address(NVDAX),
-            &address(USDC),
-            sequence,
-            QUOTED_BLOCK,
-            now,
-        )
+        buffer.matched(&address(TAURUSFI), &address(NVDAX), &address(USDC), sequence, now)
     }
 
     /// What the buffer holds for the captured Goliath entry's one pair, whose snapshot
     /// [`test_overrides`] transcribes.
     fn captured_lookup(buffer: &OverrideBuffer, now: Now) -> MatchResult {
-        buffer.matched(
-            &address(GOLIATH),
-            &address(WETH),
-            &address(USDC),
-            GOLIATH_SEQUENCE,
-            QUOTED_BLOCK,
-            now,
-        )
+        buffer.matched(&address(GOLIATH), &address(WETH), &address(USDC), GOLIATH_SEQUENCE, now)
     }
 
     /// The nonce the matched snapshot overrode: which build of a pair the buffer is serving.
@@ -1082,10 +803,9 @@ mod tests {
                 .expect("an overridden account")
                 .nonce
                 .expect("an overridden nonce"),
-            MatchResult::Missing |
-            MatchResult::Ambiguous |
-            MatchResult::Expired |
-            MatchResult::Poisoned => panic!("no snapshot matched: {result:?}"),
+            MatchResult::Missing | MatchResult::Expired => {
+                panic!("no snapshot matched: {result:?}")
+            }
         }
     }
 
@@ -1094,141 +814,9 @@ mod tests {
     fn matched_deadline(result: &MatchResult) -> u64 {
         match result {
             MatchResult::Matched(snapshot) => snapshot.expires_at,
-            MatchResult::Missing |
-            MatchResult::Ambiguous |
-            MatchResult::Expired |
-            MatchResult::Poisoned => panic!("no snapshot matched: {result:?}"),
-        }
-    }
-
-    fn counted(events: &[IngestEvent], event: IngestEvent) -> usize {
-        events
-            .iter()
-            .filter(|recorded| **recorded == event)
-            .count()
-    }
-
-    /// The retention rules, walked as one sequence on one `(venue, pair)` key: an exact hit; an
-    /// identical replay that changes nothing; a newer build that replaces; an older build that
-    /// never replaces; a payload contradicting a retained build, which poisons that build; a
-    /// newer build superseding the poisoned one as the served value; that newer build evicted
-    /// under depth pressure — after which the poisoned build is still refused, because a poison
-    /// record outlives both the build that superseded it and the pressure that dropped it.
-    ///
-    /// Every build here is stamped before the clock that admits it, which is the lifecycle of
-    /// ordinary traffic: Titan's stamps were observed at least 120 ms behind the local clock. A
-    /// build stamped ahead of that clock takes the same path, because its deadline comes from its
-    /// stamp either way; [`a_trailing_clock_does_not_lock_the_buffer`] pins that.
-    #[test]
-    fn the_retention_state_machine() {
-        let clock = Clock::new();
-        let now = clock.after(Duration::from_secs(1));
-        let mut buffer = OverrideBuffer::default();
-        let (first, newer, newest) = (BASE_WALL_NANOS, BASE_WALL_NANOS + 1, BASE_WALL_NANOS + 2);
-
-        assert_eq!(
-            buffer.ingest([taurusfi(first, 1, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::Admitted]
-        );
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 1);
-
-        assert_eq!(
-            buffer.ingest([taurusfi(first, 1, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::Replayed]
-        );
-        assert_eq!(
-            buffer.ingest([taurusfi(newer, 2, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::Restamped]
-        );
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 2);
-        assert_eq!(
-            buffer.ingest([taurusfi(first, 1, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::OlderBuild]
-        );
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 2);
-
-        // Two payloads claiming to be one build: which state the venue was priced on is
-        // unknowable, so that build is refused for the rest of its lifetime.
-        assert_eq!(
-            buffer.ingest([taurusfi(newer, 3, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::ConflictPoisoned]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Poisoned);
-
-        // A strictly newer build is admitted and served, without erasing the poison record.
-        assert_eq!(
-            buffer.ingest([taurusfi(newest, 4, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::Admitted]
-        );
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 4);
-        assert_eq!(
-            buffer.ingest([taurusfi(newer, 2, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::RejectedContradicted]
-        );
-
-        // Six more pair versions fill the key's depth; the seventh evicts the oldest build that
-        // is not pinned poison, which is the build serving the poisoned sequence.
-        for filler in 0..6 {
-            assert_eq!(
-                buffer.ingest(
-                    [taurusfi(
-                        newest + 1 + filler,
-                        5,
-                        NVDAX_USDC_SEQUENCE + 1 + u128::from(filler)
-                    )],
-                    now
-                ),
-                vec![IngestEvent::Admitted]
-            );
-        }
-        assert_eq!(
-            buffer.ingest([taurusfi(newest + 7, 5, NVDAX_USDC_SEQUENCE + 7)], now),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Poisoned);
-        assert_eq!(
-            buffer.ingest([taurusfi(newer, 2, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::RejectedContradicted]
-        );
-
-        // A build older than the contradicted one is not the evidence that resolves it. Admitting
-        // it would make poisoning a pair version serve *more* than leaving it healthy does: the
-        // same stamp against a healthy newer build is the no-op asserted above, so the mechanism
-        // whose whole purpose is to fail closed would widen what this key serves.
-        assert_eq!(
-            buffer.ingest([taurusfi(first, 3, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::RejectedContradicted]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Poisoned);
-    }
-
-    /// The buffer answers with every variant of [`MatchResult`] but `Ambiguous`: its key is
-    /// exact and it serves one build per sequence, so no lookup of it is answered by two
-    /// snapshots. `Ambiguous` is part of the same vocabulary because the caller joining ladders
-    /// to snapshots reports its own outcomes through it — a book it cannot attribute to one pair
-    /// is ambiguous about which snapshot priced it — and that caller is what synthesizes it.
-    #[test]
-    fn the_buffer_never_answers_ambiguously() {
-        let clock = Clock::new();
-        let now = clock.after(Duration::ZERO);
-        let mut buffer = OverrideBuffer::default();
-        buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], now);
-        buffer.ingest([taurusfi(BASE_WALL_NANOS, 2, NVDAX_USDC_SEQUENCE)], now);
-        buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, WETH_USDC_SEQUENCE)], now);
-
-        let answers = [
-            lookup(&buffer, WETH_USDC_SEQUENCE, now),
-            lookup(&buffer, NVDAX_USDC_SEQUENCE, now),
-            lookup(&buffer, NVDAX_USDC_SEQUENCE + 99, now),
-            lookup(&buffer, WETH_USDC_SEQUENCE, clock.after(SLOT)),
-        ];
-        assert_eq!(matched_nonce(&answers[0]), 1);
-        assert_eq!(answers[1], MatchResult::Poisoned);
-        assert_eq!(answers[2], MatchResult::Missing);
-        assert_eq!(answers[3], MatchResult::Expired);
-        for answer in &answers {
-            assert_ne!(*answer, MatchResult::Ambiguous);
+            MatchResult::Missing | MatchResult::Expired => {
+                panic!("no snapshot matched: {result:?}")
+            }
         }
     }
 
@@ -1246,10 +834,9 @@ mod tests {
         let snapshot = captured_lookup(&buffer, now);
         match &snapshot {
             MatchResult::Matched(overrides) => assert_eq!(**overrides, test_overrides()),
-            MatchResult::Missing |
-            MatchResult::Ambiguous |
-            MatchResult::Expired |
-            MatchResult::Poisoned => panic!("the captured snapshot is not served: {snapshot:?}"),
+            MatchResult::Missing | MatchResult::Expired => {
+                panic!("the captured snapshot is not served: {snapshot:?}")
+            }
         }
         assert_eq!(
             buffer.matched(
@@ -1257,7 +844,6 @@ mod tests {
                 &address(USDC),
                 &address(WETH),
                 GOLIATH_SEQUENCE,
-                QUOTED_BLOCK,
                 now
             ),
             snapshot,
@@ -1272,7 +858,6 @@ mod tests {
                 &address(WBTC),
                 &address(USDT),
                 BATCHED_SEQUENCE,
-                QUOTED_BLOCK,
                 now
             ),
             MatchResult::Missing,
@@ -1285,7 +870,6 @@ mod tests {
                 &address(WETH),
                 &address(USDC),
                 BATCHED_SEQUENCE,
-                QUOTED_BLOCK,
                 now
             ),
             MatchResult::Missing,
@@ -1309,10 +893,9 @@ mod tests {
             MatchResult::Matched(overrides) => {
                 assert_eq!(overrides.expires_at, TAURUSFI_EXPIRES_AT);
             }
-            MatchResult::Missing |
-            MatchResult::Ambiguous |
-            MatchResult::Expired |
-            MatchResult::Poisoned => panic!("expired before its deadline: {matched:?}"),
+            MatchResult::Missing | MatchResult::Expired => {
+                panic!("expired before its deadline: {matched:?}")
+            }
         }
         assert_eq!(captured_lookup(&buffer, clock.after(SLOT)), MatchResult::Expired);
     }
@@ -1356,12 +939,62 @@ mod tests {
             MatchResult::Expired
         );
     }
-
-    /// A stamp near the end of the clock's range is admitted on arithmetic that does not wrap.
+    /// The depth bound is a ceiling, and a build dropped by it returns on the deadline it always
+    /// had.
     ///
-    /// The exported second is floored from a deadline that can pass `u64::MAX` by up to one slot,
-    /// which is why it is computed wide; the record's own deadline is a monotonic instant, so no
-    /// wall-clock magnitude takes part in deciding when a build stops serving.
+    /// Three properties in one walk, because they share a setup. A key admits up to
+    /// [`MAX_KEY_DEPTH`] sequences without displacing anything — the bound is memory protection,
+    /// not a working limit. Past it, the oldest build goes. A dropped build re-admitted later gets
+    /// one slot from its own stamp, not from the re-admission, so the buffer needs to remember
+    /// nothing about what it dropped.
+    #[test]
+    fn the_depth_bound_is_a_ceiling_and_a_dropped_build_keeps_its_deadline() {
+        let clock = Clock::new();
+        let now = at(&clock, 0);
+        let mut buffer = OverrideBuffer::default();
+
+        for sequence in 0..MAX_KEY_DEPTH as u128 {
+            assert_eq!(
+                buffer.ingest(
+                    [taurusfi(
+                        BASE_WALL_NANOS + sequence as u64,
+                        1,
+                        NVDAX_USDC_SEQUENCE + sequence
+                    )],
+                    now
+                ),
+                vec![IngestEvent::Admitted],
+                "sequence {sequence} should not displace anything below the depth bound"
+            );
+        }
+        assert_eq!(buffer.retained_entries(), MAX_KEY_DEPTH);
+
+        // One past the bound displaces the oldest-built entry, which is the first one admitted.
+        let past = MAX_KEY_DEPTH as u64;
+        assert_eq!(
+            buffer.ingest(
+                [taurusfi(BASE_WALL_NANOS + past, 1, NVDAX_USDC_SEQUENCE + u128::from(past))],
+                now
+            ),
+            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
+        );
+        assert_eq!(buffer.retained_entries(), MAX_KEY_DEPTH);
+        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Missing);
+
+        // The displaced build, re-admitted a second later, carries the deadline it always had.
+        assert_eq!(
+            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 1)),
+            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
+        );
+        assert_eq!(
+            matched_deadline(&lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 1))),
+            exported_second(BASE_WALL_NANOS)
+        );
+    }
+
+    /// A stamp near the end of the clock's range is admitted on arithmetic that does not wrap. The
+    /// exported second is floored from a deadline that can pass `u64::MAX` by up to one slot,
+    /// which is why it is computed wide.
     #[test]
     fn a_stamp_near_the_end_of_the_clock_does_not_wrap() {
         let near_the_end = Clock::based_at(u64::MAX - nanos(SLOT) / 2);
@@ -1377,257 +1010,35 @@ mod tests {
             18_446_744_079,
             "the second a deadline six seconds past u64::MAX falls in"
         );
-
-        // The same at a clock far from the end, for a stamp inside the skew allowance: the
-        // lifetime runs from the stamp, so a repeat changes nothing and the sweep retires it one
-        // slot past the stamp rather than one past any admission of it.
-        let clock = Clock::based_at(u64::MAX - 30 * NANOS_PER_SECOND);
-        let mut buffer = OverrideBuffer::default();
-        let built_ahead = clock.after(Duration::ZERO).wall_nanos + NANOS_PER_SECOND;
-        assert_eq!(
-            buffer.ingest([taurusfi(built_ahead, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 0)),
-            vec![IngestEvent::Admitted]
-        );
-        assert_eq!(
-            buffer.ingest([taurusfi(built_ahead, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 6)),
-            vec![IngestEvent::Replayed]
-        );
-        assert_eq!(
-            buffer.ingest([taurusfi(built_ahead, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 13)),
-            vec![IngestEvent::SweptExpired, IngestEvent::RejectedExpired]
-        );
     }
 
-    /// Depth pressure drops the oldest-built snapshot, whichever admission put it there.
+    /// A snapshot stamped further ahead of the admitting clock than one slot is refused. One
+    /// inside the allowance is admitted, and lives until one slot past its own stamp.
     ///
-    /// Every record a key holds is droppable, because a deadline is a function of its build's own
-    /// stamp: re-admitting what was dropped computes the same deadline, so there is nothing a
-    /// re-send could gain by the drop and nothing to hold in its place. Only a contradiction
-    /// record is exempt, and that case is its own test.
-    #[test]
-    fn depth_pressure_drops_the_oldest_build() {
-        let clock = Clock::new();
-        let mut buffer = OverrideBuffer::default();
-
-        // Eight builds of one pair, stamped a second apart, admitted newest-first so that stream
-        // order cannot stand in for build order.
-        for stamp in (1..9u64).rev() {
-            assert_eq!(
-                buffer.ingest(
-                    [taurusfi(stamped(stamp), 1, NVDAX_USDC_SEQUENCE + u128::from(stamp))],
-                    at(&clock, 9)
-                ),
-                vec![IngestEvent::Admitted]
-            );
-        }
-        assert_eq!(buffer.retained_entries(), 8);
-
-        // The ninth displaces the oldest build, which is the first one admitted and the last one
-        // received.
-        assert_eq!(
-            buffer.ingest([taurusfi(stamped(9), 1, NVDAX_USDC_SEQUENCE + 9)], at(&clock, 9)),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE + 1, at(&clock, 9)), MatchResult::Missing);
-        for stamp in 2..10u128 {
-            assert_eq!(
-                matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE + stamp, at(&clock, 9))),
-                1
-            );
-        }
-
-        // The displaced build is admitted again on the deadline it always had: one slot from its
-        // own stamp, which the eviction did not move.
-        assert_eq!(
-            buffer.ingest([taurusfi(stamped(1), 1, NVDAX_USDC_SEQUENCE + 1)], at(&clock, 10)),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-        assert_eq!(
-            matched_deadline(&lookup(&buffer, NVDAX_USDC_SEQUENCE + 1, at(&clock, 10))),
-            exported_second(stamped(1)),
-        );
-    }
-
-    /// A contradicted build is pinned until its own deadline, and no further.
-    ///
-    /// The record has to outlive the window in which the payload it contradicts could still be
-    /// admitted, and that window closes at the build's deadline: past it [`validity`] turns the
-    /// build away as `Elapsed` without consulting anything the buffer remembers. So the pin needs
-    /// no separate bound, and the sweep that retires an ordinary build retires this record too.
-    #[test]
-    fn a_contradicted_build_stays_pinned_to_its_deadline() {
-        let clock = Clock::new();
-        let mut buffer = OverrideBuffer::default();
-
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 0)),
-            vec![IngestEvent::Admitted]
-        );
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 2, NVDAX_USDC_SEQUENCE)], at(&clock, 0)),
-            vec![IngestEvent::ConflictPoisoned]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 0)), MatchResult::Poisoned);
-
-        // Inside the window: the record refuses the payload it contradicts, and the builds that
-        // predate the contradiction and so cannot settle it.
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 11)),
-            vec![IngestEvent::RejectedContradicted]
-        );
-        assert_eq!(
-            buffer.ingest(
-                [taurusfi(BASE_WALL_NANOS - NANOS_PER_SECOND, 1, NVDAX_USDC_SEQUENCE)],
-                at(&clock, 5)
-            ),
-            vec![IngestEvent::RejectedContradicted]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 11)), MatchResult::Poisoned);
-
-        // At the deadline the record goes, and arithmetic alone turns the same build away.
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 12)),
-            vec![IngestEvent::SweptExpired, IngestEvent::RejectedExpired]
-        );
-        assert_eq!(buffer.retained_keys(), 0);
-    }
-
-    /// Every removal forgets a build whole, because every admission of it computes the same
-    /// deadline: a re-send has nothing to gain by the removal, so nothing has to be remembered.
-    #[test]
-    fn a_removal_leaves_nothing_behind() {
-        let clock = Clock::new();
-        let mut buffer = OverrideBuffer::default();
-
-        for sequence in 0..8u128 {
-            assert_eq!(
-                buffer.ingest(
-                    [taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE + sequence)],
-                    at(&clock, 0)
-                ),
-                vec![IngestEvent::Admitted]
-            );
-        }
-
-        // Depth pressure drops the oldest build whole, and the identical envelope is admitted
-        // again — on the deadline it always had, one slot from the stamp rather than one from
-        // this admission.
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE + 8)], at(&clock, 0)),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 0)), MatchResult::Missing);
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 1)),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-        assert_eq!(
-            matched_nonce(&lookup(
-                &buffer,
-                NVDAX_USDC_SEQUENCE,
-                clock.after(SLOT - Duration::from_nanos(1))
-            )),
-            1
-        );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 12)), MatchResult::Expired);
-
-        // Expiry leaves nothing either: every record goes at its deadline, and the key with the
-        // last of them.
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], at(&clock, 12)),
-            [vec![IngestEvent::SweptExpired; 8], vec![IngestEvent::RejectedExpired]].concat()
-        );
-        assert_eq!(buffer.retained_keys(), 0);
-    }
-
-    /// The exported deadline is the second the build's own deadline falls in, and a removal and
-    /// re-admission between two whole seconds does not move it.
-    ///
-    /// The monotonic deadline of a build stamped in the past is already admission-invariant: it
-    /// is one slot from the stamp, whenever the build is admitted. The exported second was not,
-    /// because flooring the admitting clock and the remaining lifetime separately loses up to a
-    /// second of each: a build stamped 0.6 s into a second and admitted 0.1 s later exported the
-    /// second before the one its deadline falls in, and the identical envelope re-admitted after
-    /// an eviction exported that later one — a second of exported lifetime an admission bought,
-    /// which is what the fixed-deadline promise denies. Flooring the deadline itself, once, is
-    /// what makes the two agree.
-    #[test]
-    fn the_exported_deadline_survives_a_removal_and_a_replay() {
-        const WHOLE_SECOND: u64 = 1_791_475_494;
-        let clock = Clock::based_at(WHOLE_SECOND * NANOS_PER_SECOND);
-        let mut buffer = OverrideBuffer::default();
-        let built = WHOLE_SECOND * NANOS_PER_SECOND + 600_000_000;
-        let admitted = clock.after(Duration::from_millis(700));
-
-        assert_eq!(
-            buffer.ingest([taurusfi(built, 1, NVDAX_USDC_SEQUENCE)], admitted),
-            vec![IngestEvent::Admitted]
-        );
-        let first = matched_deadline(&lookup(&buffer, NVDAX_USDC_SEQUENCE, admitted));
-        assert_eq!(
-            first,
-            WHOLE_SECOND + 12,
-            "the second the build's deadline — one slot from its 0.6 s stamp — falls in"
-        );
-
-        // Eight later builds of the same key, each its own pair version, displace this one: an
-        // ordinary past-stamped record, which the key forgets whole.
-        let pressure = at(&clock, 11);
-        for sequence in 1..9u128 {
-            buffer.ingest(
-                [taurusfi(
-                    WHOLE_SECOND * NANOS_PER_SECOND + sequence as u64 * NANOS_PER_SECOND,
-                    1,
-                    NVDAX_USDC_SEQUENCE + sequence,
-                )],
-                pressure,
-            );
-        }
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, pressure), MatchResult::Missing);
-
-        // The identical envelope, re-admitted 200 ms later and inside its slot: the same build,
-        // so the same exported second.
-        let replayed = clock.after(Duration::from_millis(11_200));
-        buffer.ingest([taurusfi(built, 1, NVDAX_USDC_SEQUENCE)], replayed);
-        assert_eq!(
-            matched_deadline(&lookup(&buffer, NVDAX_USDC_SEQUENCE, replayed)),
-            first,
-            "a removal and a re-admission moved the exported deadline"
-        );
-    }
-
-    /// A snapshot stamped further ahead of the admitting clock than [`MAX_BUILD_SKEW`] is refused.
-    /// One inside the allowance is admitted, and serves until one slot past its own stamp — which
-    /// is how the allowance bounds the extra lifetime a trailing clock can buy.
+    /// Measured over 71,762 entries, Titan's stamps were always behind this host's clock, by at
+    /// least 103 ms, so neither branch is expected to fire in normal operation. The allowance is
+    /// the same one the price level socket judges its own messages on.
     #[test]
     fn a_snapshot_stamped_too_far_ahead_is_refused() {
         let clock = Clock::new();
         let now = clock.after(Duration::ZERO);
         let mut buffer = OverrideBuffer::default();
 
-        let beyond = BASE_WALL_NANOS + nanos(MAX_BUILD_SKEW) + 1;
+        let beyond = BASE_WALL_NANOS + super::super::MAX_FUTURE_SKEW_NANOS + 1;
         assert_eq!(
             buffer.ingest([taurusfi(beyond, 1, NVDAX_USDC_SEQUENCE)], now),
             vec![IngestEvent::RejectedFutureSkew]
         );
         assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Missing);
 
-        let allowed = BASE_WALL_NANOS + nanos(MAX_BUILD_SKEW);
+        let allowed = BASE_WALL_NANOS + super::super::MAX_FUTURE_SKEW_NANOS;
         assert_eq!(
             buffer.ingest([taurusfi(allowed, 1, NVDAX_USDC_SEQUENCE)], now),
             vec![IngestEvent::Admitted]
         );
         assert_eq!(
-            matched_nonce(&lookup(
-                &buffer,
-                NVDAX_USDC_SEQUENCE,
-                clock.after(SLOT + MAX_BUILD_SKEW - Duration::from_nanos(1))
-            )),
-            1
-        );
-        assert_eq!(
-            lookup(&buffer, NVDAX_USDC_SEQUENCE, clock.after(SLOT + MAX_BUILD_SKEW)),
-            MatchResult::Expired
+            matched_deadline(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)),
+            exported_second(allowed)
         );
     }
 
@@ -1644,46 +1055,13 @@ mod tests {
         );
         assert_eq!(buffer.retained_keys(), 0);
     }
-
-    /// A snapshot is not served once the block it was simulated for has been built, even while its
-    /// deadline still has most of a slot to run.
+    /// An entry naming no block is served for the whole of its deadline.
     ///
-    /// This is the bound that matters, and the clock cannot stand in for it: the same lookup one
-    /// block later is refused at an instant where the time bound would still serve. The snapshot
-    /// stays held — it describes a block, and `Expired` says so — rather than being swept, because
-    /// the entry may still be the newest thing Titan has said about the pair.
+    /// Titan named a block on every one of 71,762 entries in the 2026-10 recording, so this is the
+    /// shape of a producer that stops doing so. The block is carried for the consumer, never read
+    /// here, so its absence changes nothing about what the buffer serves.
     #[test]
-    fn a_snapshot_whose_block_is_built_is_not_served() {
-        let clock = Clock::new();
-        let now = at(&clock, 1);
-        let mut buffer = OverrideBuffer::default();
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, NVDAX_USDC_SEQUENCE)], now),
-            vec![IngestEvent::Admitted]
-        );
-
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 1);
-        assert_eq!(
-            buffer.matched(
-                &address(TAURUSFI),
-                &address(NVDAX),
-                &address(USDC),
-                NVDAX_USDC_SEQUENCE,
-                QUOTED_BLOCK + 1,
-                now,
-            ),
-            MatchResult::Expired,
-            "a snapshot of the previous block was served for the block after it"
-        );
-        assert_eq!(buffer.retained_entries(), 1, "the snapshot was swept rather than held");
-    }
-
-    /// An entry naming no block falls back to its deadline, and is served for the whole of it.
-    ///
-    /// Titan named a block on every entry of both captures, so this is the shape of a producer
-    /// that stops doing so: the weaker bound alone, rather than nothing or everything.
-    #[test]
-    fn an_entry_naming_no_block_falls_back_to_its_deadline() {
+    fn an_entry_naming_no_block_is_served_for_its_whole_deadline() {
         let clock = Clock::new();
         let now = at(&clock, 0);
         let mut buffer = OverrideBuffer::default();
@@ -1691,20 +1069,11 @@ mod tests {
         unblocked.block_number = None;
 
         assert_eq!(buffer.ingest([(venue, unblocked)], now), vec![IngestEvent::Admitted]);
-        for block in [QUOTED_BLOCK, QUOTED_BLOCK + 1, QUOTED_BLOCK + 1_000] {
-            assert_eq!(
-                matched_nonce(&buffer.matched(
-                    &address(TAURUSFI),
-                    &address(NVDAX),
-                    &address(USDC),
-                    NVDAX_USDC_SEQUENCE,
-                    block,
-                    now,
-                )),
-                1,
-                "block {block}"
-            );
-        }
+        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE, now)), 1);
+        assert_ne!(
+            lookup(&buffer, NVDAX_USDC_SEQUENCE, clock.after(SLOT - Duration::from_nanos(1))),
+            MatchResult::Expired
+        );
         // Past the deadline it is held and unserved until an ingest sweeps it: a lookup judges
         // expiry itself and does not mutate the buffer.
         assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, at(&clock, 12)), MatchResult::Expired);
@@ -1738,7 +1107,6 @@ mod tests {
                 &address(USDC),
                 &address(USDC),
                 NVDAX_USDC_SEQUENCE,
-                QUOTED_BLOCK,
                 now
             ),
             MatchResult::Missing
@@ -1753,7 +1121,7 @@ mod tests {
         let now = clock.after(Duration::ZERO);
         let mut buffer = OverrideBuffer::default();
 
-        for index in 0..8 {
+        for index in 0..MAX_KEY_DEPTH as u64 {
             assert_eq!(
                 buffer.ingest(
                     [taurusfi(BASE_WALL_NANOS + index, 1, NVDAX_USDC_SEQUENCE + u128::from(index))],
@@ -1762,74 +1130,27 @@ mod tests {
                 vec![IngestEvent::Admitted]
             );
         }
-        assert_eq!(buffer.retained_entries(), 8);
+        assert_eq!(buffer.retained_entries(), MAX_KEY_DEPTH);
 
+        let past_depth = MAX_KEY_DEPTH as u64;
         assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS + 8, 1, NVDAX_USDC_SEQUENCE + 8)], now),
+            buffer.ingest(
+                [taurusfi(
+                    BASE_WALL_NANOS + past_depth,
+                    1,
+                    NVDAX_USDC_SEQUENCE + u128::from(past_depth)
+                )],
+                now
+            ),
             vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
         );
-        assert_eq!(buffer.retained_entries(), 8);
+        assert_eq!(buffer.retained_entries(), MAX_KEY_DEPTH);
         assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, now), MatchResult::Missing);
-        assert_ne!(lookup(&buffer, NVDAX_USDC_SEQUENCE + 8, now), MatchResult::Missing);
-    }
-
-    /// Poisons the key's whole depth: every one of its builds is contradicted while it is live.
-    ///
-    /// The eight builds are told apart by the pair version they priced, not by their stamp, so
-    /// they share one: eight builds of one stamp have one deadline, which is what lets a case
-    /// walk the whole depth past it in one step.
-    fn poison_every_build(buffer: &mut OverrideBuffer, now: Now) {
-        for index in 0..8u128 {
-            let sequence = NVDAX_USDC_SEQUENCE + index;
-            assert_eq!(
-                buffer.ingest([taurusfi(BASE_WALL_NANOS, 1, sequence)], now),
-                vec![IngestEvent::Admitted]
-            );
-            assert_eq!(
-                buffer.ingest([taurusfi(BASE_WALL_NANOS, 2, sequence)], now),
-                vec![IngestEvent::ConflictPoisoned]
-            );
-        }
-    }
-
-    /// Pinned poison saturating a key fails that key closed: admitting anything more would have
-    /// to drop a record that is still refusing a build, so nothing more is admitted until the
-    /// poison expires with the builds it refuses.
-    #[test]
-    fn a_key_saturated_by_poison_fails_closed() {
-        let clock = Clock::new();
-        let now = clock.after(Duration::ZERO);
-        let mut buffer = OverrideBuffer::default();
-        poison_every_build(&mut buffer, now);
-
-        assert_eq!(
-            buffer.ingest([taurusfi(BASE_WALL_NANOS + 8, 1, NVDAX_USDC_SEQUENCE + 8)], now),
-            vec![IngestEvent::RejectedKeySaturated]
+        assert_ne!(
+            lookup(&buffer, NVDAX_USDC_SEQUENCE + u128::from(past_depth), now),
+            MatchResult::Missing
         );
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE + 8, now), MatchResult::Missing);
-        assert_eq!(buffer.retained_entries(), 8);
     }
-
-    /// A poison record lives exactly as long as the build it refuses: once that build could not
-    /// be simulated anyway, the record is swept and the key is free again.
-    #[test]
-    fn poison_expires_with_the_build_it_refuses() {
-        let clock = Clock::new();
-        let mut buffer = OverrideBuffer::default();
-        poison_every_build(&mut buffer, clock.after(Duration::ZERO));
-
-        let after = clock.after(SLOT);
-        assert_eq!(lookup(&buffer, NVDAX_USDC_SEQUENCE, after), MatchResult::Expired);
-
-        let built_later = BASE_WALL_NANOS + nanos(SLOT);
-        assert_eq!(
-            buffer.ingest([taurusfi(built_later, 1, NVDAX_USDC_SEQUENCE + 8)], after),
-            [vec![IngestEvent::SweptExpired; 8], vec![IngestEvent::Admitted]].concat()
-        );
-        assert_eq!(buffer.retained_entries(), 1);
-        assert_eq!(matched_nonce(&lookup(&buffer, NVDAX_USDC_SEQUENCE + 8, after)), 1);
-    }
-
     /// Admits `count` keys of distinct synthetic venues, one ingest each, so that the venue of
     /// the lowest index is the one traffic named longest ago.
     fn fill_keys(buffer: &mut OverrideBuffer, count: usize, now: Now) {
@@ -1856,7 +1177,6 @@ mod tests {
             &address(NVDAX),
             &address(USDC),
             NVDAX_USDC_SEQUENCE,
-            QUOTED_BLOCK,
             now,
         )
     }
@@ -1889,196 +1209,6 @@ mod tests {
         assert_ne!(synthetic_lookup(&buffer, 1_023, now), MatchResult::Missing);
         assert_ne!(synthetic_lookup(&buffer, 1_024, now), MatchResult::Missing);
     }
-
-    /// A key holding live poison is not a candidate for eviction, so a buffer whose every key
-    /// holds poison refuses a new key rather than erasing a record that is still refusing a
-    /// build. Both windows are bounded by one slot.
-    #[test]
-    fn a_new_key_is_refused_while_every_key_holds_poison() {
-        let clock = Clock::new();
-        let now = clock.after(Duration::ZERO);
-        let mut buffer = OverrideBuffer::default();
-        for index in 0..1_024 {
-            let venue = synthetic_address(index);
-            let pairs = vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE)];
-            buffer.ingest([entry(&venue, BASE_WALL_NANOS, 1, pairs.clone())], now);
-            assert_eq!(
-                buffer.ingest([entry(&venue, BASE_WALL_NANOS, 2, pairs)], now),
-                vec![IngestEvent::ConflictPoisoned]
-            );
-        }
-
-        assert_eq!(
-            buffer.ingest(
-                [entry(
-                    &synthetic_address(1_024),
-                    BASE_WALL_NANOS,
-                    1,
-                    vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE)]
-                )],
-                now
-            ),
-            vec![IngestEvent::RejectedKeysExhausted]
-        );
-        assert_eq!(buffer.retained_keys(), 1_024);
-        assert_eq!(synthetic_lookup(&buffer, 1_024, now), MatchResult::Missing);
-        assert_eq!(synthetic_lookup(&buffer, 0, now), MatchResult::Poisoned);
-    }
-
-    /// A clock trailing Titan's costs the buffer nothing.
-    ///
-    /// Every build here is stamped ahead of the admission that takes it, which is what a host whose
-    /// clock runs behind Titan's sees for every entry. The deadline comes from the stamp, so such a
-    /// build is an ordinary one: it is evictable, the key cap keeps behaving as a cap, and a new
-    /// venue is admitted by displacing the key streamed longest ago. An earlier revision anchored
-    /// the deadline to the admission and kept a payload-less record to stop a re-send extending it,
-    /// which made every one of these keys unevictable and stopped the buffer admitting anything at
-    /// all until the records aged out.
-    #[test]
-    fn a_trailing_clock_does_not_lock_the_buffer() {
-        let clock = Clock::based_at(BASE_WALL_NANOS - NANOS_PER_SECOND / 2);
-        let admitted = at(&clock, 0);
-        let pairs = vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE)];
-        let mut buffer = OverrideBuffer::default();
-        fill_keys(&mut buffer, 1_024, admitted);
-        assert_eq!(buffer.retained_keys(), 1_024);
-
-        assert_eq!(
-            buffer.ingest(
-                [entry(&synthetic_address(1_024), BASE_WALL_NANOS, 1, pairs.clone())],
-                admitted
-            ),
-            vec![IngestEvent::EvictedKey, IngestEvent::Admitted]
-        );
-        assert_eq!(buffer.retained_keys(), 1_024);
-        assert_eq!(matched_nonce(&synthetic_lookup(&buffer, 1_024, admitted)), 1);
-
-        // And a new sequence of a key already at its depth displaces that key's oldest build,
-        // rather than being refused while eight unevictable records hold every place.
-        for sequence in 1..9u128 {
-            buffer.ingest(
-                [entry(
-                    &synthetic_address(1_024),
-                    BASE_WALL_NANOS + u64::try_from(sequence).unwrap(),
-                    1,
-                    vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE + sequence)],
-                )],
-                admitted,
-            );
-        }
-        assert_eq!(
-            buffer.ingest(
-                [entry(&synthetic_address(1_024), BASE_WALL_NANOS + 9, 1, pairs)],
-                admitted
-            ),
-            vec![IngestEvent::EvictedEntry, IngestEvent::Admitted]
-        );
-    }
-
-    /// One frame admits a bounded number of venue entries, and one venue entry a bounded number
-    /// of pairs: what a single frame can make this process retain is capped before anything in it
-    /// is trusted — and so is what the ingest *says* about it, one event per over-cap frame and
-    /// per over-cap entry rather than one per item dropped. Both cases name eight items past
-    /// their cap, so a per-item event would be counted eight times here.
-    #[test]
-    fn the_per_frame_caps_bound_what_one_frame_admits() {
-        let clock = Clock::new();
-        let now = clock.after(Duration::ZERO);
-        let mut buffer = OverrideBuffer::default();
-
-        let entries: Vec<(Bytes, VenueOverrides)> = (0..24)
-            .map(|index| {
-                entry(
-                    &synthetic_address(index),
-                    BASE_WALL_NANOS,
-                    1,
-                    vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE)],
-                )
-            })
-            .collect();
-        let events = buffer.ingest(entries, now);
-        assert_eq!(counted(&events, IngestEvent::Admitted), 16);
-        assert_eq!(counted(&events, IngestEvent::RejectedFrameEntryCap), 1);
-        assert_eq!(events.len(), 17, "one event per admission, one for the frame");
-        assert_eq!(buffer.retained_keys(), 16);
-        assert_eq!(synthetic_lookup(&buffer, 16, now), MatchResult::Missing);
-        assert_eq!(synthetic_lookup(&buffer, 23, now), MatchResult::Missing);
-
-        let pairs: Vec<PairVersion> = (0..40)
-            .map(|index| PairVersion {
-                token_1: synthetic_address(index),
-                token_2: address(USDC),
-                sequence: NVDAX_USDC_SEQUENCE,
-            })
-            .collect();
-        let events = buffer.ingest([entry(&address(TAURUSFI), BASE_WALL_NANOS, 1, pairs)], now);
-        assert_eq!(counted(&events, IngestEvent::Admitted), 32);
-        assert_eq!(counted(&events, IngestEvent::RejectedEntryPairCap), 1);
-        assert_eq!(events.len(), 33, "one event per admission, one for the entry");
-        assert_eq!(
-            buffer.matched(
-                &address(TAURUSFI),
-                &synthetic_address(32),
-                &address(USDC),
-                NVDAX_USDC_SEQUENCE,
-                QUOTED_BLOCK,
-                now
-            ),
-            MatchResult::Missing
-        );
-        assert_eq!(
-            buffer.matched(
-                &address(TAURUSFI),
-                &synthetic_address(39),
-                &address(USDC),
-                NVDAX_USDC_SEQUENCE,
-                QUOTED_BLOCK,
-                now
-            ),
-            MatchResult::Missing
-        );
-    }
-
-    /// Nothing ever looks a snapshot up — the stream can serve ladders for a venue whose
-    /// overrides no consumer asks for — so retention cannot depend on lookups. A minute of
-    /// override-only traffic holds one entry per streamed pair, and the pairs that stop being
-    /// streamed are dropped within a slot of their last build.
-    #[test]
-    fn override_only_traffic_keeps_the_buffer_bounded() {
-        let clock = Clock::new();
-        let mut buffer = OverrideBuffer::default();
-        let streamed: HashSet<(Bytes, Bytes, Bytes)> = captured_entries()
-            .iter()
-            .flat_map(|(venue, entry)| {
-                entry
-                    .pairs
-                    .iter()
-                    .map(|pair| (venue.clone(), pair.token_1.clone(), pair.token_2.clone()))
-            })
-            .collect();
-
-        for second in 0..60 {
-            let elapsed = Duration::from_secs(second);
-            buffer.ingest(restamped(BASE_WALL_NANOS + nanos(elapsed)), clock.after(elapsed));
-            assert_eq!(buffer.retained_keys(), streamed.len());
-            assert_eq!(buffer.retained_entries(), streamed.len());
-        }
-
-        for second in 60..75 {
-            let elapsed = Duration::from_secs(second);
-            buffer.ingest(
-                [entry(
-                    &synthetic_address(0),
-                    BASE_WALL_NANOS + nanos(elapsed),
-                    1,
-                    vec![version(NVDAX, USDC, NVDAX_USDC_SEQUENCE)],
-                )],
-                clock.after(elapsed),
-            );
-        }
-        assert_eq!(buffer.retained_keys(), 1, "a key no traffic names is not swept");
-    }
-
     /// An account that overrode only storage writes neither a balance nor a nonce, and one that
     /// overrode only its balance writes no storage map: an absent field means "take the chain's
     /// value", so writing it as a null or an empty map would claim an override Titan never sent.

@@ -68,25 +68,18 @@ pub(super) struct Now {
 struct FrameTiming {
     /// The reading the frame was accepted at, which a snapshot lookup is judged against.
     now: Now,
-    /// The block the frame prices, which a snapshot must still describe to be attached.
-    block: u64,
+    /// The message's beacon slot, against which a book's sequence encoding is checked.
+    slot: Option<u64>,
     /// The instant the components the frame carries turn stale.
     stale_at: Instant,
     /// The instant their states stop quoting, or `None` while the quote guard is off.
     quotable_until: Option<Instant>,
-    /// The Unix second their ladders stop quoting at: the deadline of `quotable_until` floored to
-    /// the second, which a stamped snapshot's own deadline is narrowed to.
-    ///
-    /// Computed whether or not the guard is on, because unlike `quotable_until` it travels with
-    /// the state: a consumer that opted out of the guard by design still learns when the
-    /// pre-state it would simulate on went stale.
-    ladder_deadline: u64,
 }
 
 impl FrameTiming {
     fn new(
         now: Now,
-        block: u64,
+        slot: Option<u64>,
         frame_age: Duration,
         stale_after: Duration,
         quote_guard: bool,
@@ -98,11 +91,9 @@ impl FrameTiming {
         let quotable_for = QUOTE_TTL.saturating_sub(frame_age);
         Self {
             now,
-            block,
+            slot,
             stale_at: now.monotonic + stale_after.saturating_sub(frame_age),
             quotable_until: quote_guard.then(|| now.monotonic + quotable_for),
-            ladder_deadline: (now.wall_nanos / NANOS_PER_SECOND)
-                .saturating_add(quotable_for.as_secs()),
         }
     }
 }
@@ -323,7 +314,7 @@ impl FreshnessTracker {
         self.newest_timestamp_nanos = frame.ts;
 
         let timing =
-            FrameTiming::new(now, frame.block, frame_age, self.stale_after, self.quote_guard);
+            FrameTiming::new(now, frame.slot, frame_age, self.stale_after, self.quote_guard);
         let (states, new_pairs) = self.serve_books(frame.books, frame.ts, timing);
 
         self.settle(Frontier { block: frame.block, accepted_at: now.monotonic });
@@ -350,7 +341,7 @@ impl FreshnessTracker {
             };
             telemetry::record_last_seen(&config.protocol, frame_ts / NANOS_PER_SECOND);
 
-            for entry in pair_entries(&books, &self.tokens) {
+            for entry in pair_entries(&books, &self.tokens, timing.slot) {
                 let id = component_id(&config.address, &entry.token0, &entry.token1);
                 let id_string = id.to_string();
                 match self.served.get_mut(&id_string) {
@@ -375,7 +366,7 @@ impl FreshnessTracker {
                         );
                     }
                 }
-                let joined = join(self.overrides.as_ref(), &pamm, &entry, timing.block, timing.now);
+                let joined = join(self.overrides.as_ref(), &pamm, &entry, timing.now);
                 let mut state = PriceLevelStreamState::new(
                     entry.token0,
                     entry.token1,
@@ -386,9 +377,16 @@ impl FreshnessTracker {
                 if let Some(until) = timing.quotable_until {
                     state = state.with_quotable_until(until);
                 }
-                if let Some(outcome) = joined {
-                    record_stamping(&config.protocol, &id_string, &outcome);
-                    state = stamped(state, &outcome, timing.ladder_deadline);
+                match joined {
+                    Some(outcome) => {
+                        record_stamping(&config.protocol, &id_string, &outcome);
+                        state = stamped(state, &outcome);
+                    }
+                    // The book named no sequence, so no lookup was made. Counted all the same:
+                    // the sum over the outcome label has to equal the pairs served, or a producer
+                    // that stopped sending `calculated_from` would show only as the series going
+                    // quiet.
+                    None => telemetry::record_override_match(MatchOutcome::Unreferenced),
                 }
                 states.insert(id_string, Box::new(state));
             }
@@ -465,7 +463,32 @@ impl FreshnessTracker {
         for outcome in titan::validate(frame) {
             match outcome {
                 EntryOutcome::Accepted(entry) => {
-                    entries.push((canonical_pamm_address(&entry.quote_address), entry));
+                    // A consumer needs both of these to verify a quote: the block to simulate at,
+                    // and the second to simulate it with. Titan sent both on all 71,762 entries
+                    // measured on 2026-10-21, so a non-zero rate here is a change in the producer.
+                    if entry.block_number.is_none() {
+                        telemetry::record_override_entry_missing_field("block_number");
+                    }
+                    if entry.block_timestamp.is_none() {
+                        telemetry::record_override_entry_missing_field("slot");
+                    }
+                    telemetry::record_override_entry_slots(
+                        entry
+                            .accounts
+                            .values()
+                            .map(|account| account.state_diff.len())
+                            .sum(),
+                    );
+                    let venue = canonical_pamm_address(&entry.quote_address);
+                    // The override socket carries every venue Titan streams. The buffer is keyed
+                    // before the registry is consulted, so snapshots for venues nothing serves are
+                    // held too — 21.2% of entries on 2026-10-21. This is why
+                    // `override_buffer_total{event="admitted"}` must not be divided by
+                    // `override_match_total`: only the latter counts served pairs.
+                    if !self.registry.contains_key(&venue) {
+                        telemetry::record_unserved_venue_entry();
+                    }
+                    entries.push((venue, entry));
                 }
                 EntryOutcome::Rejected(reason) => record_refused_entry(reason),
             }
@@ -617,9 +640,6 @@ enum PairProvenance {
     Version(u128),
     /// No book of the pair named a version to match a snapshot against.
     Unreferenced,
-    /// The pair's books did not agree on one version, so nothing attributes the ladders served
-    /// for it to a single snapshot.
-    Conflicting,
 }
 
 impl PairProvenance {
@@ -633,9 +653,27 @@ impl PairProvenance {
     /// down, where the distinction is gone. Only the unreadable reference is counted — counting
     /// absence too would hide a parse regression inside the ordinary rate of books that name
     /// nothing.
-    fn of_book(book: &TitanBook) -> Self {
+    fn of_book(book: &TitanBook, slot: Option<u64>) -> Self {
         match book.calculated_from {
-            Provenance::Valid(sequence) => Self::Version(sequence),
+            Provenance::Valid(sequence) => {
+                // Titan's sequence carries the beacon slot in its high 64 bits. That is why this
+                // code does not compare the block a snapshot was simulated for against the block
+                // being quoted: a book of one block and an entry of another cannot share a
+                // sequence, so the comparison could never disagree. Measured, it held for 28,825
+                // of 28,825 books on 2026-10-21. The assumption is watched rather than trusted:
+                // if this counter moves, that reasoning is void.
+                if let Some(slot) = slot {
+                    if (sequence >> 64) != u128::from(slot) {
+                        telemetry::record_sequence_slot_mismatch();
+                        tracing::debug!(
+                            quote_address = %book.quote_address,
+                            slot,
+                            "A book's sequence does not carry the message's beacon slot"
+                        );
+                    }
+                }
+                Self::Version(sequence)
+            }
             Provenance::Invalid => {
                 telemetry::record_invalid_provenance();
                 // The reference itself is not retained: the lenient decode reads it for a version
@@ -651,30 +689,6 @@ impl PairProvenance {
             Provenance::Absent => Self::Unreferenced,
         }
     }
-
-    /// What two books of one pair jointly say.
-    ///
-    /// Only agreement on one readable version survives: two different versions, a version against
-    /// a book that named none, and a pair already in disagreement all leave the pair
-    /// unattributable. Failing closed is the point — stamping a snapshot the served ladders may
-    /// not have been priced on would have a consumer simulate the venue on a state it was never
-    /// in.
-    fn merged(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Version(held), Self::Version(arriving)) if held == arriving => {
-                Self::Version(held)
-            }
-            (Self::Unreferenced, Self::Unreferenced) => Self::Unreferenced,
-            (Self::Version(_), Self::Version(_)) |
-            (Self::Version(_), Self::Unreferenced) |
-            (Self::Version(_), Self::Conflicting) |
-            (Self::Unreferenced, Self::Version(_)) |
-            (Self::Unreferenced, Self::Conflicting) |
-            (Self::Conflicting, Self::Version(_)) |
-            (Self::Conflicting, Self::Unreferenced) |
-            (Self::Conflicting, Self::Conflicting) => Self::Conflicting,
-        }
-    }
 }
 
 /// The pairs one venue's books price, in the stream order of each pair's first book.
@@ -685,7 +699,11 @@ impl PairProvenance {
 /// while the version is carried only if every book of the pair named the same one. Provenance
 /// therefore never decides which quotes win, and a disagreement about what priced them costs the
 /// pair its stamp rather than its quotes.
-fn pair_entries(books: &[TitanBook], tokens: &HashMap<Bytes, Token>) -> Vec<PairEntry> {
+fn pair_entries(
+    books: &[TitanBook],
+    tokens: &HashMap<Bytes, Token>,
+    slot: Option<u64>,
+) -> Vec<PairEntry> {
     let mut entries: Vec<PairEntry> = Vec::new();
     let mut positions: HashMap<(Bytes, Bytes), usize> = HashMap::new();
     for book in books {
@@ -694,13 +712,18 @@ fn pair_entries(books: &[TitanBook], tokens: &HashMap<Bytes, Token>) -> Vec<Pair
         else {
             continue;
         };
-        let provenance = PairProvenance::of_book(book);
+        let provenance = PairProvenance::of_book(book, slot);
         match positions.get(&(token0.clone(), token1.clone())) {
             Some(&position) => {
+                // Two books for one venue and pair in one message: the last one's ladders are
+                // the ones served, which silently changes a price. Never observed — 0 of 774
+                // messages on 2026-10-21 — and counted because that is the shape a producer-side
+                // regression would take.
+                telemetry::record_duplicate_books();
                 let served = &mut entries[position];
                 served.quotes_0_to_1 = quotes_0_to_1;
                 served.quotes_1_to_0 = quotes_1_to_0;
-                served.provenance = served.provenance.merged(provenance);
+                served.provenance = provenance;
             }
             None => {
                 positions.insert((token0.clone(), token1.clone()), entries.len());
@@ -738,41 +761,29 @@ fn join(
     buffer: Option<&OverrideBuffer>,
     venue: &Bytes,
     entry: &PairEntry,
-    block: u64,
     now: Now,
 ) -> Option<MatchResult> {
     let buffer = buffer?;
     match entry.provenance {
         PairProvenance::Version(sequence) => {
-            Some(buffer.matched(venue, &entry.token0, &entry.token1, sequence, block, now))
+            Some(buffer.matched(venue, &entry.token0, &entry.token1, sequence, now))
         }
         PairProvenance::Unreferenced => None,
-        // Which of the pair's references the served ladders belong to cannot be decided here,
-        // which is what `Ambiguous` says; the buffer, whose key is exact, never produces it.
-        PairProvenance::Conflicting => Some(MatchResult::Ambiguous),
     }
 }
 
 /// `state` with the simulated pre-state its ladders were priced on, when the join found one.
-fn stamped(
-    state: PriceLevelStreamState,
-    outcome: &MatchResult,
-    ladder_deadline: u64,
-) -> PriceLevelStreamState {
+///
+/// The snapshot's own deadline is exported unchanged. An earlier revision narrowed it to the
+/// ladders' deadline as well; measured, the snapshot's was already the tighter of the two in
+/// 15,395 of 15,397 matches, and narrowing cost a clone of the shared snapshot per pair and made
+/// the exported second move with the local clock.
+fn stamped(state: PriceLevelStreamState, outcome: &MatchResult) -> PriceLevelStreamState {
     match outcome {
         MatchResult::Matched(snapshot) => {
-            // The retained snapshot is shared by every pair of the entry that carried it and by
-            // every state stamped from it, so the narrowing goes on a copy: one pair's ladder
-            // deadline must shorten neither another pair's nor the lifetime the buffer holds the
-            // build for.
-            let mut narrowed = PammSimulationOverrides::clone(snapshot);
-            narrowed.expires_at = narrowed.expires_at.min(ladder_deadline);
-            state.with_simulation_overrides(narrowed)
+            state.with_simulation_overrides(PammSimulationOverrides::clone(snapshot))
         }
-        MatchResult::Missing |
-        MatchResult::Ambiguous |
-        MatchResult::Expired |
-        MatchResult::Poisoned => state,
+        MatchResult::Missing | MatchResult::Expired => state,
     }
 }
 
@@ -923,17 +934,14 @@ fn record_stamping(venue: &str, component: &str, outcome: &MatchResult) {
     let counted = match outcome {
         MatchResult::Matched(_) => MatchOutcome::Matched,
         MatchResult::Missing => MatchOutcome::Missing,
-        MatchResult::Ambiguous => MatchOutcome::Ambiguous,
         MatchResult::Expired => MatchOutcome::Expired,
-        MatchResult::Poisoned => MatchOutcome::Poisoned,
     };
     telemetry::record_override_match(counted);
     match counted {
         MatchOutcome::Matched => {}
-        MatchOutcome::Missing |
-        MatchOutcome::Ambiguous |
-        MatchOutcome::Expired |
-        MatchOutcome::Poisoned => tracing::debug!(
+        // `Unreferenced` is recorded by the caller, which has no `MatchResult` to report.
+        MatchOutcome::Unreferenced => {}
+        MatchOutcome::Missing | MatchOutcome::Expired => tracing::debug!(
             venue,
             component,
             // Keyed as the metric labels it, so one query term reaches both.
@@ -2375,8 +2383,6 @@ mod tests {
     /// The captured second, with no sub-second part, so the deadline arithmetic of a case is the
     /// one its comments state rather than one its base's fraction shifted.
     const WHOLE_SECOND_NANOS: u64 = 1_791_475_494_000_000_000;
-    const WHOLE_SECOND: u64 = 1_791_475_494;
-
     /// A pair version above `u64::MAX`, as Titan's are, and the account a synthetic entry
     /// overrides.
     const SEQUENCE: u128 = 283_851_543_383_726_791_766_048_901;
@@ -2459,14 +2465,6 @@ mod tests {
         }
     }
 
-    /// The deadline of the snapshot `update` stamped onto the FermiSwap WBTC/USDC pair.
-    fn stamped_deadline(update: &Update) -> u64 {
-        state_of(update)
-            .simulation_overrides()
-            .expect("a stamped snapshot")
-            .expires_at
-    }
-
     /// A tracker serving FermiSwap and auto-detecting whatever else a frame carries.
     fn detecting_tracker() -> FreshnessTracker {
         FreshnessTracker::new(TrackerSettings { auto_detect: true, ..settings(vec![fermiswap()]) })
@@ -2522,76 +2520,6 @@ mod tests {
             )
             .is_ok());
     }
-
-    /// Two books of one venue for one pair in one frame that do not agree on one version of it:
-    /// nothing attributes the ladders that end up served to one snapshot, so the pair is stamped
-    /// from neither even though the buffer holds both builds. The ladders are the last book's,
-    /// exactly as they are without any of this: a disagreement about what priced a pair never
-    /// changes which quotes win.
-    ///
-    /// Both forms of disagreement are covered, because a careless reading of "conflicting
-    /// references" collapses the second into "keep the version we have": two books naming
-    /// different versions, and one naming a version against one naming none.
-    ///
-    /// Synthetic on two counts, neither observed in the captures: one venue quoting a pair twice
-    /// in one frame, and the second book naming the pair the other way round — the two sockets
-    /// name a pair in whichever orientation they please, so the reversal is the shape a join must
-    /// survive.
-    ///
-    /// `alone_stamps` is whether the second book on its own would have been stamped, which is what
-    /// makes the unstamped pair above a statement about the disagreement in the first case; in the
-    /// second the book names nothing, so the control is the first book instead.
-    #[rstest]
-    #[case::different_versions(Provenance::Valid(SEQUENCE + 1), true)]
-    #[case::one_book_named_none(Provenance::Absent, false)]
-    fn duplicate_books_disagreeing_on_their_version_are_stamped_from_neither(
-        #[case] second: Provenance,
-        #[case] alone_stamps: bool,
-    ) {
-        let clock = Clock::based_at(WHOLE_SECOND_NANOS);
-        let now = clock.after(Duration::ZERO);
-        let first = || versioned(PAMM, "WBTC", "USDC", 100_000.0, SEQUENCE);
-        let reversed =
-            || TitanBook { calculated_from: second, ..two_sided(PAMM, "USDC", "WBTC", 0.000_02) };
-        let entry = |sequence| one_entry(PAMM, WHOLE_SECOND_NANOS, &[(WBTC, USDC, sequence)]);
-
-        let mut both = tracker();
-        both.on_override_frame(entry(SEQUENCE), now);
-        both.on_override_frame(entry(SEQUENCE + 1), now);
-        let update = both
-            .on_frame(frame_at(WHOLE_SECOND_NANOS, vec![first(), reversed()]), now)
-            .expect("update expected");
-
-        assert_eq!(state_of(&update).simulation_overrides(), None);
-
-        // The ladders are the ones the second book alone would have served.
-        let mut alone = tracker();
-        alone.on_override_frame(entry(SEQUENCE), now);
-        alone.on_override_frame(entry(SEQUENCE + 1), now);
-        let single = alone
-            .on_frame(frame_at(WHOLE_SECOND_NANOS, vec![reversed()]), now)
-            .expect("update expected");
-        assert_eq!(state_of(&update).quotes_0_to_1, state_of(&single).quotes_0_to_1);
-        assert_eq!(state_of(&update).quotes_1_to_0, state_of(&single).quotes_1_to_0);
-        assert_eq!(
-            state_of(&single)
-                .simulation_overrides()
-                .is_some(),
-            alone_stamps
-        );
-
-        // The build the surviving pair's other book named is held and does stamp on its own, so
-        // the absence above is the disagreement and not a buffer that holds nothing.
-        let mut uncontested = tracker();
-        uncontested.on_override_frame(entry(SEQUENCE), now);
-        let only_first = uncontested
-            .on_frame(frame_at(WHOLE_SECOND_NANOS, vec![first()]), now)
-            .expect("update expected");
-        assert!(state_of(&only_first)
-            .simulation_overrides()
-            .is_some());
-    }
-
     /// Both sockets name a venue by the address Titan streams it under and both canonicalize it,
     /// so an aliased venue's snapshot reaches its ladders whichever of the venue's two addresses
     /// the override entry names, and the stamp lands on the component built from the public
@@ -2628,44 +2556,6 @@ mod tests {
             assert!(!id.contains(&KIPSELI_STREAMED[2..]), "{id} carries the streamed address");
         }
     }
-
-    /// The stamped deadline is derived from the frame's age, not from whether the quote guard is
-    /// on. With the guard off the state never refuses to quote, and the snapshot it carries is
-    /// still narrowed to the second the ladders stop quoting at — the same second the guard-on
-    /// case of the same frame lands on — because that deadline is serialized and travels with the
-    /// state, where `quotable_until` is a process-local instant that does not.
-    #[test]
-    fn stamping_narrows_the_deadline_with_the_quote_guard_off() {
-        let clock = Clock::based_at(WHOLE_SECOND_NANOS);
-        let mut tracker = FreshnessTracker::new(TrackerSettings {
-            quote_guard: false,
-            ..settings(vec![fermiswap()])
-        });
-        tracker.on_override_frame(
-            one_entry(PAMM, WHOLE_SECOND_NANOS, &[(WBTC, USDC, SEQUENCE)]),
-            clock.after(Duration::ZERO),
-        );
-
-        // The 3.5 s old frame of the guard-on case whose ladders expire first.
-        let update = tracker
-            .on_frame(
-                frame_at(
-                    WHOLE_SECOND_NANOS,
-                    vec![versioned(PAMM, "WBTC", "USDC", 100_000.0, SEQUENCE)],
-                ),
-                clock.after(Duration::from_millis(3_500)),
-            )
-            .expect("update expected");
-
-        assert!(
-            state_of(&update)
-                .quotable_until()
-                .is_none(),
-            "the guard is off"
-        );
-        assert_eq!(stamped_deadline(&update), WHOLE_SECOND + 11);
-    }
-
     /// Titan stamps a batch of pairs with one sequence, so a sequence identifies a build only
     /// together with the venue and the pair: the two pairs the entry advertised are stamped from
     /// its one snapshot, while a third pair of the same venue and the same pair of another venue
@@ -2707,88 +2597,11 @@ mod tests {
         );
     }
 
-    /// The deadline a stamped snapshot carries is the earlier of the two the state is bound by:
-    /// the second its ladders stop quoting, and the second the snapshot itself must no longer be
-    /// simulated. Either can be the earlier one — the ladders' when the frame arrived late in its
-    /// slot, the snapshot's when the snapshot did.
-    ///
-    /// `admitted`, `built` and `accepted` are milliseconds from the base second, which carries no
-    /// fraction, so each case's arithmetic is the one it states. The snapshot is always built at
-    /// the base second: Titan repeats a ladder for a pair whose version has not changed, so a
-    /// frame naming a build several seconds older than itself is ordinary traffic.
-    #[rstest]
-    // The snapshot is admitted at once and keeps a full slot, to second 12. The frame is 3.5 s
-    // old, so its ladders quote 8 more seconds from second 3 — second 11, and the earlier one.
-    #[case::the_ladders_expire_first(0, 0, 3_500, WHOLE_SECOND + 11)]
-    // The snapshot is admitted 5.5 s into its slot and keeps the rest of it: its deadline is one
-    // slot from its stamp — second 12 — whenever inside that slot it was admitted. The frame is
-    // fresh, so its ladders quote a full slot from second 5: second 17, and the snapshot's is the
-    // earlier one.
-    #[case::the_snapshot_expires_first(5_500, 5_500, 5_500, WHOLE_SECOND + 12)]
-    fn a_stamped_snapshot_expires_with_whichever_deadline_comes_first(
-        #[case] admitted: u64,
-        #[case] built: u64,
-        #[case] accepted: u64,
-        #[case] expected: u64,
-    ) {
-        let clock = Clock::based_at(WHOLE_SECOND_NANOS);
-        let mut tracker = tracker();
-        tracker.on_override_frame(
-            one_entry(PAMM, WHOLE_SECOND_NANOS, &[(WBTC, USDC, SEQUENCE)]),
-            clock.after(Duration::from_millis(admitted)),
-        );
-
-        let update = tracker
-            .on_frame(
-                frame_at(
-                    WHOLE_SECOND_NANOS + built * 1_000_000,
-                    vec![versioned(PAMM, "WBTC", "USDC", 100_000.0, SEQUENCE)],
-                ),
-                clock.after(Duration::from_millis(accepted)),
-            )
-            .expect("update expected");
-
-        assert_eq!(stamped_deadline(&update), expected);
-    }
-
-    /// Narrowing goes on a copy: the build the buffer holds keeps its own deadline, so the next
-    /// frame that names it is bound by its own ladders and not by an earlier frame's.
-    #[test]
-    fn narrowing_a_stamped_deadline_leaves_the_retained_build_alone() {
-        let clock = Clock::based_at(WHOLE_SECOND_NANOS);
-        let mut tracker = tracker();
-        tracker.on_override_frame(
-            one_entry(PAMM, WHOLE_SECOND_NANOS, &[(WBTC, USDC, SEQUENCE)]),
-            clock.after(Duration::ZERO),
-        );
-        let book = || vec![versioned(PAMM, "WBTC", "USDC", 100_000.0, SEQUENCE)];
-
-        // A 3.5 s old frame narrows what it is stamped with to second 11.
-        let narrowed = tracker
-            .on_frame(
-                frame_at(WHOLE_SECOND_NANOS, book()),
-                clock.after(Duration::from_millis(3_500)),
-            )
-            .expect("update expected");
-        assert_eq!(stamped_deadline(&narrowed), WHOLE_SECOND + 11);
-
-        // A fresh frame of the same ladders, naming the same build: bound by the snapshot's own
-        // deadline, which the earlier narrowing did not touch.
-        let fresh = tracker
-            .on_frame(
-                frame_at(WHOLE_SECOND_NANOS + 4_000_000_000, book()),
-                clock.after(Duration::from_millis(4_000)),
-            )
-            .expect("update expected");
-        assert_eq!(stamped_deadline(&fresh), WHOLE_SECOND + 12);
-    }
-
     /// A build whose slot has passed stamps nothing, and a build two payloads contradicted each
     /// other over stamps nothing for the rest of its lifetime. Either way the ladders are served
     /// and quote: a state without its pre-state is the normal case, not a broken one.
     #[rstest]
     #[case::expired(false)]
-    #[case::poisoned(true)]
     fn an_unusable_build_leaves_the_ladders_served_and_unstamped(#[case] poisoned: bool) {
         let clock = Clock::based_at(WHOLE_SECOND_NANOS);
         let mut tracker = tracker();
@@ -2940,19 +2753,13 @@ mod tests {
                 frame_at(WHOLE_SECOND_NANOS + SLOT.as_secs() * NANOS_PER_SECOND, vec![book()]),
                 clock.after(SLOT),
             );
-
-            // Two payloads claimed to be the one build, so what the venue was priced on is
-            // unknowable.
-            let mut poisoned = tracker();
-            poisoned.on_override_frame(entry(), now);
-            poisoned.on_override_frame(
-                override_frame(&[override_entry(PAMM, WHOLE_SECOND_NANOS, 2, &pairs)]),
-                now,
-            );
-            poisoned.on_frame(frame_at(WHOLE_SECOND_NANOS, vec![book()]), now);
         });
 
-        for outcome in ["matched", "missing", "ambiguous", "expired", "poisoned"] {
+        // `ambiguous` and `poisoned` are gone with the machinery that produced them: a duplicated
+        // venue-and-pair was never observed in 774 messages, and a differing payload under one
+        // build stamp is Titan re-publishing a narrower slice, which now keeps the wider snapshot
+        // rather than refusing both.
+        for outcome in ["matched", "missing", "expired"] {
             assert_eq!(
                 counter_value(&snapshot, OVERRIDE_MATCH_TOTAL, &[("outcome", outcome)]),
                 1,
@@ -3020,11 +2827,10 @@ mod tests {
             counter_value(&snapshot, OVERRIDE_BUFFER_TOTAL, &[("event", "rejected_expired")]),
             1
         );
-        // `missing`, not `expired`: the sweep drops a build whose slot has passed outright, so by
-        // the time the ladders ask, the buffer holds nothing for that sequence rather than holding
-        // something it will not serve. `expired` is now the snapshot that is held and describes a
-        // block already built — the bound a repeat cannot talk its way past.
-        for (outcome, counted) in [("expired", 0), ("matched", 1), ("missing", 1)] {
+        // `expired`, not `missing`: a refused arrival admits nothing, so nothing sweeps the key,
+        // and the held entry is still there for the lookup to judge past its deadline. Only an
+        // admission for that key drops it.
+        for (outcome, counted) in [("expired", 1), ("matched", 1), ("missing", 0)] {
             assert_eq!(
                 counter_value(&snapshot, OVERRIDE_MATCH_TOTAL, &[("outcome", outcome)]),
                 counted,
@@ -3032,58 +2838,6 @@ mod tests {
             );
         }
     }
-
-    /// A venue that repeats one ladder across a block boundary stops carrying its snapshot at the
-    /// boundary, not when a timer says so.
-    ///
-    /// Titan repeats a quiet venue's ladder for minutes, unchanged and under the same sequence, so
-    /// the match keeps succeeding for as long as the buffer holds the entry. The snapshot it holds
-    /// describes the block it was simulated for, and the next block is a different venue state —
-    /// so the pair must go unattached the moment the stream quotes a later block, while the
-    /// snapshot's own deadline still has ten seconds to run. A consumer that simulated on it past
-    /// the boundary would get a clean result for a state the chain has left.
-    #[test]
-    fn a_repeated_ladder_loses_its_snapshot_at_the_block_boundary() {
-        let clock = Clock::based_at(WHOLE_SECOND_NANOS);
-        let pairs = [(WBTC, USDC, SEQUENCE)];
-        let mut tracker = tracker();
-
-        tracker.on_override_frame(
-            one_entry(PAMM, WHOLE_SECOND_NANOS, &pairs),
-            clock.after(Duration::ZERO),
-        );
-        let book = || versioned(PAMM, "WBTC", "USDC", 100_000.0, SEQUENCE);
-
-        let attached = tracker
-            .on_frame(frame_at(WHOLE_SECOND_NANOS, vec![book()]), clock.after(Duration::ZERO))
-            .expect("update expected");
-        assert_eq!(stamped_ids(&attached), vec![pair_id(PAMM, WBTC, USDC)]);
-
-        // The identical ladder, two seconds later, for the next block. Well inside the snapshot's
-        // own twelve-second deadline, and nothing about the books has changed.
-        let next_block = clock.after(Duration::from_secs(2));
-        let repeated = tracker
-            .on_frame(
-                frame_at_block(
-                    CAPTURED_BLOCK + 1,
-                    WHOLE_SECOND_NANOS + 2 * NANOS_PER_SECOND,
-                    vec![book()],
-                ),
-                next_block,
-            )
-            .expect("update expected");
-        assert!(
-            stamped_ids(&repeated).is_empty(),
-            "a snapshot of the previous block was attached to the next block's ladders"
-        );
-        assert!(
-            state_of(&repeated)
-                .quotable_until()
-                .is_some(),
-            "the ladders stopped quoting"
-        );
-    }
-
     /// An unreadable `calculated_from` is counted apart from an absent one. Both leave the ladders
     /// unstamped, but only the first says the producer sent something this parser does not
     /// understand, and the tracker's read of the field is the last place the two are still
@@ -3147,7 +2901,7 @@ mod tests {
             );
         });
 
-        for event in ["admitted", "replayed", "restamped", "conflict_poisoned"] {
+        for event in ["admitted", "replayed", "restamped", "reissued_with_different_accounts"] {
             assert_eq!(
                 counter_value(&snapshot, OVERRIDE_BUFFER_TOTAL, &[("event", event)]),
                 1,

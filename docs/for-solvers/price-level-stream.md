@@ -18,6 +18,75 @@ let price_level_stream = PriceLevelStreamBuilder::new()
 
 `with_tokens` takes the same token metadata the protocol stream uses; load it with `load_all_tokens`, as the [Simulation](simulation.md) page describes. The stream connects on its first poll, re-establishes the connection after a disconnect or a 10 s gap between frames, and never terminates on its own, so run it in its own task alongside your protocol stream. `endpoint()` points it at a closer Titan region than the EU default; without that call it honors the `TITAN_PAMM_PRICE_LEVEL_URL` environment variable.
 
+## Where this can be wrong, and in which direction
+
+Every guardrail below can misfire, and they do not misfire symmetrically. Stated plainly so you can
+judge what a counter means when it moves.
+
+**Too conservative** — the stream withholds a snapshot that would have checked out. You lose one
+chance to verify a leg. Quoting is unaffected. This is **invisible to you**: you simply see no
+snapshot, with no way to tell "Titan sent nothing" from "we declined it".
+
+**Too permissive** — the stream hands you a snapshot that makes your `eth_call` revert or disagree.
+You may read that as Tycho mispricing when it is not. This is **visible**: the node tells you.
+
+Because a wrong snapshot announces itself and a withheld one does not, every guardrail here is
+deliberately set loose rather than tight. The table says where each one sits.
+
+| Guardrail | Errs | Fired in a 13 min recording | What a wrong firing costs you |
+|---|---|---|---|
+| One-slot deadline on a snapshot | conservative | 0 on arrival; worst age seen 3.1 s of 12 | one check, silently |
+| Build stamped ahead of the clock | conservative | **0** of 71,762; Titan's stamps are always ≥103 ms behind | every snapshot, on a host whose clock trails Titan by more than a slot |
+| 128 snapshots per venue and pair | conservative | 0 | one pair's older sequences. An earlier revision set this to 8 and silently discarded 22.7% of all checks |
+| 1,024 venue-and-pair keys | conservative | 0 (peak 48 keys) | one pair's whole history |
+| 32 accounts / 512 storage words per entry | conservative | **0**; max seen 10 and 16 | one whole entry, every pair in it |
+| Whole-entry validation, 10 reasons | conservative | 861 (`no_data` only; the other 9 are 0) | one whole entry |
+| A pair of one token with itself | neither | 0 | nothing; it quotes nothing either way |
+| Lenient `calculated_from` decode | permissive, deliberately | 0 | nothing. It exists so one unreadable reference costs that book its snapshot instead of rejecting the whole message and every venue's ladders with it |
+| The one-slot quote guard | **conservative, and this one is on the quote** | see below | a route, not a check |
+
+**The last row is the only one that can affect a price you trade on**, and it is the one guardrail
+on this page that is *not* about the overrides. `get_amount_out` keeps answering for one slot after
+the message that carried the ladders, counted from Titan's own timestamp rather than from the block.
+Measured, 674 of 769 messages (87.6%) were still inside that window when the stream first reported
+the next block, by a median of 5.6 s. Tycho answers there; whether the chain agrees depends on
+whether the builder refreshed the venue and whether the price moved past your tolerance, and the
+fallback router is what covers you when it does not. Deliberately left loose: refusing to quote at
+the block boundary would drop routes that would have filled.
+
+## Two kinds of simulation
+
+Two different things on this page are called simulation. They fail in different ways, and the rest
+of the page depends on telling them apart.
+
+**Tycho's quote.** `get_amount_out`, `spot_price` and `get_limits` on `PriceLevelStreamState` do
+integer arithmetic over the ladders the stream built from Titan's price levels. There is no node
+call, no RPC and no account state in that path. This is what you route on. It answers whenever the
+state holds ladders for the direction you asked about; the only things that make it refuse are the
+ladder checks and the one-slot quote guard, both counted under
+`price_level_stream_quotes_refused_total{reason}`.
+
+**Your own `eth_call`.** You send the encoded swap to a node with the venue's account state applied
+as a State Override Set. This call can revert, and it can return an amount different from the one
+Tycho quoted.
+
+You want the first to agree with the second without having to make the second call, because node
+calls cost time and money. The simulation overrides are how you check that agreement when you want
+to: they carry the account state Titan priced the venue on, so you can take a quote, run it through
+your own node, and compare. **Use them to check Tycho's answer, not as an input to a route.**
+
+Nothing in the quoting path reads them. A state carrying no snapshot quotes exactly as it would
+with one, and a route over it is neither better nor worse. A missing snapshot costs you one chance
+to check, and nothing else. In a 13 minute recording of both EU sockets on 2026-10-21, 15,397 of
+28,825 books (53.4%) had a snapshot available to check them against.
+
+A snapshot used too late does not hand you a wrong price quietly. The venue's staleness check reads
+the block the call is made in, which the account overrides do not change, so the call reverts.
+Measured on mainnet with one snapshot and one swap: at block 26237959, the block the snapshot was
+taken for, the call succeeded and returned the quoted amount to the wei; at 26237960 and 26237961
+it reverted `StaleUpdate()` (`0x666a2814`). A revert of that kind tells you the snapshot was spent,
+not that the ladders were mispriced.
+
 ## What the stream serves
 
 Every frame carries a flat list of books, one per venue and pair, and the stream emits one component per venue and pair. A component id concatenates the venue address with the pair's two token addresses, sorted ascending, so it survives a venue rename. The `pamm_address` static attribute carries the venue address your encoder sends the swap to.
@@ -273,9 +342,8 @@ A pair the stream serves either carries a snapshot or arrives unstamped, and `pr
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `matched`   | The state carries the snapshot of the exact build its books named.                                                                                                 |
 | `missing`   | The stream holds no snapshot for that venue, that pair and that sequence — the entry never arrived, never named this pair, or validation refused it.                |
-| `ambiguous` | Several books of one venue and pair disagreed about their version, so nothing attributes the served ladders to a single snapshot. A stream anomaly; the capture holds none. |
 | `expired`   | The stream held a build of that version and no longer serves it: its slot of lifetime passed, or what it held was removed while the build was still barred from re-admission ([Bounds and limits](#bounds-and-limits)). |
-| `poisoned`  | Two payloads claimed to be one build of that version, so what the venue priced it on stays unknowable. The stream declines that build for the rest of its lifetime; a strictly newer build of the same version supersedes it as the served value, and stamps if the key has a slot for it ([Bounds and limits](#bounds-and-limits)). |
+| `unreferenced` | The pair's book named no sequence, so no lookup was made. Counted so that the sum over this label equals the pairs served: a producer that stopped sending `calculated_from` would otherwise show only as this series going quiet. |
 
 One further case produces no outcome at all, because it reaches no lookup: a book whose `calculated_from` the parser cannot read, and a book that names none, both leave nothing to look up. `price_level_stream_invalid_provenance_total` counts the unreadable case alone, so a parse regression cannot hide inside the ordinary rate of books that reference nothing. `without_simulation_overrides()` looks nothing up either — with no second socket the match-outcome, buffer and refusal series do not exist at all, while `price_level_stream_invalid_provenance_total` remains, because provenance is read off the price-level socket whether or not anything stamps.
 
@@ -287,7 +355,7 @@ A refused venue entry and a dropped build get no outcome of their own: both arri
 
 Per venue entry, validation declines the whole entry under `over_cap` past 32 accounts or 512 storage words. A slot or word that is not a 32-byte EVM word is declined separately, under `malformed_storage`, so the two caps bound what one entry can make the process retain and the width check bounds its shape. The widest entry of either committed capture fixture overrode 9 accounts with 16 storage words.
 
-The stream also bounds what it retains between the two sockets, because Titan rather than a consumer decides that: 8 builds per venue and pair, 1,024 venue-and-pair keys, 16 venue entries per message, and 32 pairs per entry. Past a bound the stream drops the oldest build of that pair, or the key whose traffic it saw longest ago. One exception keeps the retention honest: a key holding a **live contradiction record** — one build of a pair sequence for which Titan sent two different payloads — never loses it to eviction, because dropping it would let the next copy of that build pass as if nothing had contradicted it. Such a record counts under the same two caps as the snapshots do, so a buffer whose every key protects one refuses a new key outright, under `rejected_keys_exhausted`. The window closes at the contradicted build's own deadline, after which arithmetic refuses that build without anything being remembered, so a buffer that is refusing frees itself without help. A rotating sweep visits every key within 32 messages, so a pair Titan stops streaming does not hold its last build until something asks for it. The 2026-10 capture streamed nine venues with 35 pairs between them, well below the key cap, which exists to bound a misbehaving upstream rather than Titan.
+The stream bounds what it retains between the two sockets, because Titan rather than a consumer decides that: **128 snapshots per venue and pair** and 1,024 venue-and-pair keys. Both are memory ceilings sized so that they do not bind — a key receives about 9.35 new sequences a second and so holds roughly 112 live snapshots, measured 2026-10-21, and the recording never came within 21× of the key cap. Past a bound the stream drops the oldest snapshot of that pair, or the key whose traffic it saw longest ago, and counts `evicted_entry` or `evicted_key`. **Those two counters should sit near zero.** If they move, Titan's rate has risen past what these numbers were sized for and a consumer is losing snapshots it could have checked against.
 
 **A build's lifetime is fixed once, and a removal does not reset it.** A snapshot is served until one slot has passed since Titan's build stamp. That deadline is a function of the stamp alone, not of when the stream admitted the build, so every admission of one build computes the same instant: Titan re-sending an envelope the stream already holds changes nothing, including its deadline, and a build the stream has dropped under pressure is re-admitted on exactly the deadline it always had. The stream therefore keeps no record of what it has forgotten. A build stamped more than a second ahead of the admitting clock is refused outright, under `rejected_future_skew` — Titan's stamps were observed at least 120 ms *behind* the local clock, so a stamp ahead of it is this host's clock trailing, and the allowance bounds how much lifetime such a stamp can add.
 
@@ -297,7 +365,7 @@ The stream also bounds what it retains between the two sockets, because Titan ra
 
 In a 45 s capture of both EU sockets on 2026-10-16, **784 of 1,316 books (59.6%)** had a prior exact-pair match, counted after a 5 s warmup; across the whole capture, warmup included, it is 875 of 1,489 (58.8%). Every book resolved, because Titan now names both assets by address. Of the rest, 58 had a prior hit at their venue under the *wrong* pair — all of them Fermi — and 474 had no prior venue-and-sequence hit at all. For the books that did match, the snapshot arrived a median 1,011 ms and at most 2.213 s before its ladders.
 
-Read those as finite-capture observations, not as steady-state guarantees, and not as a predicted rate of overrides on your routes — they count raw match opportunities, before poisoning, before the caps, and before anything admission refuses, which includes a future-skewed build, a saturated key and an exhausted buffer. An unmatched reference means Titan did not publish that snapshot during this capture, and nothing more. Lower coverage is truthful best effort: it is never a licence to stamp a snapshot from a different pair.
+Read those as finite-capture observations, not as steady-state guarantees, and not as a predicted rate of overrides on your routes — they count raw match opportunities, before the caps, and before anything admission refuses, which includes a future-skewed build, a saturated key and an exhausted buffer. An unmatched reference means Titan did not publish that snapshot during this capture, and nothing more. Lower coverage is truthful best effort: it is never a licence to stamp a snapshot from a different pair.
 
 ### Turning it off, and pointing it elsewhere
 
@@ -327,7 +395,35 @@ Per-venue series start at zero for every registered venue, and every `reason` of
 
 The four counters below cover the override path. Three move only while stamping stays on; `price_level_stream_invalid_provenance_total` moves either way, because a book's reference is read off the price-level socket whether or not anything stamps:
 
-* `price_level_stream_override_match_total{outcome}` — one increment per served pair the stream joined to the snapshots it holds for that venue, under `matched`, `missing`, `ambiguous`, `expired` or `poisoned` ([When a state carries no snapshot](#when-a-state-carries-no-snapshot)). `matched` against the rest is the share of served pairs carrying the state behind their price. A pair whose books named no version produces no increment at all.
-* `price_level_stream_override_buffer_total{event}` — one increment per decision of one ingest: `admitted`, `restamped`, `replayed`, `older_build`, `conflict_poisoned`, `rejected_contradicted`, `rejected_future_skew`, `rejected_expired`, `rejected_key_saturated`, `rejected_keys_exhausted`, `rejected_frame_entry_cap`, `rejected_entry_pair_cap`, `degenerate_pair`, `evicted_entry`, `evicted_key` or `swept_expired`. These are retention events, not lookup misses — read them against [Bounds and limits](#bounds-and-limits), and read coverage off the counter above.
+* `price_level_stream_override_match_total{outcome}` — one increment per served pair the stream joined to the snapshots it holds for that venue, under `matched`, `missing`, `expired` or `unreferenced`. The sum over the label equals the pairs served.
+* `price_level_stream_override_buffer_total{event}` — one increment per decision of one ingest: `admitted`, `restamped`, `replayed`, `older_build`, `reissued_with_different_accounts`, `rejected_future_skew`, `rejected_expired`, `degenerate_pair`, `evicted_entry`, `evicted_key` or `swept_expired`. These are retention events, not lookup misses. **The buffer holds snapshots for venues this consumer does not serve** — 21.2% of entries on 2026-10-21 — so never divide `admitted` by `override_match_total`; `price_level_stream_unserved_venue_entries_total` sizes the difference.
+* `price_level_stream_quotes_refused_total{reason}` — one increment per quote **Tycho itself**
+  refused, before any node call: `ladders_expired`, `not_monotonic`, `unknown_pair`,
+  `no_liquidity`, `below_smallest_quote`, `spot_price_unrepresentable`. `ladders_expired` is the
+  one that matters: it is the only guard between you and a price built for a block that has since
+  been built. A consumer that quotes promptly should almost never see it.
+* `price_level_stream_sequence_slot_mismatch_total` — a book whose sequence does not carry the
+  message's beacon slot in its high 64 bits. **This watches an assumption, not a fault.** That
+  encoding is why the stream does not compare the block a snapshot was simulated for against the
+  block being quoted: the two cannot disagree. It held for 28,825 of 28,825 books on 2026-10-21. If
+  this moves, that reasoning is void.
+* `price_level_stream_override_entry_missing_field_total{field}` — an accepted entry omitting
+  `block_number` or `slot`, each of which you need in order to check a quote. Titan sent both on
+  all 71,762 entries measured.
+* `price_level_stream_duplicate_books_total` — a message carrying two books for one venue and pair,
+  where the last one's ladders win. Never observed in 774 messages, counted because the replacement
+  changes a served price silently.
+* `price_level_stream_override_entry_storage_slots` — a histogram of the storage words one accepted
+  entry overrode, so growth toward the per-entry cap is visible before the cap refuses anything.
+  p50 6, p99 16, max 16 on 2026-10-21, against a cap of 512.
+
+**One baseline you must know before alerting on refusals.**
+`price_level_stream_refused_override_entries_total{reason="no_data"}` runs at about **1.1 per
+second, permanently**: Titan sends roughly 1.2% of its venue entries carrying a `quoteAddress` and
+a `timestamp` and nothing else, spread across every venue. Those are placeholders, not faults, and
+the stream declines them whole. An alert on the unlabelled total therefore fires forever, and a
+genuine fault at 0.1/s would hide inside that floor. **Exclude `reason="no_data"` from any alert on
+this series**, and alert on a 10× move in the `no_data` rate separately — that would be a change in
+the producer.
 * `price_level_stream_refused_override_entries_total{reason}` — one increment per venue entry the validation declined whole, before any retention rule applied: `not_a_venue`, `not_an_account`, `malformed_pair`, `malformed_storage`, `malformed_quantity`, `unstamped`, `sequence_mismatch`, `no_data`, `unsupported_override` or `over_cap`. A steady rate means the producer sends something this parser does not accept, where a buffer event above means this process's own retention rule did its work.
 * `price_level_stream_invalid_provenance_total` — one increment per **served** book whose version reference the parser cannot read. A book naming no reference never counts here, and neither does a book the stream left unpriced, so a parse regression stands out instead of blending into the ordinary miss rate. It counts per book where the match counter counts per pair, so do not ratio the two against each other.

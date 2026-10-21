@@ -17,7 +17,7 @@ use tycho_common::{
     Bytes,
 };
 
-use super::overrides::PammSimulationOverrides;
+use super::{overrides::PammSimulationOverrides, telemetry};
 
 /// How long the ladders of one frame stay quotable: one slot. Titan quotes the pending block, so
 /// a ladder older than that is not fillable directly (the venue reverts `StaleUpdate`) and must
@@ -123,10 +123,14 @@ impl PriceLevelStreamState {
     /// `quotable_until` never errors.
     fn ensure_quotable(&self, now: Instant) -> Result<(), SimulationError> {
         match self.quotable_until {
-            Some(until) if now >= until => Err(SimulationError::RecoverableError(format!(
-                "price levels expired: the frame that carried them is older than {} s (one slot)",
-                QUOTE_TTL.as_secs()
-            ))),
+            Some(until) if now >= until => {
+                telemetry::record_quote_refused(telemetry::QuoteRefusedReason::LaddersExpired);
+                Err(SimulationError::RecoverableError(format!(
+                    "price levels expired: the message that carried them is older than {} s (one \
+                     slot)",
+                    QUOTE_TTL.as_secs()
+                )))
+            }
             Some(_) | None => Ok(()),
         }
     }
@@ -143,6 +147,7 @@ impl PriceLevelStreamState {
         } else if token_in == &self.token1 && token_out == &self.token0 {
             Ok(&self.quotes_1_to_0)
         } else {
+            telemetry::record_quote_refused(telemetry::QuoteRefusedReason::UnknownPair);
             Err(SimulationError::RecoverableError(format!(
                 "Invalid token addresses for pair {}/{}: {token_in}, {token_out}",
                 self.token0, self.token1
@@ -175,6 +180,7 @@ impl PriceLevelStreamState {
             .checked_sub(&lower.amount_out)
         else {
             // Recoverable: the next snapshot replaces the ladder wholesale.
+            telemetry::record_quote_refused(telemetry::QuoteRefusedReason::NotMonotonic);
             return Err(SimulationError::RecoverableError(format!(
                 "Quote ladder {}/{} is not monotonically increasing in amount_out around the \
                  requested amount {amount_in}: {} -> {}, but {} -> {}",
@@ -223,15 +229,22 @@ impl ProtocolSim for PriceLevelStreamState {
             .iter()
             .find(|q| q.amount_in > BigUint::ZERO && q.amount_out > BigUint::ZERO)
             .ok_or_else(|| {
+                telemetry::record_quote_refused(telemetry::QuoteRefusedReason::NoLiquidity);
                 SimulationError::RecoverableError("No liquidity available".to_string())
             })?;
         let amount_in = best.amount_in.to_f64().ok_or_else(|| {
+            telemetry::record_quote_refused(
+                telemetry::QuoteRefusedReason::SpotPriceUnrepresentable,
+            );
             SimulationError::RecoverableError("Can't convert amount in to f64".to_string())
         })?;
         let amount_out = best
             .amount_out
             .to_f64()
             .ok_or_else(|| {
+                telemetry::record_quote_refused(
+                    telemetry::QuoteRefusedReason::SpotPriceUnrepresentable,
+                );
                 SimulationError::RecoverableError("Can't convert amount out to f64".to_string())
             })?;
         Ok((amount_out / 10f64.powi(quote.decimals as i32)) /
@@ -247,6 +260,7 @@ impl ProtocolSim for PriceLevelStreamState {
         self.ensure_quotable(Instant::now())?;
         let quotes = self.quotes(&token_in.address, &token_out.address)?;
         let (Some(first), Some(last)) = (quotes.first(), quotes.last()) else {
+            telemetry::record_quote_refused(telemetry::QuoteRefusedReason::NoLiquidity);
             return Err(SimulationError::RecoverableError("No liquidity available".to_string()));
         };
         // Below the smallest quote nothing is served. The venue itself could still fill —
@@ -263,6 +277,7 @@ impl ProtocolSim for PriceLevelStreamState {
         // 2026-07). All the rejection gives up are trades smaller than the first level —
         // ~$10-30 on healthy ladders, negligible for routing. Hence no partial result either.
         if amount_in < first.amount_in {
+            telemetry::record_quote_refused(telemetry::QuoteRefusedReason::BelowSmallestQuote);
             return Err(SimulationError::InvalidInput(
                 format!(
                     "Input amount is below the smallest quote. input amount: {amount_in}, minimum quoted amount: {}",
@@ -328,20 +343,26 @@ impl ProtocolSim for PriceLevelStreamState {
         self
     }
 
-    /// Equal when the pair, both ladders, the gas cost and the simulated pre-state match.
+    /// Equal when the pair, both ladders, the gas cost and the snapshot's **block** match.
     ///
-    /// The pre-state is part of the price: the same ladders priced on different account state are
-    /// different quotes, and a consumer that skips a state because it equals the one it holds
-    /// would keep simulating on the superseded snapshot.
+    /// Two of the snapshot's fields decide nothing here, and leaving them out is deliberate.
     ///
-    /// Two fields are left out, both because this process derives them rather than reading them
-    /// off the stream, so comparing either would report a change the venue did not make.
-    /// `quotable_until` is per-process metadata that never survives serialization. The snapshot's
-    /// `expires_at` is narrowed to the ladder deadline of the message that carried the ladders,
-    /// which is a wall-clock second and moves between two messages carrying one unchanged
-    /// snapshot — see
-    /// [`same_simulated_state`](super::overrides::PammSimulationOverrides::same_simulated_state).
-    /// Skipping a state in either case leaves the consumer on the older, stricter deadline.
+    /// The overridden accounts are excluded. They are a verification aid: a consumer applies them
+    /// to its own `eth_call` to check a quote, and quoting never reads them. Titan re-publishes a
+    /// venue's accounts about nine times a second while the price levels stand still, so comparing
+    /// them reported a changed quote for an unchanged price in 19.3% of comparisons over a 13
+    /// minute recording, and a consumer that re-routes on change re-routed for nothing.
+    ///
+    /// `block_number` **is** compared, and it is what makes dropping the accounts safe. The
+    /// sequence encodes the beacon slot, so a new block always brings a new snapshot — but the
+    /// price levels themselves can be byte-identical across a block boundary, which happened 665
+    /// times across 34 of 48 pairs in the same recording. Without this field those states would
+    /// compare equal, a consumer would keep the one it holds, and it would verify against a
+    /// snapshot for the previous block. That `eth_call` reverts, and the fault would be ours.
+    ///
+    /// `quotable_until` is excluded for the same reason as the accounts: this process derives it,
+    /// it never survives serialization, and skipping a state only leaves the consumer on the
+    /// older, stricter deadline.
     fn eq(&self, other: &dyn ProtocolSim) -> bool {
         other
             .as_any()
@@ -356,17 +377,19 @@ impl ProtocolSim for PriceLevelStreamState {
                     quotable_until: _,
                     overrides,
                 } = other;
-                let same_pre_state = match (&self.overrides, overrides) {
-                    (None, None) => true,
-                    (Some(held), Some(arriving)) => held.same_simulated_state(arriving),
-                    (None, Some(_)) | (Some(_), None) => false,
-                };
+                let same_block = self
+                    .overrides
+                    .as_ref()
+                    .map(|held| held.block_number) ==
+                    overrides
+                        .as_ref()
+                        .map(|arriving| arriving.block_number);
                 &self.token0 == token0 &&
                     &self.token1 == token1 &&
                     &self.quotes_0_to_1 == quotes_0_to_1 &&
                     &self.quotes_1_to_0 == quotes_1_to_0 &&
                     &self.gas_cost == gas_cost &&
-                    same_pre_state
+                    same_block
             })
     }
 }
@@ -755,19 +778,34 @@ mod tests {
         );
     }
 
-    /// Unlike `quotable_until`, the snapshot is part of the price: the same ladders priced on
-    /// different account state are different quotes, so a consumer that drops a state because it
-    /// equals the one it holds would keep re-simulating on the superseded snapshot.
+    /// `eq` compares the snapshot's block, not its accounts.
+    ///
+    /// A new block always brings a new snapshot, so comparing the block keeps a consumer from
+    /// holding a previous block's pre-state while believing nothing changed. The accounts churn
+    /// about nine times a second at an unchanged price, so comparing them reported a changed quote
+    /// for an unchanged price in 19.3% of comparisons over a 13 minute recording.
     #[test]
-    fn eq_compares_the_overrides() {
+    fn eq_compares_the_block_not_the_accounts() {
         let stamped = || state().with_simulation_overrides(test_overrides());
         assert!(stamped().eq(&stamped()));
+
+        // Carrying a snapshot is itself a difference: one state can be verified and the other
+        // cannot.
         assert!(!state().eq(&stamped()));
         assert!(!stamped().eq(&state()));
 
+        // Same block, different accounts and a different build stamp: the same quote.
         let mut rebuilt = test_overrides();
         rebuilt.built_at_ns += 1;
-        assert!(!stamped().eq(&state().with_simulation_overrides(rebuilt)));
+        rebuilt.accounts.clear();
+        assert!(stamped().eq(&state().with_simulation_overrides(rebuilt)));
+
+        // A different block is a different quote, even with the ladders unchanged.
+        let mut next_block = test_overrides();
+        next_block.block_number = next_block
+            .block_number
+            .map(|block| block + 1);
+        assert!(!stamped().eq(&state().with_simulation_overrides(next_block)));
     }
 
     /// The narrowed deadline is this process's reading of when to stop simulating, not something
