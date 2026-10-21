@@ -3,11 +3,11 @@ pragma solidity ^0.8.26;
 
 import {IExecutor} from "@interfaces/IExecutor.sol";
 import {ISubsidyPayer, Subsidy} from "@interfaces/ISubsidyPayer.sol";
-import {CURRENTLY_SWAPPING_EXECUTOR_SLOT} from "../Dispatcher.sol";
+import {CURRENTLY_SWAPPING_EXECUTOR_SLOT, Dispatcher} from "../Dispatcher.sol";
 import {TransferManager} from "../TransferManager.sol";
-import {TychoRouterV3} from "../TychoRouterV3.sol";
 
 error TychoSubsidizingExecutor__InvalidDataLength();
+error TychoSubsidizingExecutor__NonContractPayer();
 error TychoSubsidizingExecutor__UnapprovedInnerExecutor(address executor);
 
 /**
@@ -23,9 +23,14 @@ contract TychoSubsidizingExecutor is IExecutor {
     ISubsidyPayer public immutable payer;
     address private immutable _self;
 
-    event SubsidyPaymentFailed(uint256 nonce);
+    /// @notice Emitted from the router's address, since the router
+    ///         delegatecalls swap.
+    event SubsidyPayerReverted(uint256 indexed nonce, bytes reason);
 
     constructor(ISubsidyPayer payer_) {
+        if (address(payer_).code.length == 0) {
+            revert TychoSubsidizingExecutor__NonContractPayer();
+        }
         payer = payer_;
         _self = address(this);
     }
@@ -105,8 +110,9 @@ contract TychoSubsidizingExecutor is IExecutor {
         if (receiver == address(this)) receiver = msg.sender;
     }
 
-    /// @dev A payer revert emits SubsidyPaymentFailed instead of reverting the
-    ///      swap. The payer emits the events for paid and skipped subsidies.
+    /// @dev Asks the payer to pay the subsidy encoded in `data` to `receiver`.
+    ///      A payer revert emits SubsidyPayerReverted instead of reverting the
+    ///      swap; the payer emits SubsidyPaid and SubsidySkipped.
     function _addSubsidy(
         bytes calldata data,
         address token,
@@ -127,11 +133,11 @@ contract TychoSubsidizingExecutor is IExecutor {
         // goes to receiver.
         // slither-disable-next-line unused-return
         try payer.pay(subsidy, amountIn, msg.sender, receiver, data[122:187]) {}
-        catch {
+        catch (bytes memory reason) {
             // Reentrancy cannot happen: every router entry point is
             // nonReentrant.
             // slither-disable-next-line reentrancy-events
-            emit SubsidyPaymentFailed(subsidy.nonce);
+            emit SubsidyPayerReverted(subsidy.nonce, reason);
         }
     }
 
@@ -147,14 +153,14 @@ contract TychoSubsidizingExecutor is IExecutor {
         innerData = data[207:];
     }
 
-    /// @dev Reverts unless `router` approved the inner executor and its
-    ///      timelock passed.
+    /// @dev Reverts unless `router` approved `inner`, its timelock passed, and
+    ///      `inner` is not this contract.
     function _checkInnerExecutorApproval(address inner, address router)
         internal
         view
     {
-        uint256 activation = TychoRouterV3(payable(router))
-            .executorsActivationTimestamp(inner);
+        uint256 activation =
+            Dispatcher(router).executorsActivationTimestamp(inner);
         // slither-disable-next-line incorrect-equality
         if (activation == 0 || inner == _self) {
             revert TychoSubsidizingExecutor__UnapprovedInnerExecutor(inner);

@@ -963,7 +963,9 @@ contract TychoSubsidizingExecutorTest is TychoSubsidizingTestBase {
         );
         _fundAlice(WETH_ADDR, amountIn);
         vm.expectEmit(tychoRouterAddr);
-        emit TychoSubsidizingExecutor.SubsidyPaymentFailed(NONCE);
+        emit TychoSubsidizingExecutor.SubsidyPayerReverted(
+            NONCE, abi.encodeWithSignature("Error(string)", "payer down")
+        );
         vm.prank(ALICE);
         uint256 amountOut = tychoRouter.singleSwap(
             amountIn, WETH_ADDR, DAI_ADDR, 1, 1, BOB, noClientFee(), swapData
