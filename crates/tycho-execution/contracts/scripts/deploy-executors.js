@@ -74,7 +74,8 @@ const deploy_protocols = {
         "uniswap_v4",
         "native_wrapper",
         "rfq:metric",
-        "rfq:native"
+        "rfq:native",
+        "fallback:rfq:metric",
     ],
     "polygon": [
         "uniswap_v2",
