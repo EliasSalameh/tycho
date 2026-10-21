@@ -1,3 +1,17 @@
+## [0.474.0](https://github.com/propeller-heads/tycho/compare/0.473.0...0.474.0) (2026-10-21)
+
+
+### Features
+
+* **execution:** add the Base and BSC EkuboV3Executor addresses ([40ed48b](https://github.com/propeller-heads/tycho/commit/40ed48b3f0c4eb79a416662a98f1f74e50f444ab))
+* **execution:** configure EkuboV3Executor for Base and BSC ([6777488](https://github.com/propeller-heads/tycho/commit/67774889af59c345a2a8cb47fb01cc1ef84b006f))
+* **execution:** configure EkuboV3Executor for Base and BSC ([#1644](https://github.com/propeller-heads/tycho/issues/1644)) ([8b76f45](https://github.com/propeller-heads/tycho/commit/8b76f45ae9587a2ad20cab44743207e5a317b8d5))
+
+
+### Bug Fixes
+
+* **execution:** register the Base and BSC EkuboV3Executor addresses ([027a456](https://github.com/propeller-heads/tycho/commit/027a4568105c4bce400ac6c28ab7f369b06eae13))
+
 ## [0.473.0](https://github.com/propeller-heads/tycho/compare/0.472.2...0.473.0) (2026-10-21)
 
 
