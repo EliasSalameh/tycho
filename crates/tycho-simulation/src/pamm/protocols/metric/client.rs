@@ -2,7 +2,7 @@
 //!
 //! Endpoint reference: <https://docs.metric.xyz/RSm94m71kqtGICv4iKRj/developers/api>
 
-use std::num::NonZeroUsize;
+use std::{collections::HashMap, num::NonZeroUsize};
 
 use futures::{stream, StreamExt};
 use reqwest::Client;
@@ -13,7 +13,8 @@ use tycho_common::Bytes;
 use crate::{
     evm::protocol::utils::bytes_to_address,
     pamm::protocols::metric::models::{
-        MetricApiError, MetricBidAskResponse, MetricMetadata, PaginatedMetadataResponse,
+        MetricApiError, MetricBatchBidAskRequest, MetricBatchBidAskResponse, MetricBidAskResponse,
+        MetricMetadata, PaginatedMetadataResponse,
     },
     snapshot_feed::{errors::FeedError, http::fetch_json},
 };
@@ -32,15 +33,21 @@ const METADATA_PAGE_SIZE: u32 = 500;
 /// Currency the metadata endpoint values `tvlFiat` in; the threshold in `BookFeedConfig` is USD.
 const TVL_FIAT_CURRENCY: &str = "USD";
 
-/// Deadline for one pool's bid/ask request. A pool that misses it is left out of the current
-/// book; the poll as a whole still succeeds with the other pools.
-const BID_ASK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Most pools the batch bid/ask endpoint quotes in one request.
+const BID_ASK_BATCH_SIZE: usize = 100;
 
-/// How many pools' bid/ask requests are in flight at once unless the builder says otherwise.
+/// Deadline for one batch bid/ask request. The pools of a batch that misses it are left out of
+/// the current book; the poll as a whole still succeeds with the other batches. It is shorter
+/// than the feed's whole-poll `request_timeout`, so a hung batch fails here, after the metadata
+/// fetch, rather than taking the whole poll with it.
+const BID_ASK_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How many batch bid/ask requests are in flight at once unless the builder says otherwise.
 ///
-/// A poll's worst case is the metadata fetch plus `ceil(pools / this) * BID_ASK_TIMEOUT`, and it
-/// has to stay inside the feed loop's whole-poll `request_timeout`, so this wants to be at least
-/// the number of pools the venue serves. Sixteen is twice the eight Metric serves on Base today.
+/// A poll's worst case is the metadata fetch plus
+/// `ceil(pools / (BID_ASK_BATCH_SIZE * this)) * BID_ASK_TIMEOUT`, and it has to stay inside the
+/// feed loop's whole-poll `request_timeout`. Metric serves fewer than `BID_ASK_BATCH_SIZE` pools
+/// per chain today, so a poll is a single batch.
 pub const DEFAULT_BID_ASK_CONCURRENCY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
 /// Reads Metric's pool metadata and per-pool quotes. Unlike the RFQ venues' clients this one
@@ -53,7 +60,7 @@ pub struct MetricClient {
     metadata_endpoint: String,
     /// Prefix ending at /public/v1/evm/{chain_id}; pool-specific endpoints are derived from it.
     chain_endpoint: String,
-    /// Bearer trading key required by the authenticated endpoints (`bid_ask`).
+    /// Bearer trading key required by the authenticated endpoints (`bid_ask/batch`).
     #[debug(skip)]
     api_key: String,
     bid_ask_concurrency: NonZeroUsize,
@@ -126,44 +133,89 @@ impl MetricClient {
     }
 
     /// The current quote for each pool, paired with the pool it belongs to and in whatever order
-    /// the answers arrive.
+    /// the batches answer.
     ///
-    /// Metric prices one pool per request, so asking for them one at a time would make this grow
-    /// with the venue's pool count until it exceeds the feed loop's whole-poll deadline — which
-    /// discards every pool already fetched, not just the slow one. At most
-    /// `bid_ask_concurrency` requests are in flight.
+    /// Pools are quoted through the batch endpoint, [`BID_ASK_BATCH_SIZE`] per request with at
+    /// most `bid_ask_concurrency` requests in flight. A request that fails as a whole fails each
+    /// of its pools with the same error.
     pub async fn fetch_bid_ask_each(
         &self,
         pools: Vec<MetricMetadata>,
     ) -> Vec<(MetricMetadata, Result<MetricBidAskResponse, FeedError>)> {
-        stream::iter(pools)
-            .map(|pool| async {
-                let bid_ask = self
-                    .fetch_bid_ask(&pool.pool_address)
-                    .await;
-                (pool, bid_ask)
-            })
+        let batches: Vec<Vec<MetricMetadata>> = pools
+            .chunks(BID_ASK_BATCH_SIZE)
+            .map(<[MetricMetadata]>::to_vec)
+            .collect();
+        let answered: Vec<Vec<_>> = stream::iter(batches)
+            .map(|batch| self.fetch_bid_ask_batch(batch))
             .buffer_unordered(self.bid_ask_concurrency.get())
             .collect()
-            .await
+            .await;
+        answered.into_iter().flatten().collect()
     }
 
-    async fn fetch_bid_ask(&self, pool: &Bytes) -> Result<MetricBidAskResponse, FeedError> {
-        let pool = bytes_to_address(pool)
-            .map_err(|e| FeedError::Parsing(e.to_string()))?
-            .to_checksum(None);
+    async fn fetch_bid_ask_batch(
+        &self,
+        pools: Vec<MetricMetadata>,
+    ) -> Vec<(MetricMetadata, Result<MetricBidAskResponse, FeedError>)> {
+        let mut quotes = match self.request_bid_ask_batch(&pools).await {
+            Ok(quotes) => quotes,
+            Err(e) => {
+                return pools
+                    .into_iter()
+                    .map(|pool| (pool, Err(e.clone())))
+                    .collect()
+            }
+        };
+        pools
+            .into_iter()
+            .map(|pool| {
+                let quote = quotes
+                    .remove(&pool.pool_address)
+                    .unwrap_or_else(|| {
+                        Err(FeedError::Parsing(format!(
+                            "Metric batch bid/ask answered nothing for pool {}",
+                            pool.pool_address
+                        )))
+                    });
+                (pool, quote)
+            })
+            .collect()
+    }
+
+    /// Each requested pool's quote or error, by pool address.
+    async fn request_bid_ask_batch(
+        &self,
+        pools: &[MetricMetadata],
+    ) -> Result<HashMap<Bytes, Result<MetricBidAskResponse, FeedError>>, FeedError> {
+        let pools = pools
+            .iter()
+            .map(|pool| {
+                bytes_to_address(&pool.pool_address).map(|address| address.to_checksum(None))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| FeedError::Parsing(e.to_string()))?;
         let request = self
             .http
-            .get(format!("{}/{pool}/bid_ask", self.chain_endpoint))
+            .post(format!("{}/bid_ask/batch", self.chain_endpoint))
             .header("accept", "application/json")
-            .bearer_auth(&self.api_key);
-        timeout(BID_ASK_TIMEOUT, fetch_json(request, "Metric bid/ask", refuses_the_chain))
-            .await
-            .map_err(|_| {
-                FeedError::Connection(format!(
-                    "Metric bid/ask request timed out after {BID_ASK_TIMEOUT:?}",
-                ))
-            })?
+            .bearer_auth(&self.api_key)
+            .json(&MetricBatchBidAskRequest { pools });
+        let response: MetricBatchBidAskResponse = timeout(
+            BID_ASK_TIMEOUT,
+            fetch_json(request, "Metric batch bid/ask", refuses_the_chain),
+        )
+        .await
+        .map_err(|_| {
+            FeedError::Connection(format!(
+                "Metric batch bid/ask request timed out after {BID_ASK_TIMEOUT:?}",
+            ))
+        })??;
+        Ok(response
+            .results
+            .into_iter()
+            .map(|result| (result.pool_address.clone(), result.into_quote()))
+            .collect())
     }
 }
 
@@ -262,13 +314,14 @@ mod tests {
         let metadata = client.fetch_metadata().await.unwrap();
         assert!(!metadata.is_empty());
 
+        let pools = metadata.len();
         let mut last_error = None;
         let mut selected = None;
-        for pool in &metadata {
-            match client
-                .fetch_bid_ask(&pool.pool_address)
-                .await
-            {
+        for (_, bid_ask) in client
+            .fetch_bid_ask_each(metadata)
+            .await
+        {
+            match bid_ask {
                 Ok(bid_ask) if bid_ask.is_quotable() => {
                     selected = Some(bid_ask);
                     break;
@@ -281,7 +334,7 @@ mod tests {
         let Some(bid_ask) = selected else {
             panic!(
                 "Metric live API on chain {chain_id} returned no quotable bid_ask across {} pools; last error: {:?}",
-                metadata.len(),
+                pools,
                 last_error
             );
         };

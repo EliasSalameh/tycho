@@ -39,6 +39,7 @@ This test runs continuously in the cluster but it can also be run locally for de
 | `--parallel-simulations`   | `5`        | Number of concurrent simulations                                                                                 |
 | `--parallel-updates`       | `5`        | Number of concurrent update processors                                                                           |
 | `--tvl-threshold`          | `100.0`    | TVL threshold in native tokens for filtering                                                                     |
+| `--protocol-tvl-thresholds` | -         | Comma-separated `protocol=threshold` pairs. Each one replaces `--tvl-threshold` for its protocol. Every named protocol must be enabled |
 | `--metrics-port`           | `9898`     | Port for Prometheus metrics server                                                                               |
 | `--disable-onchain`        | `false`    | Skip on-chain protocol testing                                                                                   |
 | `--disable-rfq`            | `false`    | Skip the RFQ book feeds (Bebop, Hashflow, Liquorice, Native)                                                     |
@@ -76,6 +77,11 @@ cargo run --package tycho-integration-test -- \
 # Run with specific components to always test
 cargo run --package tycho-integration-test -- \
   --always-test-components component_id_1,component_id_2,component_id_3
+
+# Test low-TVL pools of some protocols without lowering the threshold for the others
+cargo run --package tycho-integration-test -- \
+  --chain base \
+  --protocol-tvl-thresholds lunarbase=10,pancakeswap_infinity_cl=3
 
 # Run for a specific number of blocks and get a summary
 cargo run --package tycho-integration-test -- \

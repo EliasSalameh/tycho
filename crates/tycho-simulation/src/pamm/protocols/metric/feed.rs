@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-/// Metric's book feed: polls the metadata and per-pool bid/ask endpoints and publishes every poll
+/// Metric's book feed: polls the metadata and batch bid/ask endpoints and publishes every poll
 /// as a complete [`BookSnapshot`]. Built through [`MetricFeedBuilder`]. `Debug` output omits the
 /// API key.
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ pub struct MetricFeedBuilder {
 }
 
 impl MetricFeedBuilder {
-    /// `api_key` is the Bearer trading key the per-pool bid/ask endpoint requires; without a
+    /// `api_key` is the Bearer trading key the batch bid/ask endpoint requires; without a
     /// valid one no pool is quotable and the feed publishes empty books.
     pub fn new(book_config: BookFeedConfig, api_key: String) -> Self {
         Self {
@@ -61,11 +61,11 @@ impl MetricFeedBuilder {
         self
     }
 
-    /// How many of a poll's per-pool bid/ask requests run at once.
+    /// How many of a poll's batch bid/ask requests run at once.
     ///
-    /// Metric prices one pool per request, so this is what keeps a poll's duration flat as the
-    /// venue adds pools instead of growing until the loop's `request_timeout` discards the whole
-    /// poll. Raise it for a venue serving many pools, lower it to be gentler on the API.
+    /// Each request quotes up to 100 pools, so this only matters for a venue serving more than
+    /// that: it keeps a poll's duration flat as the venue adds pools instead of growing until the
+    /// loop's `request_timeout` discards the whole poll. Lower it to be gentler on the API.
     pub fn bid_ask_concurrency(mut self, requests_in_flight: NonZeroUsize) -> Self {
         self.bid_ask_concurrency = requests_in_flight;
         self
@@ -73,11 +73,12 @@ impl MetricFeedBuilder {
 
     /// The feed tuning a new builder starts from.
     ///
-    /// Metric is the one venue whose poll is many requests — a page of pool metadata, then one
-    /// bid/ask per pool — so it costs more per poll than the shared default and is given more
-    /// time to finish one. Measured live, it reprices every 2-3 s against a poll that can take
-    /// close to 9 s: the cadence is as tight as leaves `request_timeout` room for the worst poll
-    /// while still fitting inside the interval, and the withdrawal age is three missed polls.
+    /// Measured live, Metric's quotes change about every 2 s, and a poll — a page of pool
+    /// metadata, then a batch of bid/asks — answers in 0.6-1.5 s, so it is polled every 2 s:
+    /// once per quote change, and longer than a slow poll, which a shorter interval would follow
+    /// with the next poll straight away. A poll that hangs gives up after 5 s, and a book is
+    /// withdrawn once 15 s pass without a refresh: longer than one hung poll and its retry, so a
+    /// single slow poll does not blank the book.
     ///
     /// Spread from it to change one field:
     ///
@@ -92,9 +93,9 @@ impl MetricFeedBuilder {
     /// ```
     pub fn default_feed_config() -> HttpFeedConfig {
         HttpFeedConfig {
-            poll_interval: Duration::from_secs(20),
-            request_timeout: Duration::from_secs(15),
-            max_snapshot_age: Some(Duration::from_secs(60)),
+            poll_interval: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(5),
+            max_snapshot_age: Some(Duration::from_secs(15)),
             ..default_http_feed_config()
         }
     }

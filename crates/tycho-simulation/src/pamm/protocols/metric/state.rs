@@ -480,6 +480,7 @@ mod tests {
             token0: weth.address.clone(),
             token1: usdc.address.clone(),
             tvl_fiat: Some(3000.0),
+            pause_level: Some(0),
         };
         let bid_ask = MetricBidAskResponse {
             // 3000 * 2^64

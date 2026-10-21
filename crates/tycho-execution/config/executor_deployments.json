@@ -99,6 +99,14 @@
       "contract": "HashflowFallbackExecutor",
       "args": ["0x29D7A3cd3485710585d4f3bee5E43fE28633915F"]
     },
+    "fallback:rfq:native": {
+      "contract": "NativeFallbackExecutor",
+      "args": ["0x0000000000000000000000000000000000000000"]
+    },
+    "fallback:rfq:liquorice": {
+      "contract": "LiquoriceFallbackExecutor",
+      "args": ["0x0000000000000000000000000000000000000000"]
+    },
     "rfq:metric": {
       "contract": "MetricExecutor",
       "args": []
@@ -138,6 +146,10 @@
         "0x498581ff718922c3f8e6a244956af099b2652b2b",
         "0x631352Aaa9d6554848aF674106bCD8Bb9E59a5CF"
       ]
+    },
+    "ekubo_v3": {
+      "contract": "EkuboV3Executor",
+      "args": ["0x550CFe1292d0D9c0d28f232b3F42Edb4439B1D09"]
     },
     "rfq:bebop": {
       "contract": "BebopExecutor",
@@ -260,6 +272,10 @@
         "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
         "0x0000000aa232009084Bd71A5797d089AA4Edfad4"
       ]
+    },
+    "ekubo_v3": {
+      "contract": "EkuboV3Executor",
+      "args": ["0x550CFe1292d0D9c0d28f232b3F42Edb4439B1D09"]
     },
     "native_wrapper": {
       "contract": "NativeWrapExecutor",
