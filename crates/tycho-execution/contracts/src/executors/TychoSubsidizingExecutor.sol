@@ -122,6 +122,8 @@ contract TychoSubsidizingExecutor is IExecutor {
             deadline: uint48(bytes6(data[116:122]))
         });
         // msg.sender is the router's caller: the router delegatecalls swap.
+        // The payer only matches it against the signed boundTo; the subsidy
+        // goes to receiver.
         // slither-disable-next-line unused-return
         try payer.pay(subsidy, amountIn, msg.sender, receiver, data[122:187]) {}
         catch {
