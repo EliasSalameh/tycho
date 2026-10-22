@@ -151,8 +151,7 @@ impl SubsidizedGroup<'_> {
     }
 }
 
-/// The solution's subsidy terms, or `None` when it has none or is cyclical. A cyclical solution
-/// encodes without its subsidy, as it would without subsidy terms.
+/// The solution's subsidy terms, or `None` when it has none or is cyclical.
 pub(crate) fn encoded_subsidy(solution: &Solution) -> Option<&SubsidyTerms> {
     if solution.token_in() == solution.token_out() {
         return None;
