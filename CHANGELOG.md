@@ -1,3 +1,55 @@
+## [0.475.1](https://github.com/propeller-heads/tycho/compare/0.475.0...0.475.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **simulation:** report Bebop quote HTTP errors with status and body ([1e5d82e](https://github.com/propeller-heads/tycho/commit/1e5d82e803e6632404ce67fd3776df68f77cbe87))
+* **simulation:** report Bebop quote HTTP errors with status and body ([#1652](https://github.com/propeller-heads/tycho/issues/1652)) ([3b3574c](https://github.com/propeller-heads/tycho/commit/3b3574c4852e1329d14fcc5243a473b4a903ab14))
+
+## [0.475.0](https://github.com/propeller-heads/tycho/compare/0.474.0...0.475.0) (2026-10-21)
+
+
+### Features
+
+* **execution:** support Metric fallbacks on Arbitrum ([7011570](https://github.com/propeller-heads/tycho/commit/7011570e3a1f8c0e30a663c69c56efede278e4c4))
+* **execution:** support Metric fallbacks on Arbitrum ([#1645](https://github.com/propeller-heads/tycho/issues/1645)) ([9f6d444](https://github.com/propeller-heads/tycho/commit/9f6d444142df6de85c6c9e250cf03d34d3e65cc3))
+
+
+### Bug Fixes
+
+* **router-trades:** name Arbitrum Metric fallback executor ([a9a51c2](https://github.com/propeller-heads/tycho/commit/a9a51c2793b789e348f67c3e8849a638d4df9f5f))
+
+## [0.474.0](https://github.com/propeller-heads/tycho/compare/0.473.0...0.474.0) (2026-10-21)
+
+
+### Features
+
+* **execution:** add the Base and BSC EkuboV3Executor addresses ([40ed48b](https://github.com/propeller-heads/tycho/commit/40ed48b3f0c4eb79a416662a98f1f74e50f444ab))
+* **execution:** configure EkuboV3Executor for Base and BSC ([6777488](https://github.com/propeller-heads/tycho/commit/67774889af59c345a2a8cb47fb01cc1ef84b006f))
+* **execution:** configure EkuboV3Executor for Base and BSC ([#1644](https://github.com/propeller-heads/tycho/issues/1644)) ([8b76f45](https://github.com/propeller-heads/tycho/commit/8b76f45ae9587a2ad20cab44743207e5a317b8d5))
+
+
+### Bug Fixes
+
+* **execution:** register the Base and BSC EkuboV3Executor addresses ([027a456](https://github.com/propeller-heads/tycho/commit/027a4568105c4bce400ac6c28ab7f369b06eae13))
+
+## [0.473.0](https://github.com/propeller-heads/tycho/compare/0.472.2...0.473.0) (2026-10-21)
+
+
+### Features
+
+* **simulation:** poll Metric every 2 s ([2fe0410](https://github.com/propeller-heads/tycho/commit/2fe0410b2ce73354d28bddee907fa756620e6c30))
+* **simulation:** poll Metric every 5 s ([74d296d](https://github.com/propeller-heads/tycho/commit/74d296d80384db4a5b9d7645769c73210499ad5a))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([64182a2](https://github.com/propeller-heads/tycho/commit/64182a2caa45fb69c709c5772d890633826e83cd))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([2335f06](https://github.com/propeller-heads/tycho/commit/2335f069b8a27a68d35964f92f6ce0ee5b27e2f2))
+* **simulation:** skip paused Metric pools and fetch quotes in batches ([#1638](https://github.com/propeller-heads/tycho/issues/1638)) ([8d6793f](https://github.com/propeller-heads/tycho/commit/8d6793fc6604feeec5195d1d75e99904489db851))
+
+
+### Bug Fixes
+
+* **integration-test:** execute price level venues directly ([49e5697](https://github.com/propeller-heads/tycho/commit/49e56973ee40377d2bec3925b51c3d69f3d39269))
+* **integration-test:** execute price level venues directly ([#1639](https://github.com/propeller-heads/tycho/issues/1639)) ([3680b63](https://github.com/propeller-heads/tycho/commit/3680b6386a242682397b185e81062de046f0a88b))
+
 ## [0.472.2](https://github.com/propeller-heads/tycho/compare/0.472.1...0.472.2) (2026-10-21)
 
 
