@@ -151,7 +151,17 @@ impl SubsidizedGroup<'_> {
     }
 }
 
-/// The swap group that carries the solution's subsidy, or `None` without a subsidy.
+/// The solution's subsidy terms, or `None` when it has none or is cyclical. A cyclical solution
+/// encodes without its subsidy, as it would without subsidy terms.
+pub(crate) fn encoded_subsidy(solution: &Solution) -> Option<&SubsidyTerms> {
+    if solution.token_in() == solution.token_out() {
+        return None;
+    }
+    solution.subsidy()
+}
+
+/// The swap group that carries the solution's subsidy, or `None` when [`encoded_subsidy`]
+/// is `None`.
 ///
 /// Expects a solution that passed [`validate_subsidy`]. Fails with `FatalError` when the chain
 /// has no subsidizing executor.
@@ -160,7 +170,7 @@ pub(crate) fn select_subsidized_group<'a>(
     groups: &'a [SwapGroup],
     swap_encoder_registry: &'a SwapEncoderRegistry,
 ) -> Result<Option<SubsidizedGroup<'a>>, EncodingError> {
-    let Some(terms) = solution.subsidy() else {
+    let Some(terms) = encoded_subsidy(solution) else {
         return Ok(None);
     };
     let group_index = find_subsidized_group(solution, terms, groups)?;
@@ -181,7 +191,7 @@ pub(crate) fn validate_subsidy(
     groups: &[SwapGroup],
     swap_encoder_registry: &SwapEncoderRegistry,
 ) -> Result<(), EncodingError> {
-    let Some(terms) = solution.subsidy() else {
+    let Some(terms) = encoded_subsidy(solution) else {
         return Ok(());
     };
     let group_index = find_subsidized_group(solution, terms, groups)?;
@@ -213,11 +223,6 @@ fn find_subsidized_group(
 
 /// Fails with `InvalidInput` unless the solution and its subsidy terms can carry a subsidy.
 fn validate_terms(solution: &Solution, terms: &SubsidyTerms) -> Result<(), EncodingError> {
-    if solution.token_in() == solution.token_out() {
-        return Err(EncodingError::InvalidInput(
-            "A cyclical solution cannot carry a subsidy".to_string(),
-        ));
-    }
     bytes_to_address(solution.sender())?;
     for (name, value) in [("amount", &terms.amount), ("min_amount_in", &terms.min_amount_in)] {
         if value.bits() > 256 {
@@ -481,6 +486,23 @@ mod tests {
         assert_eq!(group.group_index, expected);
     }
 
+    #[test]
+    fn test_cyclical_solution_drops_subsidy() {
+        let solution = solution(
+            WETH,
+            WETH,
+            vec![swap("uniswap_v2", WETH, DAI, 0.0), swap("uniswap_v2", DAI, WETH, 0.0)],
+            SubsidyTerms { subsidized_swap_index: 1, ..terms() },
+        );
+        let groups = group_swaps(solution.swaps());
+        let registry = SwapEncoderRegistry::new(Chain::Ethereum);
+
+        validate_subsidy(&solution, &groups, &registry).unwrap();
+        let group = select_subsidized_group(&solution, &groups, &registry).unwrap();
+
+        assert!(group.is_none());
+    }
+
     fn sequential_weth_dai_usdc() -> Vec<Swap> {
         vec![swap("uniswap_v2", WETH, DAI, 0.0), swap("uniswap_v2", DAI, USDC, 0.0)]
     }
@@ -492,13 +514,6 @@ mod tests {
         sequential_weth_dai_usdc(),
         2,
         "out of range"
-    )]
-    #[case::cyclical(
-        WETH,
-        WETH,
-        vec![swap("uniswap_v2", WETH, DAI, 0.0), swap("uniswap_v2", DAI, WETH, 0.0)],
-        1,
-        "cyclical"
     )]
     #[case::wrap_unwrap_chosen(
         DAI,

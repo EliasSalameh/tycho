@@ -252,6 +252,8 @@ impl Solution {
     ///   Encoding fails when `min_amount_out > expected_amount_out - amount`.
     /// - Router and client fees apply to the subsidy.
     /// - Until [`EncodedSolution::write_subsidy_signature`], the swaps fill without the subsidy.
+    /// - A cyclical solution (`token_in == token_out`) encodes without the subsidy, and its
+    ///   [`EncodedSolution::subsidy_signing_hash`] is `None`.
     pub fn with_subsidy(mut self, subsidy: SubsidyTerms) -> Self {
         self.subsidy = Some(subsidy);
         self

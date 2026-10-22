@@ -6,6 +6,7 @@ use super::{
         SIGNED_QUOTE_FALLBACK_PROTOCOL_SYSTEMS,
     },
     group_swaps::group_swaps,
+    subsidy::encoded_subsidy,
 };
 use crate::encoding::models::{Solution, Strategy, UserTransferType};
 
@@ -152,7 +153,7 @@ pub fn estimate_gas_usage(solution: &Solution, strategy: Strategy) -> BigUint {
             total_gas += BigUint::from(METRIC_FALLBACK_QUOTE_GAS);
         }
     }
-    if solution.subsidy().is_some() {
+    if encoded_subsidy(solution).is_some() {
         total_gas += BigUint::from(SUBSIDY_GAS);
     }
 
