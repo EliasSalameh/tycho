@@ -14,10 +14,11 @@
 //! can be checked against the chain, the test prints a GitHub `::warning::` and passes.
 //!
 //! Ignored by default: it dials the live Titan sockets and the RPC in `RPC_URL`, which it
-//! requires. Read-only — it
-//! simulates, and never sends a transaction. Run it with
-//! `cargo test -p tycho-integration-test --test pamm_simulation_overrides -- --ignored
-//! --nocapture`.
+//! requires. It only simulates and never sends a transaction. Run it with:
+//!
+//! ```text
+//! cargo test -p tycho-integration-test --test pamm_simulation_overrides -- --ignored --nocapture
+//! ```
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
