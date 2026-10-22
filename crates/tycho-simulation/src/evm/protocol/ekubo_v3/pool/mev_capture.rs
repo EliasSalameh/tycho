@@ -142,17 +142,14 @@ impl EkuboPool for MevCapturePool {
             &deleted_attributes,
         )?;
 
-        let last_tick_moved = self
-            .swap_state
-            .active_tick
-            .is_some_and(|active_tick| active_tick != self.swap_state.last_tick);
+        let start_tick = self.swap_state.last_tick;
         if let Some(active_tick) = self.swap_state.active_tick {
             self.swap_state.last_tick = active_tick;
         }
 
-        // The SDK pool charges the additional fee against the tick it was built with, so it is
-        // rebuilt whenever the block's starting tick moves, not only when the ticks change.
-        if ticks.is_some() || last_tick_moved {
+        // The SDK pool charges the MEV-capture fee by distance from the tick it was built with.
+        // Rebuild it when `last_tick` moves, even if no tick entry changed.
+        if ticks.is_some() || self.swap_state.last_tick != start_tick {
             let ticks = ticks.unwrap_or_else(|| {
                 self.imp
                     .concentrated_pool()
@@ -262,14 +259,14 @@ mod tests {
         .expect("valid pool")
     }
 
-    fn quote_token0(pool: &MevCapturePool) -> u128 {
-        pool.quote(TokenAmount { token: TOKEN0, amount: 1_000_000_000 }, None)
+    fn quote(pool: &MevCapturePool, token: Address) -> u128 {
+        pool.quote(TokenAmount { token, amount: 1_000_000_000 }, None)
             .expect("quote")
             .calculated_amount
     }
 
     #[test]
-    fn test_tick_only_transition_quotes_like_a_fresh_pool() {
+    fn test_finish_transition_tick_only() {
         let tick = 50;
         let mut transitioned = pool_at(0);
 
@@ -281,6 +278,8 @@ mod tests {
             )
             .expect("transition");
 
-        assert_eq!(quote_token0(&transitioned), quote_token0(&pool_at(tick)));
+        let fresh = pool_at(tick);
+        assert_eq!(quote(&transitioned, TOKEN0), quote(&fresh, TOKEN0));
+        assert_eq!(quote(&transitioned, TOKEN1), quote(&fresh, TOKEN1));
     }
 }
