@@ -79,10 +79,10 @@ pub async fn simulate_swap_transaction(
 }
 
 /// [`simulate_swap_transaction`], but on the state `block` was built on — its parent's — with
-/// `block`'s number, timestamp, coinbase and base fee: the call a client makes before `block`
-/// exists, such as one simulating a quote for the block a builder is building. The FermiSwap and
-/// BopAMM registry lanes are read from the parent's state too. A pending block, whose hash is
-/// zero, simulates on the pending state as [`simulate_swap_transaction`] does.
+/// `block`'s number and timestamp: the call a client makes before `block` exists, such as one
+/// simulating a quote for the block a builder is building. The FermiSwap and BopAMM registry lanes
+/// are read from the parent's state too. A pending block, whose hash is zero, simulates on the
+/// pending state as [`simulate_swap_transaction`] does.
 pub async fn simulate_swap_transaction_before_block(
     rpc_tools: &RPCTools,
     execution_info: HashMap<String, TychoExecutionInput>,
@@ -478,6 +478,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy::{
+        eips::BlockNumberOrTag,
         primitives::{address, b256},
         rpc::types::{BlockId, BlockOverrides, TransactionRequest},
     };
@@ -692,26 +693,35 @@ mod tests {
 
     const PARENT_HASH: B256 =
         b256!("00000000000000000000000000000000000000000000000000000000000000bb");
-    const COINBASE: Address = address!("4838b106fce9647bdf1e7877bf73ce8b0bad5f97");
+    const NUMBER: u64 = 26_201_954;
+    const TIMESTAMP: u64 = 1_792_115_927;
 
-    /// A mined block as the RPC returns one: a hash, a parent, a number, a timestamp, a
-    /// beneficiary and a base fee.
-    fn mined_block() -> Block {
+    /// A block numbered [`NUMBER`] at [`TIMESTAMP`], built on [`PARENT_HASH`]: mined when it has a
+    /// hash, pending when its hash is zero, as for a flashblock.
+    fn block(mined: bool) -> Block {
         let mut block: Block = Block::default();
-        block.header.hash =
-            b256!("00000000000000000000000000000000000000000000000000000000000000aa");
+        if mined {
+            block.header.hash =
+                b256!("00000000000000000000000000000000000000000000000000000000000000aa");
+        }
         block.header.parent_hash = PARENT_HASH;
-        block.header.number = 26_201_954;
-        block.header.timestamp = 1_792_115_927;
-        block.header.beneficiary = COINBASE;
-        block.header.base_fee_per_gas = Some(7);
+        block.header.number = NUMBER;
+        block.header.timestamp = TIMESTAMP;
         block
     }
 
-    /// Before the block, a simulation reads the parent's state, named by its hash, in the block's
-    /// own context: its number, timestamp, coinbase and base fee.
-    #[tokio::test]
-    async fn before_the_block_simulates_on_the_parent_in_the_blocks_context() {
+    /// The block's number and timestamp, the overrides of a simulation before a mined block.
+    fn number_and_time() -> Option<BlockOverrides> {
+        Some(BlockOverrides {
+            number: Some(U256::from(NUMBER)),
+            time: Some(TIMESTAMP),
+            ..Default::default()
+        })
+    }
+
+    /// Simulates one input for `block(mined)` on `base` against a mock RPC, and returns the block
+    /// id and the block overrides the `debug_traceCall` request carried.
+    async fn traced_call(base: SimulationBase, mined: bool) -> (BlockId, Option<BlockOverrides>) {
         let mut server = mockito::Server::new_async().await;
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
@@ -728,33 +738,45 @@ mod tests {
             .create_async()
             .await;
 
-        let results = simulate_in_batches(
-            &server.url(),
-            &simulation_inputs(1),
-            &mined_block(),
-            SimulationBase::BeforeBlock,
-        )
-        .await
-        .expect("the batch simulates");
+        simulate_in_batches(&server.url(), &simulation_inputs(1), &block(mined), base)
+            .await
+            .expect("the batch simulates");
 
-        assert_eq!(results.len(), 1);
         let requests = requests
             .lock()
             .expect("the lock is not poisoned");
         let params = &requests[0][0]["params"];
         let block_id: BlockId = serde_json::from_value(params[1].clone()).expect("a block id");
-        assert_eq!(block_id, BlockId::from(PARENT_HASH));
         let options: GethDebugTracingCallOptions =
             serde_json::from_value(params[2].clone()).expect("tracing call options");
-        assert_eq!(
-            options.block_overrides,
-            Some(BlockOverrides {
-                number: Some(U256::from(26_201_954u64)),
-                time: Some(1_792_115_927),
-                coinbase: Some(COINBASE),
-                base_fee: Some(U256::from(7u64)),
-                ..Default::default()
-            })
-        );
+        (block_id, options.block_overrides)
+    }
+
+    /// After a mined block, a simulation reads that block's state as it is.
+    #[tokio::test]
+    async fn after_a_mined_block_the_simulation_reads_its_state() {
+        let call = traced_call(SimulationBase::AfterBlock, true).await;
+
+        assert_eq!(call, (BlockId::from(NUMBER), None));
+    }
+
+    /// Before a mined block, a simulation reads the parent's state, named by its hash, with the
+    /// block's number and timestamp.
+    #[tokio::test]
+    async fn before_a_mined_block_the_simulation_reads_the_parent_in_its_context() {
+        let call = traced_call(SimulationBase::BeforeBlock, true).await;
+
+        assert_eq!(call, (BlockId::from(PARENT_HASH), number_and_time()));
+    }
+
+    /// A pending block reads the pending state, with no block overrides, whatever the base.
+    #[tokio::test]
+    async fn a_pending_block_reads_the_pending_state_whatever_the_base() {
+        let after = traced_call(SimulationBase::AfterBlock, false).await;
+        let before = traced_call(SimulationBase::BeforeBlock, false).await;
+
+        let pending = (BlockId::from(BlockNumberOrTag::Pending), None);
+        assert_eq!(after, pending);
+        assert_eq!(before, pending);
     }
 }

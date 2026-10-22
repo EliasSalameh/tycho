@@ -162,8 +162,8 @@ impl SolidityError {
 pub enum SimulationBase {
     /// The state after the block, in the block's own context.
     AfterBlock,
-    /// The state the block was built on — its parent's — in the block's context: its number,
-    /// timestamp, coinbase and base fee. The call a client makes before the block exists.
+    /// The state the block was built on — its parent's — with the block's number and timestamp:
+    /// the call a client makes before the block exists, when those two are all it knows of it.
     BeforeBlock,
 }
 
@@ -182,8 +182,8 @@ impl SimulationBase {
         }
     }
 
-    /// The block overrides a simulation for `block` runs with: `block`'s own context when the
-    /// state is its parent's, and none otherwise.
+    /// The block overrides a simulation for `block` runs with: `block`'s number and timestamp when
+    /// the state is its parent's, and none otherwise.
     fn block_overrides(self, block: &Block) -> Option<BlockOverrides> {
         if block.header.hash == B256::ZERO || self == SimulationBase::AfterBlock {
             return None;
@@ -191,11 +191,6 @@ impl SimulationBase {
         Some(BlockOverrides {
             number: Some(U256::from(block.number())),
             time: Some(block.header.timestamp),
-            coinbase: Some(block.header.beneficiary),
-            base_fee: block
-                .header
-                .base_fee_per_gas
-                .map(U256::from),
             ..Default::default()
         })
     }
