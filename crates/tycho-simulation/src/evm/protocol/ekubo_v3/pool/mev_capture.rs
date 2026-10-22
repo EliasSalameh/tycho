@@ -142,15 +142,27 @@ impl EkuboPool for MevCapturePool {
             &deleted_attributes,
         )?;
 
+        let last_tick_moved = self
+            .swap_state
+            .active_tick
+            .is_some_and(|active_tick| active_tick != self.swap_state.last_tick);
         if let Some(active_tick) = self.swap_state.active_tick {
             self.swap_state.last_tick = active_tick;
         }
 
-        if let Some(new_ticks) = ticks {
+        // The SDK pool charges the additional fee against the tick it was built with, so it is
+        // rebuilt whenever the block's starting tick moves, not only when the ticks change.
+        if ticks.is_some() || last_tick_moved {
+            let ticks = ticks.unwrap_or_else(|| {
+                self.imp
+                    .concentrated_pool()
+                    .ticks()
+                    .to_vec()
+            });
             self.imp = impl_from_state(
                 self.imp.key(),
                 self.swap_state.sdk_state,
-                new_ticks,
+                ticks,
                 self.swap_state.last_tick,
             )
             .map_err(|err| {
@@ -206,4 +218,69 @@ fn gas_costs(
     concentrated::gas_costs(concentrated) +
         EXTRA_BASE_GAS_COST +
         u64::from(state_update_count) * GAS_COST_OF_ONE_STATE_UPDATE
+}
+
+#[cfg(test)]
+mod tests {
+    use ekubo_sdk::{
+        chain::evm::{Evm, EvmMevCapturePoolConfig},
+        math::tick::to_sqrt_ratio,
+        quoting::{pools::concentrated::TickSpacing, types::TokenAmount},
+    };
+    use revm::primitives::address;
+
+    use super::*;
+    use crate::evm::protocol::ekubo_v3::addresses::MEV_CAPTURE_ADDRESS;
+
+    const TOKEN0: Address = address!("0x0000000000000000000000000000000000000001");
+    const TOKEN1: Address = address!("0x0000000000000000000000000000000000000002");
+    const LIQUIDITY: u128 = 1_000_000_000_000;
+    const TICKS: [Tick; 2] = [
+        Tick { index: -10_000, liquidity_delta: LIQUIDITY as i128 },
+        Tick { index: 10_000, liquidity_delta: -(LIQUIDITY as i128) },
+    ];
+
+    fn pool_at(tick: i32) -> MevCapturePool {
+        MevCapturePool::new(
+            EvmMevCapturePoolKey {
+                token0: TOKEN0,
+                token1: TOKEN1,
+                config: EvmMevCapturePoolConfig {
+                    fee: u64::MAX / 1_000,
+                    pool_type_config: TickSpacing(10),
+                    extension: MEV_CAPTURE_ADDRESS,
+                },
+            },
+            tick,
+            EvmConcentratedPoolState {
+                sqrt_ratio: to_sqrt_ratio::<Evm>(tick).expect("tick in range"),
+                liquidity: LIQUIDITY,
+                active_tick_index: Some(0),
+            },
+            TICKS.to_vec(),
+        )
+        .expect("valid pool")
+    }
+
+    fn quote_token0(pool: &MevCapturePool) -> u128 {
+        pool.quote(TokenAmount { token: TOKEN0, amount: 1_000_000_000 }, None)
+            .expect("quote")
+            .calculated_amount
+    }
+
+    #[test]
+    fn test_tick_only_transition_quotes_like_a_fresh_pool() {
+        let tick = 50;
+        let mut transitioned = pool_at(0);
+
+        transitioned.set_sqrt_ratio(to_sqrt_ratio::<Evm>(tick).expect("tick in range"));
+        transitioned
+            .finish_transition(
+                [("tick".to_string(), tick.to_be_bytes().into())].into(),
+                HashSet::new(),
+            )
+            .expect("transition");
+
+        assert_eq!(quote_token0(&transitioned), quote_token0(&pool_at(tick)));
+    }
 }
