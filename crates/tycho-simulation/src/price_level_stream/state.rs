@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -60,12 +61,12 @@ pub struct PriceLevelStreamState {
     /// frames they came from.
     #[serde(skip)]
     quotable_until: Option<Instant>,
-    /// The simulated pre-state the ladders were priced on, when the frame carrying them named
-    /// one. Unlike `quotable_until` this is persisted: it is the provenance of the price, so a
-    /// recording replays it and
-    /// [`with_simulation_overrides`](Self::with_simulation_overrides) is the only setter.
+    /// The account state Titan priced these quotes on, when one was found for them. Shared,
+    /// because every state a quote returns keeps it. Unlike `quotable_until` it is serialized, so
+    /// a recording replays it; [`with_simulation_overrides`](Self::with_simulation_overrides) is
+    /// the only setter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    overrides: Option<PammSimulationOverrides>,
+    overrides: Option<Arc<PammSimulationOverrides>>,
 }
 
 impl PriceLevelStreamState {
@@ -101,16 +102,19 @@ impl PriceLevelStreamState {
         self
     }
 
-    /// Attaches the simulated pre-state the ladders were priced on.
-    pub fn with_simulation_overrides(mut self, overrides: PammSimulationOverrides) -> Self {
-        self.overrides = Some(overrides);
+    /// Attaches the account state Titan priced these quotes on.
+    pub fn with_simulation_overrides(
+        mut self,
+        overrides: impl Into<Arc<PammSimulationOverrides>>,
+    ) -> Self {
+        self.overrides = Some(overrides.into());
         self
     }
 
-    /// The simulated pre-state the ladders were priced on, or `None` if the frame that carried
-    /// them named none.
+    /// The account state Titan priced these quotes on, to pass to `eth_call` as state overrides,
+    /// or `None` when none was found for them. Quoting never reads it.
     pub fn simulation_overrides(&self) -> Option<&PammSimulationOverrides> {
-        self.overrides.as_ref()
+        self.overrides.as_deref()
     }
 
     /// The monotonic instant from which this state refuses every query, or `None` if it never
@@ -201,8 +205,8 @@ impl PriceLevelStreamState {
     /// pre-fill venue only — post-fill pricing is unknown in either direction until the next
     /// snapshot, and re-reading the cumulative ladder would double-count the maker's liquidity.
     ///
-    /// The simulation overrides survive: they are the state the consumed fill was priced on, and
-    /// a consumer encoding the swap needs them after the quote, not only during it.
+    /// The simulation overrides are kept: they are the state the consumed fill was priced on, and
+    /// a consumer simulating the swap needs them after the quote, not only during it.
     fn consumed(&self) -> Box<dyn ProtocolSim> {
         Box::new(Self {
             token0: self.token0.clone(),
@@ -343,26 +347,19 @@ impl ProtocolSim for PriceLevelStreamState {
         self
     }
 
-    /// Equal when the pair, both ladders, the gas cost and the snapshot's **block** match.
+    /// Equal when the pair, both quote lists, the gas cost and the **block** of the simulation
+    /// overrides match.
     ///
-    /// Two of the snapshot's fields decide nothing here, and leaving them out is deliberate.
+    /// The overrides' accounts are left out. Quoting never reads them, and Titan republishes a
+    /// venue's accounts several times a second while its prices stand still, so comparing them
+    /// would report a changed quote for an unchanged price.
     ///
-    /// The overridden accounts are excluded. They are a verification aid: a consumer applies them
-    /// to its own `eth_call` to check a quote, and quoting never reads them. Titan re-publishes a
-    /// venue's accounts about nine times a second while the price levels stand still, so comparing
-    /// them reported a changed quote for an unchanged price in 19.3% of comparisons over a 13
-    /// minute recording, and a consumer that re-routes on change re-routed for nothing.
+    /// Their block is compared. Prices can be identical across a block boundary, and without the
+    /// block those two states would compare equal, so a consumer that keeps the state it holds
+    /// would simulate on the previous block's overrides.
     ///
-    /// `block_number` **is** compared, and it is what makes dropping the accounts safe. The
-    /// sequence encodes the beacon slot, so a new block always brings a new snapshot — but the
-    /// price levels themselves can be byte-identical across a block boundary, which happened 665
-    /// times across 34 of 48 pairs in the same recording. Without this field those states would
-    /// compare equal, a consumer would keep the one it holds, and it would verify against a
-    /// snapshot for the previous block. That `eth_call` reverts, and the fault would be ours.
-    ///
-    /// `quotable_until` is excluded for the same reason as the accounts: this process derives it,
-    /// it never survives serialization, and skipping a state only leaves the consumer on the
-    /// older, stricter deadline.
+    /// `quotable_until` is left out too: this process derives it, it is never serialized, and
+    /// keeping the state already held only leaves the consumer on the older, earlier deadline.
     fn eq(&self, other: &dyn ProtocolSim) -> bool {
         other
             .as_any()
@@ -768,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn with_simulation_overrides_sets_and_exposes_the_snapshot() {
+    fn with_simulation_overrides_sets_and_exposes_them() {
         assert_eq!(state().simulation_overrides(), None);
         assert_eq!(
             state()
@@ -778,58 +775,35 @@ mod tests {
         );
     }
 
-    /// `eq` compares the snapshot's block, not its accounts.
-    ///
-    /// A new block always brings a new snapshot, so comparing the block keeps a consumer from
-    /// holding a previous block's pre-state while believing nothing changed. The accounts churn
-    /// about nine times a second at an unchanged price, so comparing them reported a changed quote
-    /// for an unchanged price in 19.3% of comparisons over a 13 minute recording.
+    /// `eq` compares the block of the simulation overrides, not their accounts: see `eq`'s own
+    /// documentation.
     #[test]
     fn eq_compares_the_block_not_the_accounts() {
-        let stamped = || state().with_simulation_overrides(test_overrides());
-        assert!(stamped().eq(&stamped()));
+        let with_overrides = || state().with_simulation_overrides(test_overrides());
+        assert!(with_overrides().eq(&with_overrides()));
 
-        // Carrying a snapshot is itself a difference: one state can be verified and the other
-        // cannot.
-        assert!(!state().eq(&stamped()));
-        assert!(!stamped().eq(&state()));
+        // Carrying overrides is itself a difference: one state can be simulated with them and
+        // the other cannot.
+        assert!(!state().eq(&with_overrides()));
+        assert!(!with_overrides().eq(&state()));
 
-        // Same block, different accounts and a different build stamp: the same quote.
+        // Same block, different accounts, a different build time and so a different
+        // `expires_at`: the same quote.
         let mut rebuilt = test_overrides();
         rebuilt.built_at_ns += 1;
+        rebuilt.expires_at += 1;
         rebuilt.accounts.clear();
-        assert!(stamped().eq(&state().with_simulation_overrides(rebuilt)));
+        assert!(with_overrides().eq(&state().with_simulation_overrides(rebuilt)));
 
-        // A different block is a different quote, even with the ladders unchanged.
+        // A different block is a different quote, even with the quotes unchanged.
         let mut next_block = test_overrides();
         next_block.block_number = next_block
             .block_number
             .map(|block| block + 1);
-        assert!(!stamped().eq(&state().with_simulation_overrides(next_block)));
+        assert!(!with_overrides().eq(&state().with_simulation_overrides(next_block)));
     }
 
-    /// The narrowed deadline is this process's reading of when to stop simulating, not something
-    /// the venue said, so it must not make an unchanged quote look changed.
-    ///
-    /// The state narrows a snapshot's `expires_at` to the ladder deadline of the message that
-    /// carried the ladders, and that deadline is a wall-clock second: two messages a second apart
-    /// carrying one unchanged snapshot narrow it to two different values. Comparing it would
-    /// report every such message as a changed quote, and a consumer that reroutes on change would
-    /// reroute on a price that did not move.
-    #[test]
-    fn eq_ignores_a_renarrowed_override_deadline() {
-        let held = state().with_simulation_overrides(test_overrides());
-
-        let mut renarrowed = test_overrides();
-        renarrowed.expires_at += 1;
-        assert!(held.eq(&state().with_simulation_overrides(renarrowed)));
-
-        let mut earlier = test_overrides();
-        earlier.expires_at -= 1;
-        assert!(held.eq(&state().with_simulation_overrides(earlier)));
-    }
-
-    /// The consumed ladders are empty, but the successor still names the state the fill was
+    /// The consumed quotes are empty, but the successor still carries the state the fill was
     /// priced on.
     #[test]
     fn successor_state_keeps_the_overrides() {
@@ -845,9 +819,9 @@ mod tests {
         assert_eq!(successor.simulation_overrides(), Some(&test_overrides()));
     }
 
-    /// A real captured ladder carrying a real snapshot survives both serde_json shapes. Nothing
-    /// in the snapshot is wider than `u64` precisely so that it does: a `serde_json::Value`
-    /// cannot hold a wider integer at all.
+    /// A state built from captured quotes and carrying captured overrides survives both
+    /// serde_json shapes. Nothing in the overrides is wider than `u64` precisely so that it does:
+    /// a `serde_json::Value` cannot hold a wider integer at all.
     #[test]
     fn an_override_bearing_captured_state_round_trips_as_text_and_as_a_value() {
         let state = captured_state().with_simulation_overrides(test_overrides());
@@ -898,11 +872,11 @@ mod tests {
     ///
     /// Renaming the field, or giving it a serde rename, would silently break every recording
     /// rather than fail loudly: the old key would be ignored as an unknown field and the state
-    /// would read back unstamped. That is by design for recordings that genuinely predate the
-    /// field (see `a_legacy_typed_recording_reads_back_unstamped`), which is exactly why the name
-    /// itself has to be pinned here.
+    /// would read back without overrides. That is by design for recordings that genuinely predate
+    /// the field (see `a_legacy_typed_recording_reads_back_without_overrides`), which is
+    /// exactly why the name itself has to be pinned here.
     #[test]
-    fn the_persisted_snapshot_key_is_named_overrides() {
+    fn the_serialized_overrides_key_is_named_overrides() {
         let state = captured_state().with_simulation_overrides(test_overrides());
 
         let text = serde_json::to_string(&state).expect("serializes");
@@ -911,21 +885,21 @@ mod tests {
         let typed = serde_json::to_value(&state).expect("serializes");
         let boxed = serde_json::to_value(&state as &dyn ProtocolSim).expect("serializes");
         for json in [&typed, &boxed["state"]] {
-            let snapshot = json
+            let overrides = json
                 .as_object()
                 .expect("an object")
                 .get("overrides")
-                .expect("the state object names the snapshot `overrides`");
+                .expect("the state object names them `overrides`");
             let read: PammSimulationOverrides =
-                serde_json::from_value(snapshot.clone()).expect("the snapshot under that key");
+                serde_json::from_value(overrides.clone()).expect("the overrides under that key");
             assert_eq!(read, test_overrides());
         }
     }
 
-    /// A recording made before the field existed reads back as a state that was priced on no
-    /// snapshot, rather than failing on the missing key.
+    /// A recording made before the field existed reads back as a state without overrides, rather
+    /// than failing on the missing key.
     #[test]
-    fn a_legacy_typed_recording_reads_back_unstamped() {
+    fn a_legacy_typed_recording_reads_back_without_overrides() {
         let read: PriceLevelStreamState = serde_json::from_str(LEGACY_STATE).expect("reads back");
         assert_eq!(read.simulation_overrides(), None);
         assert_eq!(read.quotes_0_to_1, vec![quote(100_000_000, 100_000_000_000)]);
@@ -937,7 +911,9 @@ mod tests {
     #[rstest]
     #[case::tag_before_content(tag_first)]
     #[case::content_before_tag(content_first)]
-    fn a_legacy_boxed_recording_reads_back_unstamped(#[case] recording: fn(&str, &str) -> String) {
+    fn a_legacy_boxed_recording_reads_back_without_overrides(
+        #[case] recording: fn(&str, &str) -> String,
+    ) {
         let boxed: Box<dyn ProtocolSim> =
             serde_json::from_str(&recording(TAG, LEGACY_STATE)).expect("reads back");
         let read = boxed
@@ -948,7 +924,7 @@ mod tests {
         assert_eq!(read.quotes_0_to_1, vec![quote(100_000_000, 100_000_000_000)]);
     }
 
-    /// And a state priced on no snapshot writes that same legacy shape, so a recording made now
+    /// And a state without overrides writes that same legacy shape, so a recording made now
     /// stays readable by a consumer that has not learned the field.
     #[test]
     fn a_state_without_overrides_serializes_without_the_key() {

@@ -3,13 +3,13 @@
 //! Titan serves two pAMM WebSockets, both read by [`messages`]:
 //!
 //! - `pamm_price_levels_v2` (see <https://docs.titanbuilder.xyz/propamms/takers#pamm-price-level>)
-//!   yields the books Titan simulated in one build round, targeting the block it is currently
+//!   yields the books Titan simulated in one pricing round, targeting the block it is currently
 //!   building. Consumers decide how fresh a component is from the frame `ts`, not from what a frame
 //!   omits.
 //! - `pamm_quote_stream_v2` yields, per venue, the account state Titan simulated that venue on to
-//!   produce those books, together with the pair versions the books were priced at. A book names
-//!   its version in `calculated_from`; a venue entry names the same number per pair, which is how a
-//!   snapshot is matched to the ladder it belongs to.
+//!   produce those books, together with the quote sequence of each pair that state carries. A book
+//!   names its quote sequence in `calculated_from`, which is how the account state is matched to
+//!   the books it belongs to.
 //!
 //! All Titan specifics (endpoints, JSON shapes, reconnect policy, and what a payload has to look
 //! like to be used at all) live in this module; the rest of the price level stream machinery is
@@ -30,7 +30,7 @@ use tracing::{info, warn};
 use tycho_common::Bytes;
 
 use super::{
-    overrides::{AccountOverride, PammSimulationOverrides},
+    overrides::{expires_at, AccountOverride, PammSimulationOverrides},
     telemetry::{self, ReconnectReason, RejectReason},
     SLOT,
 };
@@ -44,8 +44,8 @@ pub(super) const TITAN_PRICE_LEVEL_URL: &str =
 /// endpoint.
 pub(super) const TITAN_PRICE_LEVEL_URL_ENV: &str = "TITAN_PAMM_PRICE_LEVEL_URL";
 
-/// Default Titan pAMM quote stream WebSocket endpoint: the simulated pre-state behind the price
-/// level books, from the same region.
+/// Default Titan pAMM quote stream WebSocket endpoint: the account state behind the price level
+/// books, from the same region.
 pub(super) const TITAN_QUOTE_STREAM_URL: &str =
     "wss://eu.data.titanbuilder.xyz/ws/pamm_quote_stream_v2";
 
@@ -63,7 +63,7 @@ const ADDRESS_BYTES: usize = 20;
 /// A 32-byte EVM word, the width of every storage slot and stored value.
 const WORD_BYTES: usize = 32;
 
-/// How many accounts one venue entry may override before its snapshot is refused whole.
+/// How many accounts one venue entry may override before it is refused whole.
 const MAX_ACCOUNTS: usize = 32;
 
 /// How many storage words one venue entry may override across all its accounts.
@@ -110,12 +110,12 @@ fn deadline_after(idle_timeout: Duration) -> Instant {
     Instant::now() + idle_timeout.min(Duration::from_secs(u32::MAX.into()))
 }
 
-/// A frame of one of Titan's two pAMM sockets.
+/// A message of one of Titan's two pAMM sockets.
 ///
-/// The socket label is a property of the frame type rather than of the caller, so the one reader
+/// The socket label is a property of the message type rather than of the caller, so the one reader
 /// both sockets share cannot attribute one socket's traffic to the other. It is a fixed string,
 /// never anything the stream carries.
-pub(super) trait TitanFrame: DeserializeOwned + Send {
+pub(super) trait TitanMessage: DeserializeOwned + Send {
     const SOCKET: &'static str;
 }
 
@@ -144,53 +144,44 @@ pub(super) struct TitanPriceLevelMessage {
     pub books: Vec<TitanBook>,
 }
 
-impl TitanFrame for TitanPriceLevelMessage {
+impl TitanMessage for TitanPriceLevelMessage {
     const SOCKET: &'static str = "price_levels";
 }
 
-/// Where a book's ladders came from: the version of the pair the venue priced them at, as the
-/// stream's `calculated_from`.
+/// The quote sequence a book names in `calculated_from`: the one its price levels were priced at.
 ///
-/// The three states are told apart here, at the parse boundary, because nothing downstream can:
-/// an absent reference and a present unreadable one are both "no sequence to match a snapshot
-/// against", yet only the second says the producer sent something this parser does not
-/// understand.
+/// The three cases are told apart here, at the parse boundary, because nothing downstream can: an
+/// absent quote sequence and an unreadable one both leave nothing to match, yet only the second
+/// says Titan sent something this parser does not understand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Provenance {
-    /// The book named no reference — the field was missing or null — so there is nothing to
-    /// match a snapshot against.
+pub(super) enum QuoteSequence {
+    /// The book named none: the field was missing or null.
     #[default]
     Absent,
-    /// The book was priced at this version of its pair.
+    /// The book was priced at this quote sequence.
     Valid(u128),
-    /// The book named something this parser cannot read as a version: a string, a boolean, a
-    /// fraction, a negative, a number above `u128`, or a composite. Never trusted, and never a
-    /// reason to drop the book — the ladders are what quote, and the reference is metadata about
-    /// them.
-    ///
-    /// The tracker's `PairProvenance::of_book` is where this variant and [`Self::Absent`] collapse
-    /// into one, so it is the one place that can still tell a producer which sent an unreadable
-    /// reference from one that sent none — and the place that counts it, under
-    /// `invalid_provenance_total`.
-    Invalid,
+    /// The book named something this parser cannot read as a quote sequence: a string, a
+    /// boolean, a fraction, a negative, a number above `u128`, or a composite. Never a reason to
+    /// drop the book: the price levels are what quote, and the quote sequence is only used to find
+    /// their simulation overrides. Counted under `unreadable_quote_sequence_total`.
+    Unreadable,
 }
 
-/// Reads `calculated_from` as a [`Provenance`] without ever failing the frame.
+/// Reads `calculated_from` as a [`QuoteSequence`] without ever failing the message.
 ///
-/// A plain `Option<u128>` handles absence and then rejects the whole frame — every venue's
-/// ladders in it — over one unreadable reference on one book, which turns optional provenance
-/// metadata into a quoting liveness hazard. Leniency stops at the JSON itself: text that is not
-/// JSON still rejects the message.
-fn lenient_sequence<'de, D>(deserializer: D) -> Result<Provenance, D::Error>
+/// A plain `Option<u128>` would reject the whole message, and every venue's quotes in it, over
+/// one unreadable value on one book. Leniency stops at the JSON itself: text that is not JSON
+/// still rejects the message.
+fn lenient_sequence<'de, D>(deserializer: D) -> Result<QuoteSequence, D::Error>
 where
     D: Deserializer<'de>,
 {
     let raw = Box::<RawValue>::deserialize(deserializer)?;
     let text = raw.get();
     if text.trim() == "null" {
-        return Ok(Provenance::Absent);
+        return Ok(QuoteSequence::Absent);
     }
-    Ok(serde_json::from_str::<u128>(text).map_or(Provenance::Invalid, Provenance::Valid))
+    Ok(serde_json::from_str::<u128>(text).map_or(QuoteSequence::Unreadable, QuoteSequence::Valid))
 }
 
 /// One venue's two-sided quote ladder for one pair, priced in `token2` per `token1`.
@@ -227,10 +218,11 @@ pub(super) struct TitanBook {
     pub token1_address: Bytes,
     /// The address of the quote token — the asset `price` is measured in.
     pub token2_address: Bytes,
-    /// The version of the pair this book was priced at, which the override stream repeats per
-    /// pair. Read leniently, and read for nothing but matching a snapshot: see [`Provenance`].
+    /// The quote sequence this book was priced at, which the quote stream names per pair. Read
+    /// leniently, and used for nothing but finding the book's simulation overrides: see
+    /// [`QuoteSequence`].
     #[serde(rename = "calculated_from", default, deserialize_with = "lenient_sequence")]
-    pub calculated_from: Provenance,
+    pub calculated_from: QuoteSequence,
     pub asks: Vec<TitanLevel>,
     pub bids: Vec<TitanLevel>,
 }
@@ -250,45 +242,44 @@ pub(super) struct TitanLevel {
     pub cum_volume: f64,
 }
 
-/// A parsed quote stream frame: the simulated pre-state of every venue Titan priced in one build
-/// round, one entry per venue.
+/// A parsed quote stream message: the account state of every venue Titan priced in one round, one
+/// entry per venue.
 ///
-/// The frame carries no stamp of its own — every stamp is per venue entry — and its entries are
-/// best effort in exactly the way price level books are: a venue present in one frame can be
-/// absent from the next without having retired.
+/// Each entry is kept as raw JSON and decoded on its own by [`validate`], so an entry this parser
+/// cannot read costs that entry and not the rest of the message. The message carries no timestamp
+/// of its own, and like price level messages it is best effort: a venue present in one message can
+/// be absent from the next without having retired.
 #[derive(Debug, Deserialize)]
 pub(super) struct TitanOverrideMessage {
-    pub venues: Vec<TitanVenueOverride>,
+    pub venues: Vec<Box<RawValue>>,
 }
 
-impl TitanFrame for TitanOverrideMessage {
+impl TitanMessage for TitanOverrideMessage {
     const SOCKET: &'static str = "quote_stream";
 }
 
-/// One venue's entry: the accounts Titan overrode to price the venue, and the pair versions the
-/// ladders it produced were priced at.
-///
-/// The stream also carries a `pricedAddresses` list, which nothing here reads: a snapshot is
-/// matched to a book by `quote_address` and a pair version, not by the addresses a venue happens
-/// to price through.
+/// One venue's entry: the accounts Titan overrode to price the venue, and the quote sequence of
+/// each pair that state carries.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TitanVenueOverride {
-    /// The venue address this entry's snapshot belongs to — the same join key the price level
+    /// The venue address this entry's state belongs to — the same address the price level
     /// stream's books carry, and not necessarily the venue's executable address.
     pub quote_address: Bytes,
-    /// The L1 block the snapshot is to be simulated on, when Titan names one.
+    /// The quote address plus every venue whose swaps read this entry's state, per Titan's docs.
+    #[serde(default)]
+    pub priced_addresses: Vec<Bytes>,
+    /// The L1 block Titan was building, when it names one.
     pub block_number: Option<u64>,
-    /// The beacon slot the entry was built for: the only source of a block timestamp.
+    /// The beacon slot of that block: the only source of its timestamp.
     pub slot: Option<u64>,
-    /// When Titan built the entry, in nanoseconds since the Unix epoch.
+    /// When Titan took this state, in nanoseconds since the Unix epoch.
     pub timestamp: Option<u64>,
-    /// The pairs this entry's sequences belong to, positionally.
+    /// The pairs the entry's quote sequences belong to, by position.
     #[serde(default)]
     pub asset_pairs: Vec<TitanAssetPair>,
-    /// The version each pair was priced at, one per [`Self::asset_pairs`] entry in the same
-    /// order. Several pairs of one entry can share a version: Titan stamps a batch of pairs with
-    /// one sequence.
+    /// The quote sequence of each [`Self::asset_pairs`] entry, in the same order. Several pairs of
+    /// one entry can share a quote sequence: Titan prices a batch of pairs at once.
     #[serde(default)]
     pub pair_sequences: Vec<u128>,
     /// The accounts the simulation overrode, keyed by address.
@@ -296,8 +287,8 @@ pub(super) struct TitanVenueOverride {
     pub state_override: BTreeMap<Bytes, TitanAccountOverride>,
 }
 
-/// One pair of a venue entry. Unlike the rest of the frame, the stream names these two fields in
-/// snake case.
+/// One pair of a venue entry. Unlike the rest of the message, the stream names these two fields
+/// in snake case.
 #[derive(Debug, Deserialize)]
 pub(super) struct TitanAssetPair {
     pub token_1: Bytes,
@@ -324,51 +315,48 @@ pub(super) struct TitanAccountOverride {
     pub state: Option<IgnoredAny>,
 }
 
-/// The validated contents of one venue entry: a snapshot of the state Titan priced the venue on,
-/// and the pair versions it priced.
+/// The validated contents of one venue entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct VenueOverrides {
     /// The venue address the entry was streamed under, exactly as Titan named it: the caller
-    /// canonicalizes it, as it does a book's.
+    /// normalizes it through the alias table, as it does a book's.
     pub quote_address: Bytes,
-    /// The pair versions the entry advertised, in Titan's order and Titan's orientation.
-    pub pairs: Vec<PairVersion>,
+    /// The other venues whose swaps read this entry's state, exactly as Titan named them.
+    pub priced_addresses: Vec<Bytes>,
+    /// The quote sequence of each pair, in Titan's order and Titan's orientation.
+    pub pairs: Vec<PairSequence>,
     /// The accounts the simulation overrode, keyed by address.
     pub accounts: BTreeMap<Bytes, AccountOverride>,
-    /// The block the snapshot is to be simulated on, when the entry named one.
+    /// The block Titan was building, when the entry named one.
     pub block_number: Option<u64>,
-    /// The second that block is to be simulated at, derived from the entry's beacon slot. `None`
-    /// when the entry named no slot: a simulation then uses the block's own timestamp. Measured
-    /// over 71,762 entries, every one named a slot.
+    /// The beacon slot of that block, when the entry named one.
+    pub slot: Option<u64>,
+    /// The Unix second of that slot. `None` when the entry named no slot.
     pub block_timestamp: Option<u64>,
-    /// When Titan built the entry, in nanoseconds since the Unix epoch. Orders two builds of one
-    /// venue's snapshot, which is not the order they were received in.
+    /// When Titan took this state, in nanoseconds since the Unix epoch. Orders two entries of one
+    /// quote sequence, which is not the order they were received in.
     pub built_at_ns: u64,
 }
 
 impl VenueOverrides {
-    /// The snapshot as it is retained and serialized, given the `expires_at` second the admitting
-    /// clock fixed for it.
-    ///
-    /// The deadline is the one thing validation cannot supply: it is a function of when the
-    /// snapshot was admitted, not of anything Titan sent.
-    pub fn snapshot(&self, expires_at: u64) -> PammSimulationOverrides {
+    /// The entry's simulation overrides, as a state carries them.
+    pub fn overrides(&self) -> PammSimulationOverrides {
         PammSimulationOverrides {
             accounts: self.accounts.clone(),
             block_number: self.block_number,
             block_timestamp: self.block_timestamp,
             built_at_ns: self.built_at_ns,
-            expires_at,
+            expires_at: expires_at(self.built_at_ns),
         }
     }
 }
 
-/// One version a venue entry advertised: the pair, and the sequence its ladders were priced at.
+/// One pair of a venue entry and the quote sequence its state carries for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PairVersion {
+pub(super) struct PairSequence {
     pub token_1: Bytes,
     pub token_2: Bytes,
-    /// The number a book of the price level stream repeats in its `calculated_from`.
+    /// The number a book of the price level stream names in its `calculated_from`.
     pub sequence: u128,
 }
 
@@ -383,87 +371,108 @@ pub(super) enum EntryOutcome {
 
 /// Why a venue entry was refused whole.
 ///
-/// An entry is never partially used: a payload that contradicts the documented shape is evidence
-/// about the whole payload, and half a snapshot simulates a state no venue was ever in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An entry is never partly used: the accounts of one entry were simulated together, so half of
+/// them describe a state no venue was ever in. Each variant's name in snake case is the `reason`
+/// label it is counted under.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum_macros::IntoStaticStr,
+    strum_macros::EnumIter,
+    strum_macros::EnumCount,
+)]
+#[strum(serialize_all = "snake_case")]
 pub(super) enum EntryRejection {
-    /// `quote_address` is not an address, so the entry cannot be attributed to a venue at all.
+    /// The entry is not JSON of the documented shape: a field of the wrong type, or a value that
+    /// does not fit its field.
+    Undecodable,
+    /// The entry's `quoteAddress`, or an address in its `pricedAddresses`, is not 20 bytes.
     NotAVenue,
-    /// An overridden account is not keyed by an address.
+    /// An overridden account is not keyed by a 20-byte address.
     NotAnAccount,
-    /// A pair names something that is not an address.
+    /// A pair names something that is not a 20-byte address.
     MalformedPair,
     /// A storage slot or a stored word is not a 32-byte EVM word.
     MalformedStorage,
     /// A balance or a nonce is not a hex quantity, or a nonce does not fit the field that carries
     /// it.
     MalformedQuantity,
-    /// The entry named no `timestamp`, so nothing orders one build of its snapshot against
-    /// another.
-    Unstamped,
-    /// The pairs and the sequences disagree in length, leaving it unknown which sequence belongs
-    /// to which pair. Zipping the shorter of the two would advertise the snapshot under a pair
-    /// version it was never priced at.
-    SequenceMismatch,
+    /// The entry named no `timestamp`, so nothing orders it against another entry of the same
+    /// quote sequence.
+    NoTimestamp,
+    /// `assetPairs` and `pairSequences` have different lengths, so which quote sequence belongs to
+    /// which pair is unknown.
+    PairsAndSequencesDiffer,
     /// The entry carried no pair, or no account: nothing to match, or nothing to simulate.
     ///
-    /// **This is the one refusal with a permanent baseline, and it is not a fault.** Titan sends
-    /// about 1.2% of its venue entries carrying a `quoteAddress` and a `timestamp` and nothing
-    /// else — roughly 1.1 per second, spread across every venue, measured over 71,762 entries on
-    /// 2026-10-21. Any alert on `refused_override_entries_total` must exclude `reason="no_data"`,
-    /// or it fires forever and buries a genuine refusal inside the floor.
-    NoData,
-    /// An account overrode its code, or replaced its whole storage instead of diffing it, so the
-    /// snapshot no longer describes the venue the chain holds.
+    /// **This refusal has a permanent baseline and is not a fault.** About 1.2% of Titan's entries
+    /// carry a `quoteAddress` and a `timestamp` and nothing else, roughly one a second, measured
+    /// over 77,377 entries on 2026-10-21. Alerts on refused entries must exclude this reason.
+    Empty,
+    /// An account replaced its code, or its whole storage instead of diffing it, so the entry no
+    /// longer describes the venue the chain holds.
     UnsupportedOverride,
-    /// The snapshot is past a per-entry cap: [`MAX_ACCOUNTS`] accounts or [`MAX_SLOTS`] storage
-    /// words.
+    /// The entry overrides more than [`MAX_ACCOUNTS`] accounts or [`MAX_SLOTS`] storage words.
     OverCap,
 }
 
-/// Validates every venue entry of `frame`, in stream order: one outcome per entry.
-pub(super) fn validate(frame: TitanOverrideMessage) -> Vec<EntryOutcome> {
-    frame
+/// Validates every venue entry of `message`, in stream order: one outcome per entry.
+pub(super) fn validate(message: TitanOverrideMessage) -> Vec<EntryOutcome> {
+    message
         .venues
         .into_iter()
-        .map(|entry| match validated(entry) {
-            Ok(overrides) => EntryOutcome::Accepted(overrides),
-            Err(rejection) => EntryOutcome::Rejected(rejection),
+        .map(|raw| {
+            let decoded = serde_json::from_str::<TitanVenueOverride>(raw.get())
+                .map_err(|_| EntryRejection::Undecodable)
+                .and_then(validated);
+            match decoded {
+                Ok(overrides) => EntryOutcome::Accepted(overrides),
+                Err(rejection) => EntryOutcome::Rejected(rejection),
+            }
         })
         .collect()
 }
 
 /// The entry's contents, or the first reason it cannot be used.
 fn validated(entry: TitanVenueOverride) -> Result<VenueOverrides, EntryRejection> {
-    if entry.quote_address.len() != ADDRESS_BYTES {
+    if entry.quote_address.len() != ADDRESS_BYTES ||
+        entry
+            .priced_addresses
+            .iter()
+            .any(|address| address.len() != ADDRESS_BYTES)
+    {
         return Err(EntryRejection::NotAVenue);
     }
     let Some(built_at_ns) = entry.timestamp else {
-        return Err(EntryRejection::Unstamped);
+        return Err(EntryRejection::NoTimestamp);
     };
     if entry.asset_pairs.len() != entry.pair_sequences.len() {
-        return Err(EntryRejection::SequenceMismatch);
+        return Err(EntryRejection::PairsAndSequencesDiffer);
     }
     if entry.asset_pairs.is_empty() || entry.state_override.is_empty() {
-        return Err(EntryRejection::NoData);
+        return Err(EntryRejection::Empty);
     }
     ensure_within_caps(&entry.state_override)?;
 
     Ok(VenueOverrides {
         quote_address: entry.quote_address,
-        pairs: pair_versions(entry.asset_pairs, &entry.pair_sequences)?,
+        priced_addresses: entry.priced_addresses,
+        pairs: pair_sequences(entry.asset_pairs, &entry.pair_sequences)?,
         accounts: validated_accounts(entry.state_override)?,
         block_number: entry.block_number,
+        slot: entry.slot,
         block_timestamp: block_timestamp(entry.slot),
         built_at_ns,
     })
 }
 
-/// Errors unless the snapshot fits every per-entry cap.
+/// Errors unless the entry fits every per-entry cap.
 ///
 /// Counted on Titan's own values, before any width is checked, so one entry cannot make this
-/// process retain more than the caps allow even when its widths turn out wrong. A word that is
-/// not 32 bytes is refused separately, as [`EntryRejection::MalformedStorage`].
+/// process hold more than the caps allow even when its widths turn out wrong.
 fn ensure_within_caps(
     accounts: &BTreeMap<Bytes, TitanAccountOverride>,
 ) -> Result<(), EntryRejection> {
@@ -480,27 +489,27 @@ fn ensure_within_caps(
     Ok(())
 }
 
-/// Pairs each asset pair with the sequence at its own position. The lengths are equal by the time
-/// this runs, so no pair is left without a version and no version without a pair.
-fn pair_versions(
+/// Pairs each asset pair with the quote sequence at its own position. The lengths are equal by
+/// the time this runs.
+fn pair_sequences(
     pairs: Vec<TitanAssetPair>,
     sequences: &[u128],
-) -> Result<Vec<PairVersion>, EntryRejection> {
-    let mut versions = Vec::with_capacity(pairs.len());
+) -> Result<Vec<PairSequence>, EntryRejection> {
+    let mut paired = Vec::with_capacity(pairs.len());
     for (pair, sequence) in pairs.into_iter().zip(sequences) {
         if pair.token_1.len() != ADDRESS_BYTES || pair.token_2.len() != ADDRESS_BYTES {
             return Err(EntryRejection::MalformedPair);
         }
-        versions.push(PairVersion {
+        paired.push(PairSequence {
             token_1: pair.token_1,
             token_2: pair.token_2,
             sequence: *sequence,
         });
     }
-    Ok(versions)
+    Ok(paired)
 }
 
-/// The overridden accounts as the snapshot retains them: quantities decoded, widths checked.
+/// The overridden accounts with their quantities decoded and their widths checked.
 fn validated_accounts(
     streamed: BTreeMap<Bytes, TitanAccountOverride>,
 ) -> Result<BTreeMap<Bytes, AccountOverride>, EntryRejection> {
@@ -585,7 +594,7 @@ fn block_timestamp(slot: Option<u64>) -> Option<u64> {
 ///
 /// Both Titan sockets are read through this one function; the frame type names which socket its
 /// logs describe.
-pub(super) fn messages<T: TitanFrame>(
+pub(super) fn messages<T: TitanMessage>(
     url: String,
     settings: ConnectionSettings,
 ) -> impl Stream<Item = T> + Send {
@@ -749,23 +758,21 @@ mod tests {
     const CAPTURED_MESSAGE: &str =
         include_str!("test_responses/pamm_price_levels_v2_1792115918290990905.json");
 
-    /// Override frames captured verbatim from the live `pamm_quote_stream_v2` socket
-    /// (2026-10-16). The frames carry no timestamp of their own — every stamp is per venue entry —
-    /// so the file names carry the nanosecond the capture received each frame at. That stamp lives
-    /// in the capture's envelope, not in the frame, so unlike the price level fixtures above these
-    /// two names cannot be checked against their own contents.
+    /// Quote stream messages captured verbatim from the live `pamm_quote_stream_v2` socket
+    /// (2026-10-16). A message carries no timestamp of its own — every timestamp is per venue
+    /// entry — so the file names carry the nanosecond the capture received each message at, which
+    /// unlike the price level fixtures above cannot be checked against their contents.
     const CAPTURED_OVERRIDES: &str =
         include_str!("test_responses/pamm_quote_stream_v2_1792115920248724389.json");
     const EARLIER_CAPTURED_OVERRIDES: &str =
         include_str!("test_responses/pamm_quote_stream_v2_1792115920051017671.json");
 
-    /// The venue Metric streams under, which stamps all eight of its pairs with one sequence.
+    /// The venue Metric streams under, whose entry prices all eight of its pairs at one quote
+    /// sequence.
     const METRIC: &str = "0xe844701934d9c6085b292e428f41b911cc0b3872";
     /// The venue Goliath streams under, whose entry of [`CAPTURED_OVERRIDES`] [`test_overrides`]
     /// transcribes by hand.
     const GOLIATH: &str = "0x4367985a63063fc970b009c6e599e9225181f551";
-    /// The second [`test_overrides`] records the Goliath snapshot as expiring at.
-    const GOLIATH_EXPIRES_AT: u64 = 1_792_115_932;
     /// The account that entry overrides a balance and a nonce of, and nothing else.
     const METRIC_ACCOUNT: &str = "0x629ef4396ec73973b5ea25c3f0cd1c45cd73948e";
     /// A token of the entry's fifth pair (`LINK`), which the defaults never bound.
@@ -836,7 +843,7 @@ mod tests {
     }
 
     /// `maker` is a display label the stream sometimes leaves empty or omits, and
-    /// `calculated_from` is the pair version the book was priced at — a number that overflows
+    /// `calculated_from` is the quote sequence the book was priced at — a number that overflows
     /// `u64`, which is why it is read as a `u128`.
     #[rstest]
     #[case::named_maker(r#""maker": "Fermi","#, Some("Fermi"))]
@@ -864,7 +871,7 @@ mod tests {
         let book: TitanBook = serde_json::from_str(&json).expect("valid book");
         assert_eq!(book.maker.as_deref(), expected);
         assert_eq!(book.quote_address, Bytes::from_str(PAMM).unwrap());
-        assert_eq!(book.calculated_from, Provenance::Valid(283_851_543_383_726_791_766_048_878));
+        assert_eq!(book.calculated_from, QuoteSequence::Valid(283_851_543_383_726_791_766_048_878));
         assert_eq!(book.asks.len(), 1);
         assert_eq!(book.asks[0].price, 80997.89405475458);
         assert_eq!(book.asks[0].cum_volume, 0.00012346);
@@ -1078,7 +1085,16 @@ mod tests {
     }
 
     fn parsed(frame: &str) -> TitanOverrideMessage {
-        serde_json::from_str(frame).expect("a valid override frame")
+        serde_json::from_str(frame).expect("a valid quote stream message")
+    }
+
+    /// Every venue entry of `frame`, decoded on its own as [`validate`] decodes it.
+    fn decoded(frame: &str) -> Vec<TitanVenueOverride> {
+        parsed(frame)
+            .venues
+            .iter()
+            .map(|raw| serde_json::from_str(raw.get()).expect("a decodable venue entry"))
+            .collect()
     }
 
     /// The accepted entries of `frame`. An entry carrying neither a pair nor an account is
@@ -1088,7 +1104,7 @@ mod tests {
             .into_iter()
             .filter_map(|outcome| match outcome {
                 EntryOutcome::Accepted(overrides) => Some(overrides),
-                EntryOutcome::Rejected(EntryRejection::NoData) => None,
+                EntryOutcome::Rejected(EntryRejection::Empty) => None,
                 EntryOutcome::Rejected(reason) => panic!("rejected a captured entry: {reason:?}"),
             })
             .collect()
@@ -1096,20 +1112,18 @@ mod tests {
 
     #[test]
     fn parses_the_captured_override_frames() {
-        let message = parsed(CAPTURED_OVERRIDES);
-        assert_eq!(message.venues.len(), 9);
-        assert_eq!(
-            parsed(EARLIER_CAPTURED_OVERRIDES)
-                .venues
-                .len(),
-            9
-        );
+        let venues = decoded(CAPTURED_OVERRIDES);
+        assert_eq!(venues.len(), 9);
+        assert_eq!(decoded(EARLIER_CAPTURED_OVERRIDES).len(), 9);
 
-        let metric = message
-            .venues
+        let metric = venues
             .iter()
             .find(|venue| venue.quote_address == address(METRIC))
             .expect("the Metric entry");
+        // Metric names its router, among other venues, as reading this entry's state.
+        assert!(metric
+            .priced_addresses
+            .contains(&address("0x99ab7c1c5eab47801f7937075998527a550fba8a")));
         assert_eq!(metric.block_number, Some(26_201_954));
         assert_eq!(metric.slot, Some(15_440_992));
         assert_eq!(metric.timestamp, Some(1_792_115_920_126_438_314));
@@ -1128,18 +1142,18 @@ mod tests {
         assert_eq!(metric.state_override.len(), 2);
     }
 
-    /// The captured Goliath entry validates into exactly the snapshot `overrides.rs` transcribes
+    /// The captured Goliath entry validates into exactly the overrides `overrides.rs` transcribes
     /// from the same frame by hand: the hex quantities (the odd-digit and the zero one included),
     /// the 32-byte storage words, the block the entry names, the slot-derived block timestamp and
-    /// the build stamp.
+    /// the timestamp.
     #[test]
-    fn a_captured_entry_validates_into_the_transcribed_snapshot() {
+    fn a_captured_entry_validates_into_the_transcribed_overrides() {
         let goliath = accepted(CAPTURED_OVERRIDES)
             .into_iter()
             .find(|entry| entry.quote_address == address(GOLIATH))
             .expect("the Goliath entry");
 
-        assert_eq!(goliath.snapshot(GOLIATH_EXPIRES_AT), test_overrides());
+        assert_eq!(goliath.overrides(), test_overrides());
     }
 
     /// Live traffic must pass validation whole: every entry that carries data, in both captured
@@ -1154,17 +1168,17 @@ mod tests {
             assert_eq!(entries.len(), accepted_entries);
             for entry in entries {
                 assert_eq!(entry.quote_address.len(), 20);
-                assert!(!entry.pairs.is_empty(), "an entry carried no pair version");
+                assert!(!entry.pairs.is_empty(), "an entry carried no pair");
                 assert!(!entry.accounts.is_empty(), "an entry carried no account");
                 assert_eq!(entry.block_number, Some(26_201_954));
                 assert_eq!(entry.block_timestamp, Some(METRIC_BLOCK_SECOND));
-                assert_eq!(entry.snapshot(0).block_timestamp, Some(METRIC_BLOCK_SECOND));
+                assert_eq!(entry.slot, Some(15_440_992));
             }
         }
     }
 
-    /// Titan stamps a batch of pairs with one sequence, so a sequence is not an identity on its
-    /// own: the captured Metric entry repeats one across all eight of its pairs.
+    /// Titan prices a batch of pairs at one quote sequence, so a quote sequence is not an identity
+    /// on its own: the captured Metric entry repeats one across all eight of its pairs.
     #[test]
     fn one_sequence_can_cover_several_pairs_of_an_entry() {
         let batched = accepted(CAPTURED_OVERRIDES)
@@ -1267,8 +1281,8 @@ mod tests {
     }
 
     /// Sequences that do not pair 1:1 with the asset pairs leave it unknown which pair each
-    /// sequence belongs to; zipping the shorter of the two would advertise the snapshot under a
-    /// pair version it was never priced at.
+    /// sequence belongs to; zipping the shorter of the two would attach the entry to a quote
+    /// sequence it was never priced at.
     #[rstest]
     #[case::fewer_sequences("[283851543383726791766048793]")]
     #[case::more_sequences(
@@ -1285,12 +1299,12 @@ mod tests {
             ..Entry::default()
         };
 
-        assert_eq!(entry.rejection(), EntryRejection::SequenceMismatch);
+        assert_eq!(entry.rejection(), EntryRejection::PairsAndSequencesDiffer);
     }
 
     /// An entry that overrides code, or replaces an account's whole storage instead of diffing
     /// it, no longer describes the venue the chain holds. It is refused whole rather than
-    /// stripped of the offending account: the accounts of one snapshot were simulated together.
+    /// stripped of the offending account: the accounts of one entry were simulated together.
     #[rstest]
     #[case::code(r#""code": "0x6080604052","#)]
     #[case::full_state(
@@ -1340,12 +1354,12 @@ mod tests {
         format!("{{{}}}", accounts.join(", "))
     }
 
-    /// A snapshot past any one of the per-entry caps is refused whole: what one frame can make
+    /// An entry past any one of the per-entry caps is refused whole: what one message can make
     /// this process retain has to be bounded before anything in it is trusted.
     #[rstest]
     #[case::too_many_accounts(33, 0)]
     #[case::too_many_slots(2, 257)]
-    fn an_over_cap_snapshot_rejects_the_entry(#[case] accounts: usize, #[case] slots: usize) {
+    fn an_over_cap_entry_is_rejected(#[case] accounts: usize, #[case] slots: usize) {
         let entry = Entry {
             state_override: synthetic_state_override(accounts, slots, WORD_BYTES),
             ..Entry::default()
@@ -1354,9 +1368,9 @@ mod tests {
         assert_eq!(entry.rejection(), EntryRejection::OverCap);
     }
 
-    /// The caps are inclusive: the largest snapshot that fits them is admitted.
+    /// The caps are inclusive: the largest entry that fits them is accepted.
     #[test]
-    fn a_snapshot_at_the_caps_is_admitted() {
+    fn an_entry_at_the_caps_is_accepted() {
         let entry =
             Entry { state_override: synthetic_state_override(32, 16, 32), ..Entry::default() }
                 .validated();
@@ -1439,7 +1453,7 @@ mod tests {
     }
 
     /// Addresses are 20 bytes and storage slots and words are 32: a payload that disagrees is not
-    /// the shape Titan documents, and a snapshot half-read from it simulates a state no venue was
+    /// the shape Titan documents, and an entry half-read from it simulates a state no venue was
     /// ever in.
     #[rstest]
     #[case::short_venue(
@@ -1511,7 +1525,48 @@ mod tests {
             ..Entry::default()
         };
 
-        assert_eq!(entry.rejection(), EntryRejection::NoData);
+        assert_eq!(entry.rejection(), EntryRejection::Empty);
+    }
+
+    /// An entry this parser cannot decode is refused on its own, and the other entries of the
+    /// message are still validated: one field of the wrong type must not cost every venue its
+    /// overrides.
+    #[rstest]
+    #[case::block_number_as_text(r#""blockNumber": "26148760","#)]
+    #[case::sequence_as_text(r#""pairSequences": ["283851543383726791766048793"],"#)]
+    #[case::balance_as_number(
+        r#""stateOverride": {"0xba443ecec71dc7123bd68c2082d13e3299cde896": {"balance": 1}},"#
+    )]
+    fn an_undecodable_entry_costs_only_itself(#[case] wrong_field: &str) {
+        let undecodable = format!(
+            r#"{{"quoteAddress": "{METRIC}", {wrong_field} "timestamp": 1791475494775213874}}"#
+        );
+        let good = Entry::default().frame();
+        let good_entry = good
+            .trim_start_matches(r#"{"venues": ["#)
+            .trim_end_matches("]}");
+        let message = format!(r#"{{"venues": [{undecodable}, {good_entry}]}}"#);
+
+        let outcomes = validate(parsed(&message));
+
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0], EntryOutcome::Rejected(EntryRejection::Undecodable));
+        assert!(matches!(outcomes[1], EntryOutcome::Accepted(_)), "{:?}", outcomes[1]);
+    }
+
+    /// A `pricedAddresses` address that is not 20 bytes refuses the entry, as a malformed
+    /// `quoteAddress` does: the entry would otherwise be held under a venue that does not exist.
+    #[test]
+    fn a_malformed_priced_address_rejects_the_entry() {
+        let frame = Entry::default().frame().replace(
+            &format!(r#""pricedAddresses": ["{METRIC}"]"#),
+            r#""pricedAddresses": ["0x99ab7c1c"]"#,
+        );
+
+        assert_eq!(
+            validate(parsed(&frame)),
+            vec![EntryOutcome::Rejected(EntryRejection::NotAVenue)]
+        );
     }
 
     /// A frame can carry no venue at all, which is not an error: the socket simply priced nothing
@@ -1522,14 +1577,14 @@ mod tests {
     }
 
     /// `timestamp` is the only thing that orders one build of a venue's snapshot against another,
-    /// so an entry without it cannot be used at all — the local clock would date the snapshot to
+    /// so an entry without it cannot be used at all — the local clock would date the entry to
     /// when the frame was read instead.
     #[test]
-    fn an_unstamped_entry_is_rejected() {
-        let null_stamp = Entry { timestamp: "null".to_string(), ..Entry::default() };
-        assert_eq!(null_stamp.rejection(), EntryRejection::Unstamped);
+    fn an_entry_without_a_timestamp_is_rejected() {
+        let null_timestamp = Entry { timestamp: "null".to_string(), ..Entry::default() };
+        assert_eq!(null_timestamp.rejection(), EntryRejection::NoTimestamp);
 
-        let no_stamp = format!(
+        let no_timestamp = format!(
             r#"{{"venues": [{{
                 "quoteAddress": "{METRIC}",
                 "blockNumber": 26148760,
@@ -1540,8 +1595,8 @@ mod tests {
             }}]}}"#
         );
         assert_eq!(
-            validate(parsed(&no_stamp)),
-            vec![EntryOutcome::Rejected(EntryRejection::Unstamped)]
+            validate(parsed(&no_timestamp)),
+            vec![EntryOutcome::Rejected(EntryRejection::NoTimestamp)]
         );
     }
     /// Fields the stream carries that nothing here reads, and fields it may add later, are
@@ -1570,8 +1625,8 @@ mod tests {
         }
     }
 
-    /// Every book of the captured price frame names the pair version it was priced at, and every
-    /// one of those numbers overflows `u64`.
+    /// Every book of the captured price level message names the quote sequence it was priced at,
+    /// and every one of those numbers overflows `u64`.
     #[test]
     fn decodes_the_captured_pair_versions() {
         let message: TitanPriceLevelMessage =
@@ -1579,14 +1634,14 @@ mod tests {
 
         assert_eq!(
             message.books[0].calculated_from,
-            Provenance::Valid(284_836_009_221_452_523_116_691_695)
+            QuoteSequence::Valid(284_836_009_221_452_523_116_691_695)
         );
         for book in &message.books {
             match book.calculated_from {
-                Provenance::Valid(sequence) => {
+                QuoteSequence::Valid(sequence) => {
                     assert!(sequence > u128::from(u64::MAX), "{sequence} fits a u64");
                 }
-                Provenance::Absent | Provenance::Invalid => {
+                QuoteSequence::Absent | QuoteSequence::Unreadable => {
                     panic!("a captured book carried no readable reference: {book:?}")
                 }
             }
@@ -1602,7 +1657,7 @@ mod tests {
         );
 
         let book: TitanBook = serde_json::from_str(&json).expect("valid book");
-        assert_eq!(book.calculated_from, Provenance::Absent);
+        assert_eq!(book.calculated_from, QuoteSequence::Absent);
     }
 
     /// The captured multi-book frame with book `index`'s `calculated_from` value replaced by the
@@ -1633,19 +1688,19 @@ mod tests {
 
     /// One book's unreadable reference costs that one reference and nothing else: not the book,
     /// not its ladders, not a sibling book, not the frame. A frame carries every venue's
-    /// ladders, so rejecting it over optional provenance metadata would be a quoting liveness
-    /// hazard.
+    /// ladders, so rejecting it over a value only used to find overrides would be a quoting
+    /// liveness hazard.
     #[rstest]
-    #[case::null("null", Provenance::Absent)]
-    #[case::string(r#""283851543383726791766048878""#, Provenance::Invalid)]
-    #[case::negative("-1", Provenance::Invalid)]
-    #[case::fraction("1.5", Provenance::Invalid)]
-    #[case::boolean("true", Provenance::Invalid)]
-    #[case::object("{}", Provenance::Invalid)]
-    #[case::above_u128("3402823669209384634633746074317682114560", Provenance::Invalid)]
+    #[case::null("null", QuoteSequence::Absent)]
+    #[case::string(r#""283851543383726791766048878""#, QuoteSequence::Unreadable)]
+    #[case::negative("-1", QuoteSequence::Unreadable)]
+    #[case::fraction("1.5", QuoteSequence::Unreadable)]
+    #[case::boolean("true", QuoteSequence::Unreadable)]
+    #[case::object("{}", QuoteSequence::Unreadable)]
+    #[case::above_u128("3402823669209384634633746074317682114560", QuoteSequence::Unreadable)]
     fn a_malformed_reference_costs_only_that_reference(
         #[case] literal: &str,
-        #[case] expected: Provenance,
+        #[case] expected: QuoteSequence,
     ) {
         const MUTATED: usize = 3;
         let captured: TitanPriceLevelMessage =

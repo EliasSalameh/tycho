@@ -27,7 +27,7 @@ chrono = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }
 # `raw_value` lets `book::wire` set an entry aside before it is read, and backs the price level
-# stream's lenient `calculated_from` decode.
+# stream's lenient `calculated_from` decode and its per-entry decode of the quote stream.
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_with = { workspace = true, optional = true }
 toml = { workspace = true }

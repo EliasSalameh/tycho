@@ -186,7 +186,7 @@ mod tests {
             test_support::{
                 captured_book, captured_books, symbol_address, token, NVDAX, PAMM, USDC, USDT, WBTC,
             },
-            titan::Provenance,
+            titan::QuoteSequence,
         },
         *,
     };
@@ -251,7 +251,7 @@ mod tests {
             token2: "USDC".to_string(),
             token1_address: Bytes::from_str(WBTC).expect("token address"),
             token2_address: Bytes::from_str(USDC).expect("token address"),
-            calculated_from: Provenance::Absent,
+            calculated_from: QuoteSequence::Absent,
             asks,
             bids,
         }
@@ -280,7 +280,7 @@ mod tests {
             token2: "USDC".to_string(),
             token1_address: Bytes::from_str(WBTC).expect("token address"),
             token2_address: Bytes::from_str(USDC).expect("token address"),
-            calculated_from: Provenance::Absent,
+            calculated_from: QuoteSequence::Absent,
             asks: vec![level(80801.55138978669, 0.00012376), level(80800.59272606572, 0.00021089)],
             bids: vec![level(80773.61600000001, 0.0005), level(80773.6106, 0.005)],
         };
