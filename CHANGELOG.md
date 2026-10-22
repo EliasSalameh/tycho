@@ -1,3 +1,17 @@
+## [0.480.0](https://github.com/propeller-heads/tycho/compare/0.479.1...0.480.0) (2026-10-22)
+
+
+### Features
+
+* **execution:** encode cyclical solutions without their subsidy ([87f8541](https://github.com/propeller-heads/tycho/commit/87f85412bbaeac31cb77ab2345666a034631b51a))
+* **execution:** encode subsidized swaps ([9e28b10](https://github.com/propeller-heads/tycho/commit/9e28b1060b92aa652e6702bfae06bb935290fcff)), closes [#1642](https://github.com/propeller-heads/tycho/issues/1642)
+* **execution:** encode subsidized swaps ([#1659](https://github.com/propeller-heads/tycho/issues/1659)) ([1df1586](https://github.com/propeller-heads/tycho/commit/1df158624990aa352360d869cd53ad77e4ab3374))
+
+
+### Bug Fixes
+
+* **execution:** tell apart subsidy output errors ([bee6e76](https://github.com/propeller-heads/tycho/commit/bee6e76ddabc48df6968cb38f71f72288580599b))
+
 ## [0.479.1](https://github.com/propeller-heads/tycho/compare/0.479.0...0.479.1) (2026-10-22)
 
 
