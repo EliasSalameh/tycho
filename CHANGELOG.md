@@ -1,3 +1,11 @@
+## [0.479.1](https://github.com/propeller-heads/tycho/compare/0.479.0...0.479.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ekubo-v3:** rebuild MEV-capture pool when the starting tick moves ([bea6314](https://github.com/propeller-heads/tycho/commit/bea6314cd07824710900e0fb2759dba233be6d64))
+* **ekubo-v3:** rebuild MEV-capture pool when the starting tick moves ([#1664](https://github.com/propeller-heads/tycho/issues/1664)) ([7e00bf5](https://github.com/propeller-heads/tycho/commit/7e00bf583cb5c4738a6ae344b285756f83a17492))
+
 ## [0.479.0](https://github.com/propeller-heads/tycho/compare/0.478.0...0.479.0) (2026-10-22)
 
 
