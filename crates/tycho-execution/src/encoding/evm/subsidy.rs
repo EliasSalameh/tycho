@@ -228,8 +228,8 @@ fn validate_terms(solution: &Solution, terms: &SubsidyTerms) -> Result<(), Encod
     }
     if solution.min_amount_out() + &terms.amount > *solution.expected_amount_out() {
         return Err(EncodingError::InvalidInput(format!(
-            "min_amount_out {} must not exceed expected_amount_out {} minus the subsidy {}: \
-             expected_amount_out includes the subsidy, min_amount_out excludes it",
+            "min_amount_out {} must be at most expected_amount_out {} minus the subsidy {}, so the \
+             swap still succeeds if the subsidy is not paid",
             solution.min_amount_out(),
             solution.expected_amount_out(),
             terms.amount
@@ -565,7 +565,7 @@ mod tests {
     )]
     #[case::min_amount_out_includes_subsidy(
         SubsidyTerms { amount: BigUint::from(5_000_000_000_000_000_001u64), ..terms() },
-        "must not exceed"
+        "must be at most"
     )]
     fn test_validate_subsidy_invalid_terms(#[case] terms: SubsidyTerms, #[case] message: &str) {
         let solution = solution(WETH, DAI, vec![swap("uniswap_v2", WETH, DAI, 0.0)], terms);
