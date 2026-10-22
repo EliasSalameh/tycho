@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use alloy::{
     eips::BlockNumberOrTag,
     hex,
-    primitives::{keccak256, Bytes, B256},
+    primitives::{keccak256, Bytes, B256, U256},
     rpc::{
         client::ClientBuilder,
-        types::{Block, BlockId},
+        types::{Block, BlockId, BlockOverrides},
     },
     sol_types::SolValue,
 };
@@ -156,6 +156,17 @@ impl SolidityError {
     }
 }
 
+/// The chain state a simulation runs on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SimulationBase {
+    /// The state after the block, in the block's own context.
+    #[default]
+    AfterBlock,
+    /// The state the block was built on — its parent's — in the block's context: its number,
+    /// timestamp, coinbase and base fee. The call a client makes before the block exists.
+    BeforeBlock,
+}
+
 /// Simulated the execution with meaningful revert reason decoding.
 pub struct ExecutionSimulator {
     rpc_url: String,
@@ -180,11 +191,13 @@ impl ExecutionSimulator {
         }
     }
 
-    /// Simulate a transaction with trace and return the SimulationResult.
+    /// Simulate a transaction with trace on the state `base` names, and return the
+    /// SimulationResult.
     pub async fn batch_simulate_with_trace(
         &mut self,
         inputs: HashMap<String, SimulationInput>,
         block: &Block,
+        base: SimulationBase,
     ) -> Result<HashMap<String, SimulationResult>, Box<dyn std::error::Error>> {
         // Configure tracing options - use callTracer for better formatted results
         let tracing_options = GethDebugTracingOptions {
@@ -201,10 +214,25 @@ impl ExecutionSimulator {
 
         // Pending (flashblock) blocks have a zero hash — simulate against the pending state
         // so the RPC uses the sequencer's pre-confirmed block rather than a specific number.
-        let block_id = if block.header.hash == B256::ZERO {
-            BlockId::from(BlockNumberOrTag::Pending)
+        let (block_id, block_overrides) = if block.header.hash == B256::ZERO {
+            (BlockId::from(BlockNumberOrTag::Pending), None)
         } else {
-            BlockId::from(block.number())
+            match base {
+                SimulationBase::AfterBlock => (BlockId::from(block.number()), None),
+                SimulationBase::BeforeBlock => (
+                    BlockId::from(block.number().saturating_sub(1)),
+                    Some(BlockOverrides {
+                        number: Some(U256::from(block.number())),
+                        time: Some(block.header.timestamp),
+                        coinbase: Some(block.header.beneficiary),
+                        base_fee: block
+                            .header
+                            .base_fee_per_gas
+                            .map(U256::from),
+                        ..Default::default()
+                    }),
+                ),
+            }
         };
 
         let client = ClientBuilder::default().http(self.rpc_url.parse()?);
@@ -216,7 +244,7 @@ impl ExecutionSimulator {
             let trace_options = GethDebugTracingCallOptions {
                 tracing_options: tracing_options.clone(),
                 state_overrides: input.state_overwrites.clone(),
-                block_overrides: None,
+                block_overrides: block_overrides.clone(),
                 tx_index: None,
             };
             let fut =

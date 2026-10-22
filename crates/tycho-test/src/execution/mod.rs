@@ -35,6 +35,7 @@ use crate::{
 
 pub mod encoding;
 mod execution_simulator;
+pub use execution_simulator::SimulationBase;
 mod four_byte_client;
 pub mod models;
 pub mod tenderly;
@@ -46,8 +47,8 @@ const MAX_CALLS_PER_BATCH: usize = 30;
 /// Keeps the per-block throughput of a single batch without flooding the RPC.
 const MAX_CONCURRENT_BATCHES: usize = 4;
 
-/// Simulates every encoded swap in `execution_info` against `block` via `debug_traceCall` and
-/// returns one result per simulation id.
+/// Simulates every encoded swap in `execution_info` on the state after `block`, in `block`'s own
+/// context, via `debug_traceCall`, and returns one result per simulation id.
 ///
 /// `router_overwrites_data` decides which contracts are simulated as deployed and which are
 /// overwritten — see [`RouterOverwritesData`]; its default simulates everything as deployed.
@@ -65,10 +66,54 @@ pub async fn simulate_swap_transaction(
     block: &Block,
     router_overwrites_data: RouterOverwritesData,
     oracle_overwrites: Option<AddressHashMap<B256HashMap<B256>>>,
-) -> Result<
+) -> SwapSimulationResult {
+    simulate_swap_transaction_on(
+        rpc_tools,
+        execution_info,
+        block,
+        router_overwrites_data,
+        oracle_overwrites,
+        SimulationBase::AfterBlock,
+    )
+    .await
+}
+
+/// [`simulate_swap_transaction`], but on the state `block` was built on — its parent's — with
+/// `block`'s number, timestamp, coinbase and base fee: the call a client makes before `block`
+/// exists, such as one simulating a quote for the block a builder is building.
+pub async fn simulate_swap_transaction_before_block(
+    rpc_tools: &RPCTools,
+    execution_info: HashMap<String, TychoExecutionInput>,
+    block: &Block,
+    router_overwrites_data: RouterOverwritesData,
+    oracle_overwrites: Option<AddressHashMap<B256HashMap<B256>>>,
+) -> SwapSimulationResult {
+    simulate_swap_transaction_on(
+        rpc_tools,
+        execution_info,
+        block,
+        router_overwrites_data,
+        oracle_overwrites,
+        SimulationBase::BeforeBlock,
+    )
+    .await
+}
+
+/// What [`simulate_swap_transaction`] returns: one result per simulation id, or the error that
+/// failed the whole batch with the overwrites and metadata built for it so far.
+pub type SwapSimulationResult = Result<
     HashMap<String, TychoExecutionResult>,
     (miette::Error, Option<AddressHashMap<AccountOverride>>, Option<tenderly::OverwriteMetadata>),
-> {
+>;
+
+async fn simulate_swap_transaction_on(
+    rpc_tools: &RPCTools,
+    execution_info: HashMap<String, TychoExecutionInput>,
+    block: &Block,
+    router_overwrites_data: RouterOverwritesData,
+    oracle_overwrites: Option<AddressHashMap<B256HashMap<B256>>>,
+    base: SimulationBase,
+) -> SwapSimulationResult {
     let mut inputs: HashMap<String, SimulationInput> = HashMap::new();
     let mut tycho_execution_results: HashMap<String, TychoExecutionResult> = HashMap::new();
 
@@ -205,7 +250,7 @@ pub async fn simulate_swap_transaction(
         return Ok(tycho_execution_results);
     }
 
-    let execution_results = simulate_in_batches(&rpc_tools.rpc_url, &inputs, block)
+    let execution_results = simulate_in_batches(&rpc_tools.rpc_url, &inputs, block, base)
         .await
         .map_err(|e| (e, None, None))?;
 
@@ -270,13 +315,14 @@ async fn simulate_in_batches(
     rpc_url: &str,
     inputs: &HashMap<String, SimulationInput>,
     block: &Block,
+    base: SimulationBase,
 ) -> miette::Result<HashMap<String, SimulationResult>> {
     let batches = split_into_batches(inputs, MAX_CALLS_PER_BATCH);
     let n_batches = batches.len();
 
     let mut pending = stream::iter(batches.into_iter().enumerate())
         .map(|(index, batch)| async move {
-            (index, simulate_batch_with_retry(rpc_url, batch, block).await)
+            (index, simulate_batch_with_retry(rpc_url, batch, block, base).await)
         })
         .buffer_unordered(MAX_CONCURRENT_BATCHES);
 
@@ -299,6 +345,7 @@ async fn simulate_batch_with_retry(
     rpc_url: &str,
     inputs: HashMap<String, SimulationInput>,
     block: &Block,
+    base: SimulationBase,
 ) -> Result<HashMap<String, SimulationResult>, String> {
     let retry_strategy = ExponentialFactorBackoff::from_millis(1000, 2.)
         .max_delay_millis(5000)
@@ -310,7 +357,7 @@ async fn simulate_batch_with_retry(
         let inputs = inputs.clone();
         async move {
             simulator
-                .batch_simulate_with_trace(inputs, block)
+                .batch_simulate_with_trace(inputs, block, base)
                 .await
                 .map_err(|e| RetryError::transient(e.to_string()))
         }
@@ -582,9 +629,14 @@ mod tests {
         let (rejected, answered) = rpc_rejecting_batches_over(&mut server, 30).await;
         let inputs = simulation_inputs(70);
 
-        let results = simulate_in_batches(&server.url(), &inputs, &Block::default())
-            .await
-            .expect("every batch fits the RPC limit");
+        let results = simulate_in_batches(
+            &server.url(),
+            &inputs,
+            &Block::default(),
+            SimulationBase::default(),
+        )
+        .await
+        .expect("every batch fits the RPC limit");
 
         assert_eq!(results.len(), inputs.len());
         for simulation_id in inputs.keys() {
@@ -608,9 +660,14 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let (_rejected, _answered) = rpc_rejecting_batches_over(&mut server, 0).await;
 
-        let error = simulate_in_batches(&server.url(), &simulation_inputs(5), &Block::default())
-            .await
-            .expect_err("the RPC rejects every batch");
+        let error = simulate_in_batches(
+            &server.url(),
+            &simulation_inputs(5),
+            &Block::default(),
+            SimulationBase::default(),
+        )
+        .await
+        .expect_err("the RPC rejects every batch");
 
         assert!(
             format!("{error:?}").contains("Failed to simulate batch 1 of 1 after retries"),

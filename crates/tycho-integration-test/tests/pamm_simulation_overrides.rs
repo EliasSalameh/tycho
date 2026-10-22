@@ -1,15 +1,16 @@
 //! Live check that a pAMM quote's simulation overrides reproduce the venue's own price.
 //!
-//! A pAMM ladder prices the block Titan is still building, so a client that simulates the swap on
+//! pAMM quotes price the block Titan is still building, so a client that simulates the swap on
 //! mined state simulates a different venue state and the venue's freshness guard reverts. The
 //! price level stream answers that by carrying, on the quote, the account state Titan priced the
-//! venue on. This test holds that answer against the chain: it captures live quotes, waits for the
-//! block each quote targets, and simulates the encoded swap at that block twice — once with the
-//! quote's own overrides, once with none.
+//! venue on. This test checks that against the chain: it captures one live quote per venue, waits
+//! for the block each quote targets, and simulates the encoded swap the way a client does before
+//! that block exists — on its parent's state, with the block's number and timestamp — twice: once
+//! with the quote's own overrides, once with none.
 //!
-//! The gate is the first run: the simulated output must match the quoted output. The run without
-//! overrides is reported rather than asserted, because whether mined state alone reverts depends
-//! on who built that block.
+//! The check is the first run: the simulated output must match the quoted output. The run without
+//! overrides is reported rather than asserted, because whether the parent's state alone is fresh
+//! depends on the venue.
 //!
 //! Ignored by default: it dials the live Titan sockets and the RPC in `RPC_URL`. Read-only — it
 //! simulates, and never sends a transaction. Run it with
@@ -40,7 +41,7 @@ use tycho_test::{
     execution::{
         encoding::encode_swap,
         models::{RouterOverwritesData, TychoExecutionInput, TychoExecutionResult},
-        simulate_swap_transaction,
+        simulate_swap_transaction_before_block,
     },
     rpc_tools::RPCTools,
 };
@@ -48,11 +49,9 @@ use tycho_test::{
 /// Selector of the venue freshness guard, `StaleUpdate()`.
 const STALE_UPDATE: &str = "0x666a2814";
 
-/// How many quotes to validate.
-const CANDIDATES: usize = 2;
-
-/// How long to wait for that many stamped quotes. Titan publishes about one frame a second.
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long to collect quotes for: one per venue that serves a quote with overrides in that time.
+/// Titan publishes about one price level message a second.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long to wait for a quoted block to settle behind head before giving up on a candidate.
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
@@ -104,7 +103,7 @@ fn tokens() -> HashMap<Bytes, Token> {
     .collect()
 }
 
-/// The storage half of a snapshot, in the shape the simulator takes.
+/// The storage half of the overrides, in the shape the simulator takes.
 ///
 /// Balance and nonce are dropped, because the simulator applies storage only. The freshness guard
 /// reads storage, so this is the half it depends on.
@@ -134,7 +133,7 @@ fn distance_bps(simulated: &BigUint, quoted: &BigUint) -> BigUint {
     spread * BigUint::from(10_000u32) / quoted
 }
 
-/// Captures quotes that carry a snapshot, and reports whether any quote was served at all.
+/// Captures one quote with overrides per venue, and reports whether any quote was served at all.
 async fn capture() -> (Vec<Candidate>, usize) {
     let tokens = tokens();
     let by_address = tokens.clone();
@@ -154,7 +153,7 @@ async fn capture() -> (Vec<Candidate>, usize) {
     let mut quotes_served = 0usize;
     let deadline = tokio::time::Instant::now() + CAPTURE_TIMEOUT;
 
-    while candidates.len() < CANDIDATES {
+    loop {
         let Ok(Some(update)) = tokio::time::timeout_at(deadline, stream.next()).await else {
             break;
         };
@@ -191,12 +190,11 @@ async fn capture() -> (Vec<Candidate>, usize) {
             };
             quotes_served += 1;
 
-            // One candidate per component, so the two runs cover two venues where Titan serves
-            // more than one.
-            if candidates.len() >= CANDIDATES ||
-                candidates
-                    .iter()
-                    .any(|c| c.component.id == component.id)
+            // One candidate per venue, so every venue Titan serves is covered — Metric's in
+            // particular, whose router reads the state of two quote addresses.
+            if candidates
+                .iter()
+                .any(|c| c.component.protocol_system == component.protocol_system)
             {
                 continue;
             }
@@ -242,11 +240,11 @@ async fn a_quotes_overrides_reproduce_the_venues_own_price() {
         println!("the stream served no quote within the capture window; skipping");
         return;
     }
-    // Quotes without a single snapshot between them means the join stopped attributing, which is
-    // the failure this test exists to catch.
+    // Quotes without any overrides between them means matching stopped working, which is the
+    // failure this test exists to catch.
     assert!(
         !candidates.is_empty(),
-        "{quotes_served} quote(s) served and not one carried a snapshot"
+        "{quotes_served} quote(s) served and not one carried simulation overrides"
     );
 
     let rpc_tools = RPCTools::new(&rpc_url, &chain)
@@ -326,11 +324,11 @@ async fn a_quotes_overrides_reproduce_the_venues_own_price() {
 
         let storage = storage_of(&candidate.overrides);
         let slots: usize = storage.values().map(HashMap::len).sum();
-        assert!(!storage.is_empty(), "a snapshot must override at least one account");
-        println!("  snapshot: {} account(s), {slots} slot(s)", storage.len());
+        assert!(!storage.is_empty(), "overrides must override at least one account's storage");
+        println!("  overrides: {} account(s), {slots} slot(s)", storage.len());
 
-        // With the quote's own overrides: the gate.
-        let with = simulate_swap_transaction(
+        // With the quote's own overrides: the check.
+        let with = simulate_swap_transaction_before_block(
             &rpc_tools,
             inputs.clone(),
             &block,
@@ -369,9 +367,9 @@ async fn a_quotes_overrides_reproduce_the_venues_own_price() {
             }
         }
 
-        // Without them: reported, not asserted. Whether mined state alone is fresh depends on who
-        // built the block.
-        let without = simulate_swap_transaction(
+        // Without them: reported, not asserted. Whether the parent's state alone is fresh depends
+        // on the venue.
+        let without = simulate_swap_transaction_before_block(
             &rpc_tools,
             inputs,
             &block,
@@ -394,7 +392,7 @@ async fn a_quotes_overrides_reproduce_the_venues_own_price() {
                 }
             }
             Ok(Some(TychoExecutionResult::Success { amount_out, .. })) => println!(
-                "  with no overrides: simulated {amount_out} (mined state was fresh for this block)"
+                "  with no overrides: simulated {amount_out} (the parent's state was fresh enough)"
             ),
             _ => println!("  with no overrides: no comparable result"),
         }
