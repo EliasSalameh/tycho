@@ -10,7 +10,7 @@ use crate::encoding::{
         strategy_encoder::strategy_encoders::{
             SequentialSwapStrategyEncoder, SingleSwapStrategyEncoder, SplitSwapStrategyEncoder,
         },
-        subsidy::select_subsidized_group,
+        subsidy::validate_subsidy,
         swap_encoder::swap_encoder_registry::SwapEncoderRegistry,
         utils::map_on_threads,
     },
@@ -175,7 +175,7 @@ impl TychoEncoder for TychoRouterEncoder {
                 }
             }
         }
-        select_subsidized_group(solution, &group_swaps(swaps), &self.swap_encoder_registry)?;
+        validate_subsidy(solution, &group_swaps(swaps), &self.swap_encoder_registry)?;
         Ok(())
     }
 }

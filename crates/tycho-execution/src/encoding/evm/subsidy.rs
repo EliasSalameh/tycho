@@ -153,7 +153,8 @@ impl SubsidizedGroup<'_> {
 
 /// The swap group that carries the solution's subsidy, or `None` without a subsidy.
 ///
-/// Fails with `FatalError` when the chain has no subsidizing executor.
+/// Expects a solution that passed [`validate_subsidy`]. Fails with `FatalError` when the chain
+/// has no subsidizing executor.
 pub(crate) fn select_subsidized_group<'a>(
     solution: &'a Solution,
     groups: &'a [SwapGroup],
@@ -162,24 +163,7 @@ pub(crate) fn select_subsidized_group<'a>(
     let Some(terms) = solution.subsidy() else {
         return Ok(None);
     };
-    let swap_index = terms.subsidized_swap_index;
-    let mut swaps_before_group = 0;
-    let mut subsidized_group_index = None;
-    for (group_index, group) in groups.iter().enumerate() {
-        if swap_index < swaps_before_group + group.swaps.len() {
-            subsidized_group_index = Some(group_index);
-            break;
-        }
-        swaps_before_group += group.swaps.len();
-    }
-    let group_index = subsidized_group_index.ok_or_else(|| {
-        EncodingError::InvalidInput(format!(
-            "Subsidy subsidized_swap_index {swap_index} is out of range for a solution with {} \
-             swaps",
-            solution.swaps().len()
-        ))
-    })?;
-    validate_subsidy(solution, terms, groups, group_index)?;
+    let group_index = find_subsidized_group(solution, terms, groups)?;
     Ok(Some(SubsidizedGroup {
         group_index,
         token_out: &groups[group_index].token_out,
@@ -189,14 +173,46 @@ pub(crate) fn select_subsidized_group<'a>(
     }))
 }
 
-/// Fails with `InvalidInput` unless the solution, its subsidy terms and the group at `group_index`
-/// can carry a subsidy.
-fn validate_subsidy(
+/// Fails unless the solution's subsidy, if any, can be paid: `InvalidInput` when the solution, its
+/// subsidy terms or the swap group they name cannot carry it, `FatalError` when the chain has no
+/// subsidizing executor.
+pub(crate) fn validate_subsidy(
+    solution: &Solution,
+    groups: &[SwapGroup],
+    swap_encoder_registry: &SwapEncoderRegistry,
+) -> Result<(), EncodingError> {
+    let Some(terms) = solution.subsidy() else {
+        return Ok(());
+    };
+    let group_index = find_subsidized_group(solution, terms, groups)?;
+    validate_terms(solution, terms)?;
+    check_reaches_token_out(groups, group_index, solution.token_out())?;
+    swap_encoder_registry.get_subsidy_encoder()?;
+    Ok(())
+}
+
+/// Index of the group that holds the swap at `subsidized_swap_index`.
+fn find_subsidized_group(
     solution: &Solution,
     terms: &SubsidyTerms,
     groups: &[SwapGroup],
-    group_index: usize,
-) -> Result<(), EncodingError> {
+) -> Result<usize, EncodingError> {
+    let swap_index = terms.subsidized_swap_index;
+    let mut swaps_before_group = 0;
+    for (group_index, group) in groups.iter().enumerate() {
+        if swap_index < swaps_before_group + group.swaps.len() {
+            return Ok(group_index);
+        }
+        swaps_before_group += group.swaps.len();
+    }
+    Err(EncodingError::InvalidInput(format!(
+        "Subsidy subsidized_swap_index {swap_index} is out of range for a solution with {} swaps",
+        solution.swaps().len()
+    )))
+}
+
+/// Fails with `InvalidInput` unless the solution and its subsidy terms can carry a subsidy.
+fn validate_terms(solution: &Solution, terms: &SubsidyTerms) -> Result<(), EncodingError> {
     if solution.token_in() == solution.token_out() {
         return Err(EncodingError::InvalidInput(
             "A cyclical solution cannot carry a subsidy".to_string(),
@@ -225,7 +241,7 @@ fn validate_subsidy(
             terms.deadline
         )));
     }
-    check_reaches_token_out(groups, group_index, solution.token_out())
+    Ok(())
 }
 
 /// The subsidized group's output must be `token_out`, or the input of a final wrap/unwrap that
@@ -516,7 +532,7 @@ mod tests {
         0,
         "takes only part"
     )]
-    fn test_select_subsidized_group_invalid_swap(
+    fn test_validate_subsidy_invalid_swap(
         #[case] token_in: &str,
         #[case] token_out: &str,
         #[case] swaps: Vec<Swap>,
@@ -528,7 +544,7 @@ mod tests {
         let groups = group_swaps(solution.swaps());
         let registry = registry();
 
-        let result = select_subsidized_group(&solution, &groups, &registry);
+        let result = validate_subsidy(&solution, &groups, &registry);
 
         assert!(
             matches!(result, Err(EncodingError::InvalidInput(ref error)) if error.contains(message)),
@@ -551,15 +567,12 @@ mod tests {
         SubsidyTerms { amount: BigUint::from(5_000_000_000_000_000_001u64), ..terms() },
         "must not exceed"
     )]
-    fn test_select_subsidized_group_invalid_terms(
-        #[case] terms: SubsidyTerms,
-        #[case] message: &str,
-    ) {
+    fn test_validate_subsidy_invalid_terms(#[case] terms: SubsidyTerms, #[case] message: &str) {
         let solution = solution(WETH, DAI, vec![swap("uniswap_v2", WETH, DAI, 0.0)], terms);
         let groups = group_swaps(solution.swaps());
         let registry = registry();
 
-        let result = select_subsidized_group(&solution, &groups, &registry);
+        let result = validate_subsidy(&solution, &groups, &registry);
 
         assert!(
             matches!(result, Err(EncodingError::InvalidInput(ref error)) if error.contains(message)),
@@ -569,12 +582,12 @@ mod tests {
     }
 
     #[test]
-    fn test_select_subsidized_group_without_subsidizing_executor() {
+    fn test_validate_subsidy_without_subsidizing_executor() {
         let solution = solution(WETH, DAI, vec![swap("uniswap_v2", WETH, DAI, 0.0)], terms());
         let groups = group_swaps(solution.swaps());
         let registry = SwapEncoderRegistry::new(Chain::Ethereum);
 
-        let result = select_subsidized_group(&solution, &groups, &registry);
+        let result = validate_subsidy(&solution, &groups, &registry);
 
         assert!(
             matches!(result, Err(EncodingError::FatalError(ref error)) if error.contains("No subsidizing executor")),
@@ -584,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn test_select_subsidized_group_invalid_sender() {
+    fn test_validate_subsidy_invalid_sender() {
         let solution = solution(WETH, DAI, vec![swap("uniswap_v2", WETH, DAI, 0.0)], terms());
         let solution = Solution::new(
             Bytes::from("0x1234"),
@@ -600,7 +613,7 @@ mod tests {
         let groups = group_swaps(solution.swaps());
         let registry = registry();
 
-        let result = select_subsidized_group(&solution, &groups, &registry);
+        let result = validate_subsidy(&solution, &groups, &registry);
 
         assert!(
             matches!(result, Err(EncodingError::InvalidInput(ref error)) if error.contains("Invalid address")),
