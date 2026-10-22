@@ -230,12 +230,13 @@ fn spawn_jemalloc_stats_reporter() {
 /// Profiling stops when the agent is dropped.
 ///
 /// The application name is `PYROSCOPE_APPLICATION_NAME`, else `OTEL_SERVICE_NAME` (the service
-/// name of the traces), else `tycho-indexer`.
+/// name of the traces), else `tycho-indexer-<chains>`, with the indexed chains joined by `-`.
 ///
 /// # Panics
 ///
 /// Panics if `PYROSCOPE_SAMPLE_RATE` is not a number.
 fn start_cpu_profiler(
+    chains: &[String],
 ) -> Result<Option<PyroscopeAgent<PyroscopeAgentRunning>>, pyroscope::PyroscopeError> {
     let Some(url) = env::var("PYROSCOPE_SERVER_URL")
         .ok()
@@ -245,7 +246,7 @@ fn start_cpu_profiler(
     };
     let application = env::var("PYROSCOPE_APPLICATION_NAME")
         .or_else(|_| env::var("OTEL_SERVICE_NAME"))
-        .unwrap_or_else(|_| "tycho-indexer".to_string());
+        .unwrap_or_else(|_| format!("tycho-indexer-{}", chains.join("-")));
     let sample_rate = env::var("PYROSCOPE_SAMPLE_RATE")
         .unwrap_or_else(|_| "100".to_string())
         .parse()
@@ -284,7 +285,7 @@ fn run_indexer(global_args: GlobalArgs, index_args: IndexArgs) -> Result<(), Ext
         .parse()
         .expect("MAIN_WORKER_THREADS must be a number");
     // Kept until the indexer exits; dropping the agent stops profiling.
-    let cpu_profiler = start_cpu_profiler();
+    let cpu_profiler = start_cpu_profiler(&index_args.chains);
     // We spawn a dedicated runtime for extraction
     let extraction_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(extraction_threads)
