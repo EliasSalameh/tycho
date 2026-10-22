@@ -1,3 +1,17 @@
+## [0.481.0](https://github.com/propeller-heads/tycho/compare/0.480.0...0.481.0) (2026-10-22)
+
+
+### Features
+
+* **indexer:** record entity cache copies of held entries ([dd46d58](https://github.com/propeller-heads/tycho/commit/dd46d584360c44002e6de4e8aba60d4f28c4f034))
+
+
+### Performance Improvements
+
+* **indexer:** hold no cache entry while a large answer waits ([2221137](https://github.com/propeller-heads/tycho/commit/2221137808811cdd8e5bba091bab5117844c4690))
+* **indexer:** write cached contract state answers without copies ([3d9fa2d](https://github.com/propeller-heads/tycho/commit/3d9fa2dcf3c90bd6af256db876ed6b9a28046708))
+* **indexer:** write cached protocol state answers without copies ([edc7c88](https://github.com/propeller-heads/tycho/commit/edc7c889129d699c1e4fe53b0a40f1d781f172c3))
+
 ## [0.480.0](https://github.com/propeller-heads/tycho/compare/0.479.1...0.480.0) (2026-10-22)
 
 
