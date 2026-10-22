@@ -231,7 +231,8 @@ fn spawn_jemalloc_stats_reporter() {
 ///
 /// The profiles use the same service name and resource attributes as the traces:
 /// `OTEL_SERVICE_NAME` (default `tycho-indexer`) and `OTEL_RESOURCE_ATTRIBUTES`, see
-/// [`profile_labels`].
+/// [`profile_labels`]. `ENVIRONMENT` (e.g. `dev`, `staging` or `prod`), if set, becomes the
+/// `environment` label.
 ///
 /// # Panics
 ///
@@ -250,7 +251,13 @@ fn start_cpu_profiler(
         .unwrap_or_else(|_| "100".to_string())
         .parse()
         .expect("PYROSCOPE_SAMPLE_RATE must be a number");
-    let labels = profile_labels(&env::var("OTEL_RESOURCE_ATTRIBUTES").unwrap_or_default());
+    let mut labels = profile_labels(&env::var("OTEL_RESOURCE_ATTRIBUTES").unwrap_or_default());
+    if let Some(environment) = env::var("ENVIRONMENT")
+        .ok()
+        .filter(|environment| !environment.is_empty())
+    {
+        labels.push(("environment".to_string(), environment));
+    }
     let backend = pprof_backend(PprofConfig { sample_rate }, BackendConfig::default());
     let agent = PyroscopeAgentBuilder::new(
         url,
