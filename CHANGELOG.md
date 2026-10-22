@@ -1,3 +1,13 @@
+## [0.479.0](https://github.com/propeller-heads/tycho/compare/0.478.0...0.479.0) (2026-10-22)
+
+
+### Features
+
+* **storage:** add pool checkout span and wait histogram ([b4c3bcc](https://github.com/propeller-heads/tycho/commit/b4c3bcc163a25d465c7ec943331905ae6dd7d407))
+* **storage:** add RawJson for unparsed jsonb columns ([97bcdb1](https://github.com/propeller-heads/tycho/commit/97bcdb18abc889078c13b3ca4158d9ee4a997403))
+* **storage:** decode traced entry points after returning the connection ([a7defc0](https://github.com/propeller-heads/tycho/commit/a7defc0c9c9a8e2c06be9e1bdc1702cbbf6ffd12))
+* **storage:** export pool status gauges ([b004044](https://github.com/propeller-heads/tycho/commit/b004044c42204e918f163c39b92f4290a7f79f9a))
+
 ## [0.478.0](https://github.com/propeller-heads/tycho/compare/0.477.0...0.478.0) (2026-10-22)
 
 
