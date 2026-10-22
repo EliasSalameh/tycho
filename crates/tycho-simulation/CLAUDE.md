@@ -161,7 +161,8 @@ for any protocol indexed by Tycho.
   deadline, and the only place that reads a clock: the tracker gets both clocks injected through
   `Now`. `titan.rs` reconnects when no message parses within the idle timeout; pings,
   unparsable text and the consumer's own pauses between polls do not count. `telemetry.rs` emits
-  `price_level_stream_*` metrics through the `metrics` facade, with label values as enums there
+  `price_level_stream_*` metrics through the `metrics` facade, with label values as enums
+  (`BufferEvent` in `overrides.rs`, `EntryRejection` in `titan.rs`, the rest in `telemetry.rs`)
   and a message-age histogram (`frame_age_seconds`) at acceptance;
   `skipped_books_total{reason}` counts the books left unpriced
   (`unadmitted_token`, `malformed_address`, `one_asset_pair`) and `rejected_sides_total{reason}` the
@@ -199,15 +200,16 @@ for any protocol indexed by Tycho.
     and matches them to books by quote sequence; its module doc states the matching rule and the
     slot window. `tracker.rs` attaches the match to the state as
     `Option<Arc<PammSimulationOverrides>>` (`simulation_overrides()`), serialized as `overrides`.
-  - Invariants: quoting never reads the overrides, and nothing on this path removes a component,
-    delays an update or shortens a quote's validity; both sockets normalize venue addresses
-    through `PAMM_ADDRESS_ALIASES`; quote sequences (`u128`) are never serialized; `eq` compares
-    the overrides' block and account addresses, never their values.
+  - Invariants: quoting never reads the overrides; nothing on this path removes a component or
+    shortens a quote's validity, and the stream never waits on the quote stream socket; both
+    sockets normalize venue addresses through `PAMM_ADDRESS_ALIASES`; quote sequences (`u128`)
+    are never serialized; `eq` compares the overrides' block and account addresses, never their
+    values.
   - `telemetry.rs` documents every metric of this path, and the solver page
     (`docs/for-solvers/price-level-stream.md`) lists them with their baselines.
 
   This path is the price level stream's own; `evm/override_stream/` is the separate
-  per-simulation override path of the `vm:` protocols and stays untouched
+  per-simulation override path of the `vm:` protocols.
 
 ## Simulation Approaches
 

@@ -113,14 +113,17 @@
 //!   not publish an entry for every quote sequence; see [`overrides`].
 //! - **Venues that read several quote addresses.** The buffer also holds an entry under every
 //!   served venue its `pricedAddresses` name, and merges it into that venue's own entry, which wins
-//!   wherever both set a value. Metric's router reads several quote addresses today.
+//!   wherever both set a value. Another quote address's entry merges only when its quote sequence
+//!   is at or below the book's, so only a quote address that numbers its quote sequences on the
+//!   venue's own counter can merge; see [`overrides`].
 //! - **What the buffer holds.** Entries of the latest price level message's slot and one slot
 //!   either side, and only under the venues this consumer serves. Before the first price level
 //!   message, the newest slot the entries name places that window.
 //! - **Quoting never depends on any of this.** A refused, silent or malformed quote stream, a
 //!   refused entry, a book with no match, and a consumer that opted out all end in a state that
 //!   quotes its price levels and carries no overrides. Nothing on this path removes a component,
-//!   delays an update, changes a quote, or shortens how long a quote is valid.
+//!   changes a quote, or shortens how long a quote is valid, and the stream never waits on the
+//!   quote stream socket to serve a price level message.
 //!
 //! [`without_simulation_overrides`] turns the quote stream socket off, and
 //! [`quote_stream_endpoint`] points it at another region.
@@ -144,8 +147,8 @@
 //!
 //! Label values and gauge encodings, for dashboards and alerts:
 //! - `price_level_stream_frame_age_seconds`: a histogram of the wall-clock age of every accepted
-//!   message at acceptance, negative for a message stamped ahead of the local clock. Titan's lag
-//!   plus delivery delay and clock skew; above one slot the message's states refuse to quote.
+//!   message at acceptance, negative for a message whose `ts` is ahead of the local clock. Titan's
+//!   lag plus delivery delay and clock skew; above one slot the message's states refuse to quote.
 //! - `price_level_stream_frames_rejected_total{socket, reason}`: `parse_error`, `too_old`,
 //!   `in_future`, `out_of_order`, `block_regression`, `block_jump`. Only `parse_error` is ever
 //!   counted on `socket="quote_stream"`.
@@ -161,9 +164,10 @@
 //!   `socket="quote_stream"`.
 //! - `price_level_stream_serving_state`: 0 = unserved, 1 = serving.
 //! - `venue` on `price_level_stream_last_seen_timestamp_seconds`,
-//!   `price_level_stream_served_components`, `price_level_stream_stale_removals_total` and
-//!   `price_level_stream_override_match_total`: the registered venue name, or the address of an
-//!   auto-detected venue.
+//!   `price_level_stream_served_components`, `price_level_stream_stale_removals_total`,
+//!   `price_level_stream_override_match_total`, `price_level_stream_override_merged_sources_total`
+//!   and `price_level_stream_override_skipped_sources_total`: the registered venue name, or the
+//!   address of an auto-detected venue.
 //! - The quote refusals and the simulation overrides series are documented with their labels and
 //!   baselines in the solver docs' metrics section.
 //!

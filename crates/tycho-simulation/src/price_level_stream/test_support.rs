@@ -198,7 +198,7 @@ impl Drop for FakeTitan {
     }
 }
 
-/// Nanoseconds since the Unix epoch, for building messages Titan would stamp right now.
+/// Nanoseconds since the Unix epoch, for a message `ts` Titan would write right now.
 pub(super) fn wall_nanos_now() -> u64 {
     u64::try_from(
         SystemTime::now()
@@ -282,7 +282,7 @@ pub(super) fn captured_book(maker: &str, token1: &str, token2: &str) -> TitanBoo
         .expect("captured book")
 }
 
-/// A message stamped with `block`/`ts` carrying every captured book of `maker`, each verbatim from
+/// A message with `block` and `ts`, carrying every captured book of `maker`, each verbatim from
 /// the capture — so a stream reading it parses what Titan actually sent, including the venue
 /// address Titan streams the books under.
 pub(super) fn captured_message_text(maker: &str, block: u64, ts: u64) -> String {
@@ -325,8 +325,8 @@ pub(super) fn matching_books() -> Vec<TitanBook> {
 /// stream reading it matches exactly what Titan sent, while its `ts` passes the freshness checks
 /// of the reading host's clock.
 pub(super) fn matching_message_text(block: u64, ts: u64) -> String {
-    let message = with_integer_field(MATCHING_MESSAGE, "block", |_| block);
-    with_integer_field(&message, "ts", |_| ts)
+    let message = with_integer_field(MATCHING_MESSAGE, "block", block);
+    with_integer_field(&message, "ts", ts)
 }
 
 /// [`CAPTURED_QUOTE_STREAM_MESSAGE`], parsed.
@@ -362,8 +362,7 @@ pub(super) const SYNTHETIC_ACCOUNT: &str = "0xba443ecec71dc7123bd68c2082d13e3299
 /// read off the capture rather than to the parser's own output.
 ///
 /// It has two accounts: one overrides a balance and a nonce only, the other also writes a single
-/// 32-byte storage word. `block_timestamp` is the slot as a Unix second, and `expires_at` the
-/// second one slot after `built_at_ns`.
+/// 32-byte storage word. `block_timestamp` is the slot as a Unix second.
 pub(super) fn test_overrides() -> PammSimulationOverrides {
     PammSimulationOverrides {
         accounts: BTreeMap::from([
@@ -396,16 +395,15 @@ pub(super) fn test_overrides() -> PammSimulationOverrides {
         block_number: Some(26_201_954),
         block_timestamp: Some(1_792_115_927),
         built_at_ns: 1_792_115_920_127_487_452,
-        expires_at: 1_792_115_932,
     }
 }
 
-/// `message` with the value of every `"key": <digits>` field replaced by `replace` of it, as text.
+/// `message` with the value of every `"key": <digits>` field replaced by `value`, as text.
 ///
 /// It edits the text instead of round-tripping through a `serde_json::Value`: a `Value` holds no
 /// integer wider than `u64`, so the capture's quote sequences, all above `u64::MAX`, would come
 /// back as `f64` and match nothing.
-fn with_integer_field(message: &str, key: &str, replace: impl Fn(u64) -> u64) -> String {
+fn with_integer_field(message: &str, key: &str, value: u64) -> String {
     let field = format!("\"{key}\":");
     let mut replaced = String::with_capacity(message.len());
     let mut rest = message;
@@ -420,11 +418,9 @@ fn with_integer_field(message: &str, key: &str, replace: impl Fn(u64) -> u64) ->
         let digits = tail.len() -
             tail.trim_start_matches(|character: char| character.is_ascii_digit())
                 .len();
-        let (value, tail) = tail.split_at(digits);
-        let value: u64 = value
-            .parse()
-            .unwrap_or_else(|_| panic!("\"{key}\" is not an integer field"));
-        replaced.push_str(&replace(value).to_string());
+        assert!(digits > 0, "\"{key}\" is not an integer field");
+        replaced.push_str(&value.to_string());
+        let tail = &tail[digits..];
         rest = tail;
         fields += 1;
     }

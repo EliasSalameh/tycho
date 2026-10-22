@@ -28,7 +28,7 @@ use tracing::{info, warn};
 use tycho_common::Bytes;
 
 use super::{
-    overrides::{expires_at, AccountOverride, PammSimulationOverrides},
+    overrides::{AccountOverride, PammSimulationOverrides},
     telemetry::{self, ReconnectReason, RejectReason},
     SLOT,
 };
@@ -74,7 +74,7 @@ pub(super) struct ConnectionSettings {
     /// Longest a single connection attempt may take before it is aborted and retried, so a hung
     /// TCP/TLS handshake cannot block the stream forever.
     pub connect_timeout: Duration,
-    /// Longest gap between *parsed* Tita messages tolerated before the socket is treated as dead
+    /// Longest gap between *parsed* Titan messages tolerated before the socket is treated as dead
     /// and re-established. Titan pushes one message per second and sends no keepalives, so a
     /// half-open socket is indistinguishable from silence; the 10 s default reconnects before
     /// the 24 s `stale_after` default removes any component. Pings, binary frames, and
@@ -373,8 +373,8 @@ pub(super) enum EntryRejection {
     /// The entry carried no pair, or no account: nothing to match, or nothing to simulate.
     ///
     /// **This refusal has a permanent baseline and is not a fault.** About 1.2% of Titan's entries
-    /// carry a `quoteAddress` and a `timestamp` and nothing else, roughly one a second, measured
-    /// over 77,377 entries on 2026-10-21. Alerts on refused entries must exclude this reason.
+    /// name no pair and no account, roughly one a second, measured over 77,377 entries on
+    /// 2026-10-21. Alerts on refused entries must exclude this reason.
     Empty,
     /// An account replaced its code, or its whole storage instead of diffing it, so the entry no
     /// longer describes the venue the chain holds.
@@ -429,7 +429,6 @@ fn validated(entry: TitanVenueOverride) -> Result<VenueOverrides, EntryRejection
             block_number: entry.block_number,
             block_timestamp: block_timestamp(entry.slot),
             built_at_ns,
-            expires_at: expires_at(built_at_ns),
         },
     })
 }
@@ -585,7 +584,7 @@ pub(super) fn messages<T: TitanMessage>(
                                 warn!(
                                     socket = T::SOCKET,
                                     idle_secs = settings.read_idle_timeout.as_secs(),
-                                    "No parsed Tita message within idle timeout; reconnecting"
+                                    "No parsed Titan message within idle timeout; reconnecting"
                                 );
                                 let reason = ReconnectReason::IdleTimeout;
                                 telemetry::record_reconnect(T::SOCKET, reason);
@@ -612,7 +611,7 @@ pub(super) fn messages<T: TitanMessage>(
                                         warn!(
                                             socket = T::SOCKET,
                                             error = %e,
-                                            "Failed to parse Tita message"
+                                            "Failed to parse Titan message"
                                         );
                                         telemetry::record_frame_rejected(
                                             T::SOCKET,
@@ -627,7 +626,7 @@ pub(super) fn messages<T: TitanMessage>(
                                 warn!(
                                     socket = T::SOCKET,
                                     len = bytes.len(),
-                                    "Ignoring unexpected binary Tita message"
+                                    "Ignoring unexpected binary Titan message"
                                 );
                             }
                             // Keep-alive frames. tokio-tungstenite answers pings with pongs
@@ -948,8 +947,8 @@ mod tests {
     }
 
     /// Both sockets are read through this one function, so the `socket` label is the only thing
-    /// that tells their failures apart: an override socket that keeps closing must not read as the
-    /// price level socket flapping, which is the signal that quoting liveness is at risk.
+    /// that tells their failures apart: a quote stream socket that keeps closing must not read as
+    /// the price level socket flapping, which is the signal that quoting liveness is at risk.
     #[test]
     fn a_reconnect_names_the_socket_it_happened_on() {
         let ((), snapshot) = record_async(async {
@@ -970,7 +969,7 @@ mod tests {
                 RECONNECTS,
                 &[("reason", "closed"), ("socket", "quote_stream")]
             ) >= 1,
-            "the override socket's reconnects are not counted under its own socket"
+            "the quote stream socket's reconnects are not counted under its own socket"
         );
         assert_eq!(
             counter_value(
@@ -979,7 +978,7 @@ mod tests {
                 &[("reason", "closed"), ("socket", "price_levels")]
             ),
             0,
-            "the override socket's reconnects were attributed to the price level socket"
+            "the quote stream socket's reconnects were attributed to the price level socket"
         );
     }
 
@@ -1143,25 +1142,29 @@ mod tests {
         }
     }
 
-    /// Titan prices a batch of pairs at one quote sequence, so a quote sequence is not an identity
-    /// on its own: the captured Metric entry repeats one across all eight of its pairs.
+    /// Each pair keeps the quote sequence at its own position in `pairSequences`.
     #[test]
-    fn one_quote_sequence_can_cover_several_pairs_of_an_entry() {
-        let batched = captured_venue_overrides(captured_quote_stream_message())
-            .into_iter()
-            .find(|entry| entry.pairs.len() == 8)
-            .expect("the eight-pair entry");
+    fn each_pair_keeps_the_quote_sequence_at_its_position() {
+        let entry = Entry {
+            asset_pairs: format!(
+                r#"[{{"token_1": "{LINK}", "token_2": "{USDC}"}},
+                    {{"token_1": "{WETH}", "token_2": "{USDC}"}}]"#
+            ),
+            pair_sequences: "[284836027668196596826243146, 284836027668196596826243150]"
+                .to_string(),
+            ..Entry::default()
+        };
 
-        let sequences: HashSet<u128> = batched
-            .pairs
-            .iter()
-            .map(|pair| pair.sequence)
-            .collect();
-        assert_eq!(sequences.len(), 1, "expected one sequence across the batch");
+        let pairs = entry.validated().pairs;
+
+        assert_eq!(pairs[0].token_1, address(LINK));
+        assert_eq!(pairs[0].sequence, 284_836_027_668_196_596_826_243_146);
+        assert_eq!(pairs[1].token_1, address(WETH));
+        assert_eq!(pairs[1].sequence, 284_836_027_668_196_596_826_243_150);
     }
 
-    /// The captured Metric entry's fields as raw JSON, so a case can replace exactly one and
-    /// stay anchored to the shape Titan sends.
+    /// A synthetic entry shaped like Titan's, built from fields of the captured Metric entry, as
+    /// raw JSON, so a case can replace exactly one field.
     struct Entry {
         quote_address: String,
         block_number: String,
@@ -1202,7 +1205,7 @@ mod tests {
             } = self;
             format!(
                 r#"{{"venues": [{{
-                    "maker": "TaurusFi",
+                    "maker": "Metric",
                     "quoteAddress": {quote_address},
                     "pricedAddresses": ["{METRIC}"],
                     "blockNumber": {block_number},
@@ -1249,8 +1252,16 @@ mod tests {
     /// An entry naming no block number, or no slot, is still accepted: the overrides then carry
     /// no block number, or no block timestamp.
     #[rstest]
-    #[case::no_block_number(Entry { block_number: "null".to_string(), ..Entry::default() }, None, Some(1_792_115_927))]
-    #[case::no_slot(Entry { slot: "null".to_string(), ..Entry::default() }, Some(26_148_760), None)]
+    #[case::no_block_number(
+        Entry { block_number: "null".to_string(), ..Entry::default() },
+        None,
+        Some(1_792_115_927)
+    )]
+    #[case::no_slot(
+        Entry { slot: "null".to_string(), ..Entry::default() },
+        Some(26_148_760),
+        None
+    )]
     fn an_entry_without_a_block_number_or_slot_is_accepted(
         #[case] entry: Entry,
         #[case] block_number: Option<u64>,
@@ -1654,11 +1665,11 @@ mod tests {
     /// other book's quote sequence into an `f64`.
     fn message_with_mutated_quote_sequence(index: usize, literal: &str) -> String {
         const KEY: &str = r#""calculated_from""#;
-        let references: Vec<usize> = CAPTURED_MESSAGE
+        let keys: Vec<usize> = CAPTURED_MESSAGE
             .match_indices(KEY)
             .map(|(at, _)| at)
             .collect();
-        let key_at = references[index];
+        let key_at = keys[index];
         let value_at = key_at +
             CAPTURED_MESSAGE[key_at..]
                 .find(':')

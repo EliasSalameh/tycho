@@ -162,7 +162,7 @@ impl PriceLevelStreamBuilder {
         self
     }
 
-    /// Overrides the longest gap between parsed Tita messages tolerated before the connection is
+    /// Overrides the longest gap between parsed Titan messages tolerated before the connection is
     /// treated as dead and re-established (default: 10s). Titan pushes one message per second and
     /// sends no keepalives, so a multi-second silence means a stalled or half-open connection.
     /// Control frames and unparsable text do not reset this timeout, and neither does the time
@@ -324,7 +324,7 @@ impl PriceLevelStreamBuilder {
     /// any one book side whose levels do not state a usable price function — leaving that
     /// direction unquotable.
     ///
-    /// Every update is stamped with the block its message targets, a removal with the newest
+    /// Every update carries the block its message targets, a removal the newest
     /// accepted block. Block numbers never decrease while something is served. Once every
     /// component has turned stale, the next accepted message is judged as a first message and may
     /// carry a lower block than the removal did: that is how the stream recovers from a message
@@ -396,18 +396,23 @@ impl PriceLevelStreamBuilder {
             let messages = titan::messages(url, connection);
             tokio::pin!(messages);
             // A stream that never yields stands in for the quote stream socket when it is off.
-            let mut quote_stream_messages: Pin<Box<dyn Stream<Item = TitanQuoteStreamMessage> + Send>> =
-                match quote_stream_url {
-                    Some(url) => Box::pin(titan::messages::<TitanQuoteStreamMessage>(url, connection)),
-                    None => Box::pin(tokio_stream::pending()),
-                };
+            let mut quote_stream_messages: Pin<
+                Box<dyn Stream<Item = TitanQuoteStreamMessage> + Send>,
+            > = match quote_stream_url {
+                Some(url) => {
+                    Box::pin(titan::messages::<TitanQuoteStreamMessage>(url, connection))
+                }
+                None => Box::pin(tokio_stream::pending()),
+            };
             loop {
                 let deadline = tracker.stale_deadline();
                 let sleep_until_deadline = tokio::time::sleep_until(
                     deadline.map_or_else(tokio::time::Instant::now, tokio::time::Instant::from_std),
                 );
                 let update = tokio::select! {
-                    Some(message) = messages.next() => tracker.on_price_level_message(message, now()),
+                    Some(message) = messages.next() => {
+                        tracker.on_price_level_message(message, now())
+                    }
                     Some(message) = quote_stream_messages.next() => {
                         tracker.on_quote_stream_message(message);
                         None
@@ -692,7 +697,7 @@ mod tests {
 
     #[tokio::test]
     async fn replayed_messages_remove_within_stale_after_and_never_re_add() {
-        // One message, stamped once, replayed every 50 ms forever.
+        // One message, with one `ts`, replayed every 50 ms forever.
         let replay = fresh_message();
         let fake = FakeTitan::spawn(message_then_repeat(
             replay.clone(),
@@ -851,7 +856,7 @@ mod tests {
         assert!(state.quotable_until().is_none());
     }
 
-    /// A [`FakeTitan`] handler that sends a freshly stamped message every `interval` until the
+    /// A [`FakeTitan`] handler that sends a message with a current `ts` every `interval` until the
     /// socket closes.
     fn fresh_message_every(
         interval: Duration,
@@ -1041,7 +1046,8 @@ mod tests {
     /// Synthetic: a token that calls itself `WBTC` at an address no default binding names.
     const IMPOSTOR_WBTC: &str = "0x00000000000000000000000000000000deadbeef";
 
-    /// Sends one freshly stamped message of Kipseli's captured books on the first connection only.
+    /// Sends one message with a current `ts`, of Kipseli's captured books, on the first connection
+    /// only.
     /// The books arrive under the address Titan streams them by, so serving them at all also
     /// exercises the alias on the live path.
     async fn first_connection_sends_captured_books(index: usize, mut socket: FakeConnection) {
@@ -1271,7 +1277,9 @@ mod tests {
     #[case::opt_out_after_the_endpoint(false)]
     #[case::opt_out_before_the_endpoint(true)]
     #[tokio::test]
-    async fn without_simulation_overrides_connects_no_second_socket(#[case] opt_out_first: bool) {
+    async fn without_simulation_overrides_connects_no_quote_stream_socket(
+        #[case] opt_out_first: bool,
+    ) {
         let overrides =
             FakeTitan::spawn(send_once_after(Duration::ZERO, quote_stream_message())).await;
         let prices = FakeTitan::spawn(send_once_after(SOCKET_HEAD_START, matching_message())).await;
@@ -1297,7 +1305,7 @@ mod tests {
 
         assert_eq!(update.states.len(), 30);
         assert!(states_with_overrides(&update).is_empty());
-        assert_eq!(connections(&overrides), 0, "connected the second socket");
+        assert_eq!(connections(&overrides), 0, "connected the quote stream socket");
     }
 
     /// Whatever the quote stream socket does, the price level socket keeps serving: the states lose

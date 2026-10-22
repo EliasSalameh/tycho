@@ -57,8 +57,7 @@ const MAX_AUTO_DETECTED: usize = 64;
 /// reads a clock itself: the caller supplies both, so every decision is a function of its inputs.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Now {
-    /// Wall clock, nanoseconds since the Unix epoch. Only ever compared against Titan's
-    /// `timestamp`.
+    /// Wall clock, nanoseconds since the Unix epoch. Only ever compared against Titan's `ts`.
     pub wall_nanos: u64,
     /// Monotonic clock. Every deadline is computed from it, so a wall-clock jump cannot remove a
     /// component early or keep it served late.
@@ -91,8 +90,8 @@ impl MessageTiming {
     ) -> Self {
         // `QUOTE_TTL` counts from the message's `ts` and is enforced on the monotonic clock; it
         // does not depend on whether the quotes changed, because quiet venues repeat the same
-        // quotes for minutes. A message stamped ahead of the local clock has age zero, so it gets
-        // one slot of quotability and never more.
+        // quotes for minutes. A message whose `ts` is ahead of the local clock has age zero, so it
+        // gets one slot of quotability and never more.
         let quotable_for = QUOTE_TTL.saturating_sub(message_age);
         Self {
             block: message.block,
@@ -170,7 +169,7 @@ pub(super) struct TrackerSettings {
     pub simulation_overrides: bool,
 }
 
-/// Turns Tita messages into [`Update`]s. A message only adds or refreshes components: a component
+/// Turns Titan messages into [`Update`]s. A message only adds or refreshes components: a component
 /// (or a whole venue) that a message omits stays served until its own deadline passes in
 /// [`on_stale_deadline`](Self::on_stale_deadline).
 pub(super) struct FreshnessTracker {
@@ -187,8 +186,8 @@ pub(super) struct FreshnessTracker {
     /// The stream's serving state; holds the block frontier and drives
     /// [`Self::stale_deadline`] and the per-venue gauges.
     serving_state: ServingState,
-    /// The `timestamp` of the newest accepted message. Messages older than it are out of order;
-    /// equal ones are re-emissions within a build round and accepted. Never reset.
+    /// The `ts` of the newest accepted message. Messages older than it are out of order; equal
+    /// ones are accepted, because Titan can send several messages with one `ts`. Never reset.
     newest_timestamp_nanos: u64,
     /// Whether the last message was rejected. The first rejection of a streak logs at WARN and the
     /// rest at DEBUG; `price_level_stream_frames_rejected_total` counts every rejection.
@@ -317,12 +316,15 @@ impl FreshnessTracker {
         };
         self.rejecting = false;
         telemetry::record_frame_accepted();
-        // Signed, unlike `message_age`: a message stamped ahead of the local clock records a
+        // Signed, unlike `message_age`: a message whose `ts` is ahead of the local clock records a
         // negative age, so a clock skew between Titan and this host shows on the histogram instead
         // of looking like a perfect feed.
         let age_nanos = i128::from(now.wall_nanos) - i128::from(message.ts);
         telemetry::record_frame_age(age_nanos as f64 / NANOS_PER_SECOND as f64);
         self.newest_timestamp_nanos = message.ts;
+        if message.slot.is_none() {
+            telemetry::record_message_without_slot();
+        }
 
         let timing =
             MessageTiming::new(&message, now, message_age, self.stale_after, self.quote_guard);
@@ -493,7 +495,7 @@ impl FreshnessTracker {
     /// The buffer stores an entry only under the venues this tracker serves (see
     /// [`OverrideBuffer::store`]), which keeps memory to what can be matched. An auto-detected
     /// venue is served from its first book on, so the entries that arrive before that book are not
-    /// stored, and its first message gets no overrides.
+    /// stored, and the states of its first message get no overrides.
     pub(super) fn on_quote_stream_message(&mut self, message: TitanQuoteStreamMessage) {
         // Unreachable while overrides are off: the builder connects no quote stream socket then.
         let Some(buffer) = self.overrides.as_mut() else {
@@ -546,7 +548,7 @@ impl FreshnessTracker {
             stale_after_secs = self.stale_after.as_secs(),
             "Removing price level components: no accepted message carried them within stale_after"
         );
-        // Stamped with the newest accepted block, so the removal orders after every update the
+        // Carries the newest accepted block, so the removal orders after every update the
         // removed components were served in.
         let update = Update::new(frontier.block, HashMap::new(), HashMap::new())
             .set_is_partial(true)
@@ -765,6 +767,9 @@ fn find_overrides(
     }
     if found.merged_sources > 0 {
         telemetry::record_override_merged_sources(venue_name, found.merged_sources);
+    }
+    if found.skipped_sources > 0 {
+        telemetry::record_override_skipped_sources(venue_name, found.skipped_sources);
     }
     Some(found.overrides)
 }
@@ -999,8 +1004,8 @@ mod tests {
             Self::based_at(BASE_WALL_NANOS)
         }
 
-        /// A clock based at `base` wall nanoseconds, for the 2026-10-16 captures, whose stamps lie
-        /// a month past [`BASE_WALL_NANOS`].
+        /// A clock based at `base` wall nanoseconds, for the 2026-10-16 captures, whose timestamps
+        /// lie a month past [`BASE_WALL_NANOS`].
         fn based_at(base: u64) -> Self {
             Self { base, start: Instant::now() }
         }
@@ -1233,8 +1238,8 @@ mod tests {
         assert_eq!(update.is_some(), accepted);
     }
 
-    /// Judged at t=0, a message stamped 13 s ahead lies beyond the one-slot skew; 12 s ahead is
-    /// accepted.
+    /// Judged at t=0, a message whose `ts` is 13 s ahead lies beyond the one-slot skew; 12 s ahead
+    /// is accepted.
     #[rstest]
     #[case::beyond_the_limit(13, false)]
     #[case::at_the_limit(12, true)]
@@ -1314,12 +1319,16 @@ mod tests {
             let clock = Clock::new();
             let mut tracker = tracker();
             tracker.on_price_level_message(message_at(100, 5, wbtc_usdc_books()), clock.at(5));
-            // Still fresh (16 s old) but stamped before the accepted message: out_of_order.
+            // Still fresh (16 s old) but older than the accepted message's `ts`: out_of_order.
             tracker.on_price_level_message(message_at(100, 4, wbtc_usdc_books()), clock.at(20));
-            tracker.on_price_level_message(message_at(100, 5, wbtc_usdc_books()), clock.at(29)); // too_old
-            tracker.on_price_level_message(message_at(100, 45, wbtc_usdc_books()), clock.at(29)); // in_future
-            tracker.on_price_level_message(message_at(99, 6, wbtc_usdc_books()), clock.at(29)); // block_regression
-            tracker.on_price_level_message(message_at(200, 6, wbtc_usdc_books()), clock.at(29)); // block_jump
+            // too_old
+            tracker.on_price_level_message(message_at(100, 5, wbtc_usdc_books()), clock.at(29));
+            // in_future
+            tracker.on_price_level_message(message_at(100, 45, wbtc_usdc_books()), clock.at(29));
+            // block_regression
+            tracker.on_price_level_message(message_at(99, 6, wbtc_usdc_books()), clock.at(29));
+            // block_jump
+            tracker.on_price_level_message(message_at(200, 6, wbtc_usdc_books()), clock.at(29));
         });
         assert_eq!(counter_value(&snapshot, FRAMES_ACCEPTED, &[]), 1);
         for reason in ["too_old", "in_future", "out_of_order", "block_regression", "block_jump"] {
@@ -1342,7 +1351,7 @@ mod tests {
             let mut tracker = tracker();
             // Built at t=7, accepted at t=9: 2 s old.
             tracker.on_price_level_message(message_at(100, 7, wbtc_usdc_books()), clock.at(9));
-            // Stamped 3 s ahead of the local clock: a negative age, so a skew is visible.
+            // A `ts` 3 s ahead of the local clock: a negative age, so a skew is visible.
             tracker.on_price_level_message(message_at(100, 12, wbtc_usdc_books()), clock.at(9));
             // Rejected messages record no age.
             tracker.on_price_level_message(message_at(100, 6, wbtc_usdc_books()), clock.at(9));
@@ -1413,10 +1422,10 @@ mod tests {
     }
 
     #[test]
-    fn quotable_until_never_exceeds_one_block_for_a_future_stamped_message() {
+    fn quotable_until_never_exceeds_one_block_for_a_message_ahead_of_the_clock() {
         let clock = Clock::new();
         let mut tracker = tracker();
-        // Maximum accepted skew: stamped 12 s ahead of the local clock.
+        // Maximum accepted skew: a `ts` 12 s ahead of the local clock.
         let update = tracker
             .on_price_level_message(message_at(100, 12, wbtc_usdc_books()), clock.at(0))
             .expect("update expected");
@@ -2239,19 +2248,20 @@ mod tests {
     /// The block the matching capture was taken in, whose beacon slot is [`CAPTURED_SLOT`].
     const CAPTURED_BLOCK: u64 = 26_201_954;
 
-    /// Captured venues, as Titan streams them. None of these is aliased, so each is also the
-    /// venue's public identity.
+    // Captured venues, as Titan streams them. None of these is aliased, so each is also the venue's
+    // public identity.
     const GOLIATH: &str = "0x4367985a63063fc970b009c6e599e9225181f551";
     const TAURUSFI: &str = "0x20861433d9119b866eeb398cb1ad46652a3cf953";
-    /// Metric's public identity, and the second quote address whose state its router reads.
+    /// Metric's public identity.
     const METRIC: &str = "0x99ab7c1c5eab47801f7937075998527a550fba8a";
+    /// The other quote address whose state Metric's router reads, and whose entries merge.
     const METRIC_SECOND_SOURCE: &str = "0x30a88bf894d1b806125a23ebf23d715496fd7102";
     /// A venue no test registers, which only auto-detection serves.
     const UNREGISTERED_VENUE: &str = "0x00000000000000000000000000000000deadbeef";
 
-    /// The metric names the tests below read, spelled out rather than read off the constants the
-    /// counters are emitted under, because they are the contract with dashboards and alerts, as in
-    /// [`telemetry`](super::super::telemetry)'s own tests.
+    // The metric names the tests below read, spelled out rather than read off the constants the
+    // counters are emitted under, because they are the contract with dashboards and alerts, as in
+    // `telemetry`'s own tests.
     const OVERRIDE_MATCH_TOTAL: &str = "price_level_stream_override_match_total";
     const OVERRIDE_BUFFER_TOTAL: &str = "price_level_stream_override_buffer_total";
     const REFUSED_ENTRIES_TOTAL: &str = "price_level_stream_override_entries_refused_total";
@@ -2260,6 +2270,9 @@ mod tests {
     const SEQUENCE_SLOT_MISMATCH_TOTAL: &str = "price_level_stream_sequence_slot_mismatch_total";
     const OVERRIDE_BLOCK_MISMATCH_TOTAL: &str = "price_level_stream_override_block_mismatch_total";
     const OVERRIDE_MERGED_SOURCES_TOTAL: &str = "price_level_stream_override_merged_sources_total";
+    const OVERRIDE_SKIPPED_SOURCES_TOTAL: &str =
+        "price_level_stream_override_skipped_sources_total";
+    const MESSAGES_WITHOUT_SLOT_TOTAL: &str = "price_level_stream_messages_without_slot_total";
     const MISSING_FIELD_TOTAL: &str = "price_level_stream_override_entry_missing_field_total";
     const UNSERVED_VENUE_ENTRIES_TOTAL: &str = "price_level_stream_unserved_venue_entries_total";
     const DUPLICATE_BOOKS_TOTAL: &str = "price_level_stream_duplicate_books_total";
@@ -2349,7 +2362,7 @@ mod tests {
     /// same slot, and only Kipseli's two pairs and TaurusFi's one find none.
     ///
     /// The Goliath state is checked against the hand transcription of its entry, and Metric's
-    /// against the merge of its two quote addresses.
+    /// against the merge of its second quote address.
     #[test]
     fn the_captured_messages_attach_overrides_to_every_matching_book() {
         let clock = Clock::based_at(MATCHING_MESSAGE_TS);
@@ -2456,16 +2469,16 @@ mod tests {
         quote_stream_message(&[override_entry(venue, built_at_ns, 1, pairs)])
     }
 
-    /// The captured second, with no sub-second part, which the synthetic cases stamp at.
+    /// The captured second, with no sub-second part: the `ts` of the synthetic cases' messages.
     const WHOLE_SECOND_NANOS: u64 = 1_792_115_920_000_000_000;
 
-    /// A price level message of `books` stamped [`WHOLE_SECOND_NANOS`], in the captured block and
+    /// A price level message of `books` with `ts` [`WHOLE_SECOND_NANOS`], in the captured block and
     /// slot.
     fn captured_slot_message(books: Vec<TitanBook>) -> TitanPriceLevelMessage {
         message_at_slot(CAPTURED_BLOCK, Some(CAPTURED_SLOT), books)
     }
 
-    /// A price level message stamped [`WHOLE_SECOND_NANOS`] of `block`, naming `slot`.
+    /// A price level message with `ts` [`WHOLE_SECOND_NANOS`] of `block`, naming `slot`.
     fn message_at_slot(
         block: u64,
         slot: Option<u64>,
@@ -2475,7 +2488,7 @@ mod tests {
     }
 
     /// A two-sided book of the venue at `quote_address`, priced at `sequence`.
-    fn versioned(
+    fn book_at_sequence(
         quote_address: &str,
         token1: &str,
         token2: &str,
@@ -2490,7 +2503,7 @@ mod tests {
 
     /// The FermiSwap WBTC/USDC book at 100,000 USDC, priced at `sequence`.
     fn wbtc_usdc_at(sequence: u128) -> TitanBook {
-        versioned(PAMM, "WBTC", "USDC", 100_000.0, sequence)
+        book_at_sequence(PAMM, "WBTC", "USDC", 100_000.0, sequence)
     }
 
     /// A tracker serving FermiSwap and auto-detecting whatever else a message carries, with
@@ -2523,15 +2536,15 @@ mod tests {
             .amount
     }
 
-    /// A one-book FermiSwap message whose `calculated_from` is the raw JSON `reference`, parsed as
-    /// the stream parses it: the field is read leniently, so only a message built from text covers
-    /// what an unreadable value does.
-    fn referencing(reference: &str) -> TitanPriceLevelMessage {
+    /// A one-book FermiSwap message whose `calculated_from` is the raw JSON `calculated_from`,
+    /// parsed as the stream parses it: the field is read leniently, so only a message built from
+    /// text covers what an unreadable value does.
+    fn with_calculated_from(calculated_from: &str) -> TitanPriceLevelMessage {
         let text = format!(
             r#"{{"slot": 1, "block": 100, "ts": {BASE_WALL_NANOS}, "books": [
                 {{"maker": "Fermi", "quoteAddress": "{PAMM}", "token1": "WBTC", "token2": "USDC",
                   "token1Address": "{WBTC}", "token2Address": "{USDC}",
-                  "calculated_from": {reference},
+                  "calculated_from": {calculated_from},
                   "bids": [{{"price": 100000.0, "cumVolume": 1.0}}],
                   "asks": [{{"price": 100000.0, "cumVolume": 1.0}}]}}
             ]}}"#
@@ -2550,7 +2563,7 @@ mod tests {
         let clock = Clock::new();
         let mut tracker = tracker();
 
-        let update = tracker.on_price_level_message(referencing(UNREADABLE), clock.at(0));
+        let update = tracker.on_price_level_message(with_calculated_from(UNREADABLE), clock.at(0));
 
         let update = update.expect("update expected");
         assert_eq!(usdc_for_one_wbtc(state_of(&update)), BigUint::from(100_000_000_000u64));
@@ -2570,7 +2583,7 @@ mod tests {
         let clock = Clock::based_at(WHOLE_SECOND_NANOS);
         let mut tracker = tracker_serving(vec![kipseli_custom()], false);
         // The book arrives under the streamed address, as Titan sends Kipseli's.
-        let books = vec![versioned(KIPSELI_STREAMED, "WBTC", "USDC", 100_000.0, SEQUENCE)];
+        let books = vec![book_at_sequence(KIPSELI_STREAMED, "WBTC", "USDC", 100_000.0, SEQUENCE)];
 
         tracker.on_quote_stream_message(one_entry(
             entry_venue,
@@ -2596,9 +2609,9 @@ mod tests {
         let mut tracker = detecting_tracker(true);
         let books = vec![
             wbtc_usdc_at(SEQUENCE),
-            versioned(PAMM, "WETH", "USDC", 3_000.0, SEQUENCE),
-            versioned(PAMM, "WBTC", "WETH", 33.0, SEQUENCE),
-            versioned(UNREGISTERED_VENUE, "WBTC", "USDC", 100_000.0, SEQUENCE),
+            book_at_sequence(PAMM, "WETH", "USDC", 3_000.0, SEQUENCE),
+            book_at_sequence(PAMM, "WBTC", "WETH", 33.0, SEQUENCE),
+            book_at_sequence(UNREGISTERED_VENUE, "WBTC", "USDC", 100_000.0, SEQUENCE),
         ];
 
         tracker.on_quote_stream_message(one_entry(
@@ -2622,7 +2635,8 @@ mod tests {
     }
 
     /// An entry whose `pricedAddresses` name a served venue is merged into that venue's own
-    /// entry, and the merge is counted under the venue.
+    /// entry, and the merge is counted under the venue; another quote address whose only entry is
+    /// later than the book is counted as skipped.
     #[test]
     fn an_entry_merges_into_the_venues_its_priced_addresses_name() {
         let clock = Clock::based_at(WHOLE_SECOND_NANOS);
@@ -2635,8 +2649,19 @@ mod tests {
         let second = override_entry(second_source, WHOLE_SECOND_NANOS, 7, &pairs)
             .replace(&quote_address, &format!("{quote_address} {priced}"))
             .replace(SYNTHETIC_ACCOUNT, second_account);
-        let entries =
-            quote_stream_message(&[second, override_entry(PAMM, WHOLE_SECOND_NANOS, 1, &pairs)]);
+        // A third quote address naming the venue, whose only entry is later than the book.
+        let third_source = "0x00000000000000000000000000000000000000cc";
+        let third =
+            override_entry(third_source, WHOLE_SECOND_NANOS, 9, &[(WBTC, USDC, SEQUENCE + 1)])
+                .replace(
+                    &format!(r#""quoteAddress": "{third_source}","#),
+                    &format!(r#""quoteAddress": "{third_source}", "pricedAddresses": ["{PAMM}"],"#),
+                );
+        let entries = quote_stream_message(&[
+            second,
+            third,
+            override_entry(PAMM, WHOLE_SECOND_NANOS, 1, &pairs),
+        ]);
 
         let (update, snapshot) = record_async(async {
             tracker.on_quote_stream_message(entries);
@@ -2659,6 +2684,10 @@ mod tests {
             counter_value(&snapshot, OVERRIDE_MERGED_SOURCES_TOTAL, &[("venue", "fermiswap")]),
             1
         );
+        assert_eq!(
+            counter_value(&snapshot, OVERRIDE_SKIPPED_SOURCES_TOTAL, &[("venue", "fermiswap")]),
+            1
+        );
     }
 
     /// Entries are only stored for venues already served, so an auto-detected venue's entries
@@ -2670,7 +2699,7 @@ mod tests {
         let now = clock.after(Duration::ZERO);
         let pairs = [(WBTC, USDC, SEQUENCE)];
         let message = || {
-            captured_slot_message(vec![versioned(
+            captured_slot_message(vec![book_at_sequence(
                 UNREGISTERED_VENUE,
                 "WBTC",
                 "USDC",
@@ -2729,8 +2758,10 @@ mod tests {
             override_entry(PAMM, WHOLE_SECOND_NANOS, 1, &[(WBTC, USDC, SEQUENCE)]),
             override_entry(PAMM, WHOLE_SECOND_NANOS, 2, &[(WBTC, USDC, SEQUENCE + 5)]),
         ]);
-        let books =
-            vec![wbtc_usdc_at(SEQUENCE + 5), versioned(PAMM, "WBTC", "USDC", 101_000.0, SEQUENCE)];
+        let books = vec![
+            wbtc_usdc_at(SEQUENCE + 5),
+            book_at_sequence(PAMM, "WBTC", "USDC", 101_000.0, SEQUENCE),
+        ];
 
         let (update, snapshot) = record_async(async {
             tracker.on_quote_stream_message(entries);
@@ -2757,7 +2788,7 @@ mod tests {
             .replace(&WHOLE_SECOND_NANOS.to_string(), "null");
         let mut tracker = tracker();
         let books =
-            vec![versioned(PAMM, "WETH", "USDC", 3_000.0, SEQUENCE), wbtc_usdc_at(SEQUENCE)];
+            vec![book_at_sequence(PAMM, "WETH", "USDC", 3_000.0, SEQUENCE), wbtc_usdc_at(SEQUENCE)];
 
         tracker.on_quote_stream_message(quote_stream_message(&[
             no_timestamp,
@@ -2870,8 +2901,9 @@ mod tests {
         }
     }
 
-    /// A price level message naming no slot moves the window to the newest slot its books'
-    /// quote sequences carry, and leaves it where it was when no book carries one.
+    /// A price level message naming no slot is counted, moves the window to the newest slot its
+    /// books' quote sequences carry, and leaves it where it was when no book carries one. Its
+    /// books' quote sequences are not checked against a slot it does not name.
     #[rstest]
     #[case::a_book_names_a_later_slot(wbtc_usdc_at(sequence_in(CAPTURED_SLOT + 2, 1)), 1)]
     #[case::no_book_names_a_quote_sequence(two_sided(PAMM, "WBTC", "USDC", 100_000.0), 0)]
@@ -2897,6 +2929,11 @@ mod tests {
         assert_eq!(
             counter_value(&snapshot, OVERRIDE_BUFFER_TOTAL, &[("event", "left_slot_window")]),
             left_slot_window
+        );
+        assert_eq!(counter_value(&snapshot, MESSAGES_WITHOUT_SLOT_TOTAL, &[]), 1);
+        assert_eq!(
+            counter_value(&snapshot, SEQUENCE_SLOT_MISMATCH_TOTAL, &[("socket", "price_levels")]),
+            0
         );
     }
 
@@ -2979,7 +3016,7 @@ mod tests {
     #[case::absent("null", true, 0)]
     #[case::unreadable_without_overrides(UNREADABLE, false, 1)]
     fn an_unreadable_quote_sequence_is_counted_apart_from_an_absent_one(
-        #[case] reference: &str,
+        #[case] calculated_from: &str,
         #[case] overrides_on: bool,
         #[case] counted: u64,
     ) {
@@ -2988,7 +3025,7 @@ mod tests {
         // Built inside the recorder, because the tracker registers the series when it is built.
         let (update, snapshot) = record_async(async {
             tracker_with_overrides(overrides_on)
-                .on_price_level_message(referencing(reference), clock.at(0))
+                .on_price_level_message(with_calculated_from(calculated_from), clock.at(0))
         });
 
         assert!(update.is_some());
@@ -3054,6 +3091,7 @@ mod tests {
         for (name, labels) in [
             (OVERRIDE_MATCH_TOTAL, vec![("venue", "fermiswap"), ("outcome", "same_sequence")]),
             (OVERRIDE_MERGED_SOURCES_TOTAL, vec![("venue", "fermiswap")]),
+            (OVERRIDE_SKIPPED_SOURCES_TOTAL, vec![("venue", "fermiswap")]),
             (OVERRIDE_BUFFER_TOTAL, vec![("event", "added")]),
             (REFUSED_ENTRIES_TOTAL, vec![("reason", "no_timestamp")]),
             (OVERRIDE_BLOCK_MISMATCH_TOTAL, vec![]),
@@ -3067,6 +3105,7 @@ mod tests {
             assert_eq!(counter_value(&snapshot, name, &labels), 0, "{name}");
         }
         assert!(counter_registered(&snapshot, UNREADABLE_QUOTE_SEQUENCE_TOTAL, &[]));
+        assert!(counter_registered(&snapshot, MESSAGES_WITHOUT_SLOT_TOTAL, &[]));
     }
 
     /// An auto-detected venue gets its per-venue overrides series registered at zero when it is
