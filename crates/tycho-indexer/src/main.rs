@@ -230,7 +230,8 @@ fn spawn_jemalloc_stats_reporter() {
 /// Profiling stops when the agent is dropped.
 ///
 /// The application name is `PYROSCOPE_APPLICATION_NAME`, else `OTEL_SERVICE_NAME` (the service
-/// name of the traces), else `tycho-indexer-<chains>`, with the indexed chains joined by `-`.
+/// name of the traces), else `tycho-indexer-<chain>` with the first chain, the one the indexer
+/// uses.
 ///
 /// # Panics
 ///
@@ -246,7 +247,10 @@ fn start_cpu_profiler(
     };
     let application = env::var("PYROSCOPE_APPLICATION_NAME")
         .or_else(|_| env::var("OTEL_SERVICE_NAME"))
-        .unwrap_or_else(|_| format!("tycho-indexer-{}", chains.join("-")));
+        .unwrap_or_else(|_| match chains.first() {
+            Some(chain) => format!("tycho-indexer-{chain}"),
+            None => "tycho-indexer".to_string(),
+        });
     let sample_rate = env::var("PYROSCOPE_SAMPLE_RATE")
         .unwrap_or_else(|_| "100".to_string())
         .parse()
