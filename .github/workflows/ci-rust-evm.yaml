@@ -133,9 +133,9 @@ jobs:
       # Captures live pAMM quotes, then simulates each encoded swap on the parent of the block it
       # targets, with and without the quote's own overrides. It fails when a quote's own overrides
       # revert or miss the quoted amount, or when the stream served quotes and none carried
-      # overrides. It passes with a `::warning::` when Titan serves no quote, or when no candidate
-      # can be checked against the chain: the RPC returns none of the quoted blocks, or no
-      # simulation runs.
+      # overrides. It passes with a `::warning::` when Titan serves no quote, or when none of the
+      # captured quotes can be checked against the chain: the RPC returns none of the quoted
+      # blocks, or no simulation runs.
       - name: Simulate live pAMM quotes with their overrides
         run: |
           cargo test -p tycho-integration-test --test pamm_simulation_overrides --locked \

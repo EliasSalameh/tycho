@@ -2407,6 +2407,7 @@ mod tests {
             4
         );
         assert_eq!(counter_value(&snapshot, OVERRIDE_BLOCK_MISMATCH_TOTAL, &[]), 0);
+        assert_eq!(counter_value(&snapshot, MESSAGES_WITHOUT_SLOT_TOTAL, &[]), 0);
     }
 
     /// A quote sequence numbered `n` in `slot`: the slot in the high 64 bits, as Titan's are.
@@ -2635,8 +2636,8 @@ mod tests {
     }
 
     /// An entry whose `pricedAddresses` name a served venue is merged into that venue's own
-    /// entry, and the merge is counted under the venue; another quote address whose only entry is
-    /// later than the book is counted as skipped.
+    /// entry, and the merge is counted under the venue; other quote addresses whose only entries
+    /// are later than the book are counted as skipped.
     #[test]
     fn an_entry_merges_into_the_venues_its_priced_addresses_name() {
         let clock = Clock::based_at(WHOLE_SECOND_NANOS);
@@ -2649,17 +2650,17 @@ mod tests {
         let second = override_entry(second_source, WHOLE_SECOND_NANOS, 7, &pairs)
             .replace(&quote_address, &format!("{quote_address} {priced}"))
             .replace(SYNTHETIC_ACCOUNT, second_account);
-        // A third quote address naming the venue, whose only entry is later than the book.
-        let third_source = "0x00000000000000000000000000000000000000cc";
-        let third =
-            override_entry(third_source, WHOLE_SECOND_NANOS, 9, &[(WBTC, USDC, SEQUENCE + 1)])
-                .replace(
-                    &format!(r#""quoteAddress": "{third_source}","#),
-                    &format!(r#""quoteAddress": "{third_source}", "pricedAddresses": ["{PAMM}"],"#),
-                );
+        // Two more quote addresses naming the venue, whose only entries are later than the book.
+        let later_only = |source: &str| {
+            override_entry(source, WHOLE_SECOND_NANOS, 9, &[(WBTC, USDC, SEQUENCE + 1)]).replace(
+                &format!(r#""quoteAddress": "{source}","#),
+                &format!(r#""quoteAddress": "{source}", "pricedAddresses": ["{PAMM}"],"#),
+            )
+        };
         let entries = quote_stream_message(&[
             second,
-            third,
+            later_only("0x00000000000000000000000000000000000000cc"),
+            later_only("0x00000000000000000000000000000000000000dd"),
             override_entry(PAMM, WHOLE_SECOND_NANOS, 1, &pairs),
         ]);
 
@@ -2686,7 +2687,7 @@ mod tests {
         );
         assert_eq!(
             counter_value(&snapshot, OVERRIDE_SKIPPED_SOURCES_TOTAL, &[("venue", "fermiswap")]),
-            1
+            2
         );
     }
 

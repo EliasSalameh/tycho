@@ -114,8 +114,8 @@
 //! - **Venues that read several quote addresses.** The buffer also holds an entry under every
 //!   served venue its `pricedAddresses` name, and merges it into that venue's own entry, which wins
 //!   wherever both set a value. Another quote address's entry merges only when its quote sequence
-//!   is at or below the book's, so only a quote address that numbers its quote sequences on the
-//!   venue's own counter can merge; see [`overrides`].
+//!   is at or below the book's. The buffer compares the numbers only, and cannot tell whether that
+//!   quote address counts on the venue's counter; see [`overrides`].
 //! - **What the buffer holds.** Entries of the latest price level message's slot and one slot
 //!   either side, and only under the venues this consumer serves. Before the first price level
 //!   message, the newest slot the entries name places that window.

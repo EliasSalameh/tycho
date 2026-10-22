@@ -117,8 +117,8 @@ pub(super) const OVERRIDE_ENTRY_MISSING_FIELD: &str =
 pub(super) const DUPLICATE_BOOKS: &str = "price_level_stream_duplicate_books_total";
 /// Counter, no labels. Incremented once per accepted price level message that names no beacon
 /// `slot`. Such a message is still served, but the slot window then follows the newest slot its
-/// books' quote sequences carry, and its books' quote sequences go unchecked against
-/// [`SEQUENCE_SLOT_MISMATCH`]. All 795 messages recorded on 2026-10-21 named a slot, so a
+/// books' quote sequences carry, and [`SEQUENCE_SLOT_MISMATCH`] cannot check those quote sequences
+/// against a slot. All 795 messages recorded on 2026-10-21 named a slot, so a
 /// non-zero rate is a change on Titan's side.
 pub(super) const MESSAGES_WITHOUT_SLOT: &str = "price_level_stream_messages_without_slot_total";
 /// Counter, no labels. Incremented once per accepted venue entry streamed under a quote address
@@ -144,12 +144,14 @@ pub(super) const OVERRIDE_BLOCK_MISMATCH: &str = "price_level_stream_override_bl
 /// the state of its other quote addresses. Every registered venue starts at zero while overrides
 /// are on.
 pub(super) const OVERRIDE_MERGED_SOURCES: &str = "price_level_stream_override_merged_sources_total";
-/// Counter, label `venue`, as on [`LAST_SEEN`]. Incremented by the number of other quote addresses
-/// that held entries for a state's pair in the book's slot, none of them at or below the book's
-/// quote sequence, so none of their state was merged. Such a quote address numbers its quote
-/// sequences on another counter than the venue's books: in the 2026-10-21 recording,
-/// `0x6dca2500…` named Metric's router but counted milliseconds, so it never merged. Every
-/// registered venue starts at zero while overrides are on.
+/// Counter, label `venue`, as on [`LAST_SEEN`]. Incremented, for each state that gets overrides,
+/// by the number of other quote addresses that held entries for the state's pair in the book's
+/// slot but none at or below the book's quote sequence, so none of their state was merged. A quote
+/// address that numbers its quote sequences on another counter than the venue's books moves it
+/// whenever it holds such an entry: in the 2026-10-21 recording, `0x6dca2500…` named Metric's
+/// router but counted milliseconds, so it never merged. A quote address on the venue's counter
+/// moves it too, when all its entries in the slot are newer than the book. Every registered venue
+/// starts at zero while overrides are on.
 pub(super) const OVERRIDE_SKIPPED_SOURCES: &str =
     "price_level_stream_override_skipped_sources_total";
 

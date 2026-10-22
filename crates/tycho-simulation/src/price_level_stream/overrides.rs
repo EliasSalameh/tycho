@@ -7,22 +7,23 @@
 //! (`pairSequences`). Titan does not publish an entry for every quote sequence, so a book often
 //! names a quote sequence that no entry carries. A book arrives about a second after the entries
 //! Titan published before it, so the buffer already holds those entries when the book arrives, as
-//! long as the consumer polls the stream at least about once a second; a slower consumer can see
-//! a book before entries that reached their socket earlier, and its state then gets an earlier
-//! entry or none. `OverrideBuffer::find`
-//! therefore returns the newest entry of the book's venue and pair that comes from the book's slot
-//! and has a quote sequence at or below the book's: the latest state Titan published before it
-//! priced the book.
+//! long as the consumer polls the stream again as soon as it has handled each update. The stream
+//! reads both sockets only while polled, and then in no fixed order, so after a pause it can read
+//! a book before entries that reached their socket earlier, and that book's state gets an earlier
+//! entry or none. `OverrideBuffer::find` therefore returns the newest entry of the book's venue and
+//! pair that comes from the book's slot and has a quote sequence at or below the book's: the latest
+//! state Titan published before it priced the book.
 //!
 //! A venue can read the state of more than one quote address. An entry's `pricedAddresses` lists
 //! every venue whose swaps read that entry's state, so the buffer stores the entry under each
 //! listed venue the stream serves, and `find` merges the matching entries of the other quote
 //! addresses into the venue's own entry. The venue's own entry wins wherever two of them set the
 //! same value. Another quote address's entry matches by the same rule as the venue's own, so it
-//! merges only when its quote sequence counts on the same counter as the venue's books: in the
+//! merges only when its quote sequence is at or below the book's. `find` compares the numbers
+//! only, and cannot tell whether that quote address counts on the venue's counter: in the
 //! 2026-10-21 recording, `0x6dca2500…` named Metric's router but numbered its quote sequences by
 //! the millisecond, so none of its entries ever sat at or below a Metric book's quote sequence.
-//! `find` reports such quote addresses as skipped.
+//! `find` reports the quote addresses it skips this way.
 //!
 //! The buffer reads no clock. A quote sequence carries its beacon slot in its high 64 bits, and a
 //! book only matches an entry of its own slot, so the buffer keeps only the slots a book can still
@@ -215,7 +216,8 @@ pub(super) enum BufferEvent {
     ArrivedOutsideSlotWindow,
     /// A held entry was dropped because the window moved past its slot.
     LeftSlotWindow,
-    /// Storing the entry would take the buffer past [`MAX_HELD_SIZE`], so it was not stored.
+    /// Storing the entry, or a newer copy of one held, would take the buffer past
+    /// [`MAX_HELD_SIZE`], so it was not stored.
     BufferFull,
 }
 
@@ -451,7 +453,7 @@ impl OverrideBuffer {
 
     /// Holds `arriving` under `key`. It replaces a held entry of the same quote address and quote
     /// sequence when `arriving` was built later, keeps the held one otherwise, and refuses
-    /// `arriving` when the buffer is full.
+    /// `arriving` when holding it would take the buffer past its budget, replacing or not.
     fn hold(&mut self, key: PairKey, arriving: Held) -> BufferEvent {
         if let Some(held) = self.held.get_mut(&key) {
             let same = held.iter_mut().find(|entry| {
@@ -464,7 +466,11 @@ impl OverrideBuffer {
                     .cmp(&entry.overrides.built_at_ns)
                 {
                     Ordering::Greater => {
-                        self.size = self.size - entry.size + arriving.size;
+                        let size = self.size - entry.size + arriving.size;
+                        if size > self.max_size {
+                            return BufferEvent::BufferFull;
+                        }
+                        self.size = size;
                         *entry = arriving;
                         BufferEvent::ReplacedByNewer
                     }
@@ -932,6 +938,44 @@ mod tests {
 
         assert_eq!(newer, events(&[(BufferEvent::ReplacedByNewer, 1)]));
         assert_eq!(nonce_of(&find(&buffer, sequence(CAPTURED_SLOT, 1)).expect("found")), 2);
+    }
+
+    /// A newer copy that would take the buffer past its budget is refused like any other entry, and
+    /// the held copy stays.
+    #[test]
+    fn a_newer_copy_past_the_budget_is_refused() {
+        let pairs = [(WBTC, USDC, sequence(CAPTURED_SLOT, 1))];
+        let mut buffer = OverrideBuffer::with_capacity(2);
+        store(&mut buffer, entry(VENUE, BUILT_AT, 1, 1, &pairs));
+        let mut larger = entry(VENUE, BUILT_AT + 1, 2, 1, &pairs);
+        larger
+            .overrides
+            .accounts
+            .get_mut(&address(SYNTHETIC_ACCOUNT))
+            .expect("the account")
+            .state_diff
+            .insert(word_bytes(2), word_bytes(2));
+
+        let refused = store(&mut buffer, larger);
+
+        assert_eq!(refused, events(&[(BufferEvent::BufferFull, 1)]));
+        assert_eq!(nonce_of(&find(&buffer, sequence(CAPTURED_SLOT, 1)).expect("found")), 1);
+    }
+
+    /// Another quote address's entries of another slot are neither merged nor counted as skipped.
+    #[test]
+    fn another_sources_entry_of_another_slot_is_not_skipped() {
+        let book = sequence(CAPTURED_SLOT, 7);
+        let mut previous_slot =
+            entry(OTHER_SOURCE, BUILT_AT, 50, 50, &[(WBTC, USDC, sequence(CAPTURED_SLOT - 1, 7))]);
+        previous_slot.priced_addresses = vec![address(VENUE)];
+        let mut buffer = OverrideBuffer::default();
+        store(&mut buffer, entry(VENUE, BUILT_AT, 1, 1, &[(WBTC, USDC, book)]));
+        store(&mut buffer, previous_slot);
+
+        let found = find(&buffer, book).expect("found");
+
+        assert_eq!((found.merged_sources, found.skipped_sources), (0, 0));
     }
 
     /// A pair of one token with itself quotes nothing, so it is not stored, and the entry's other

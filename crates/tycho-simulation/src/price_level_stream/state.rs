@@ -208,8 +208,8 @@ impl PriceLevelStreamState {
     /// pre-fill venue only: post-fill pricing is unknown in either direction until the next
     /// message, and re-reading the cumulative quotes would double-count the maker's liquidity.
     ///
-    /// The successor keeps the simulation overrides: they are the state the fill was priced on, and
-    /// a consumer simulates the swap after quoting it.
+    /// The state after the fill keeps the simulation overrides: they are the state the fill was
+    /// priced on, and a consumer simulates the swap after quoting it.
     fn consumed(&self) -> Box<dyn ProtocolSim> {
         Box::new(Self {
             token0: self.token0.clone(),

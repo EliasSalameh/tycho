@@ -324,7 +324,7 @@ impl PriceLevelStreamBuilder {
     /// any one book side whose levels do not state a usable price function — leaving that
     /// direction unquotable.
     ///
-    /// Every update carries the block its message targets, a removal the newest
+    /// Every update carries the block its message targets, and a removal carries the newest
     /// accepted block. Block numbers never decrease while something is served. Once every
     /// component has turned stale, the next accepted message is judged as a first message and may
     /// carry a lower block than the removal did: that is how the stream recovers from a message
