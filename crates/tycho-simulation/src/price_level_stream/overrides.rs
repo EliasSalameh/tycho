@@ -23,7 +23,8 @@
 //! only, and cannot tell whether that quote address counts on the venue's counter: in the
 //! 2026-10-21 recording, `0x6dca2500…` named Metric's router but numbered its quote sequences by
 //! the millisecond, so none of its entries ever sat at or below a Metric book's quote sequence.
-//! `find` reports the quote addresses it skips this way.
+//! That cost nothing: on 2026-10-22, none of 16 traced Metric WETH/USDT swaps read the one storage
+//! slot its entries set. `find` reports the quote addresses it skips this way.
 //!
 //! The buffer reads no clock. A quote sequence carries its beacon slot in its high 64 bits, and a
 //! book only matches an entry of its own slot, so the buffer keeps only the slots a book can still
