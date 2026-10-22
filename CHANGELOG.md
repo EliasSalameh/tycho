@@ -1,3 +1,18 @@
+## [0.477.0](https://github.com/propeller-heads/tycho/compare/0.476.0...0.477.0) (2026-10-22)
+
+
+### Features
+
+* **execution:** add TychoSubsidizingExecutor ([26a304c](https://github.com/propeller-heads/tycho/commit/26a304c6f2acc16324b396f2dbab144af844d954))
+* **execution:** add TychoSubsidizingExecutor ([#1642](https://github.com/propeller-heads/tycho/issues/1642)) ([b246422](https://github.com/propeller-heads/tycho/commit/b246422d90bb95ad6d5f2d67d4ccf1fd8149ab1c))
+* **execution:** model TychoSubsidizingExecutor ([a44e521](https://github.com/propeller-heads/tycho/commit/a44e5216b884c71f5c7cc368f4f64f09b8a94a7f))
+
+
+### Bug Fixes
+
+* **execution:** address subsidy wrapper contract review ([90f92d3](https://github.com/propeller-heads/tycho/commit/90f92d3897daa6226bade258fe998a0f7b4ae54d))
+* **execution:** address subsidy wrapper model review ([da5dc27](https://github.com/propeller-heads/tycho/commit/da5dc2760eb60a8c077ff47cb4471ba67733fc32))
+
 ## [0.476.0](https://github.com/propeller-heads/tycho/compare/0.475.1...0.476.0) (2026-10-22)
 
 
