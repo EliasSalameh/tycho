@@ -3,17 +3,15 @@
 //! Titan serves two pAMM WebSockets, both read by [`messages`]:
 //!
 //! - `pamm_price_levels_v2` (see <https://docs.titanbuilder.xyz/propamms/takers#pamm-price-level>)
-//!   yields the books Titan simulated in one pricing round, targeting the block it is currently
-//!   building. Consumers decide how fresh a component is from the frame `ts`, not from what a frame
-//!   omits.
+//!   yields the books Titan simulated, targeting the block it is currently building. Consumers
+//!   decide how fresh a component is from the message's `ts`, not from what a message omits.
 //! - `pamm_quote_stream_v2` yields, per venue, the account state Titan simulated that venue on to
 //!   produce those books, together with the quote sequence of each pair that state carries. A book
-//!   names its quote sequence in `calculated_from`, which is how the account state is matched to
-//!   the books it belongs to.
+//!   names its quote sequence in `calculated_from`, and the tracker matches each book to its
+//!   account state by it.
 //!
-//! All Titan specifics (endpoints, JSON shapes, reconnect policy, and what a payload has to look
-//! like to be used at all) live in this module; the rest of the price level stream machinery is
-//! venue-agnostic.
+//! All Titan specifics (endpoints, JSON shapes, reconnect policy, and the checks a venue entry must
+//! pass) live in this module; the rest of the price level stream machinery is venue-agnostic.
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -44,20 +42,20 @@ pub(super) const TITAN_PRICE_LEVEL_URL: &str =
 /// endpoint.
 pub(super) const TITAN_PRICE_LEVEL_URL_ENV: &str = "TITAN_PAMM_PRICE_LEVEL_URL";
 
-/// Default Titan pAMM quote stream WebSocket endpoint: the account state behind the price level
-/// books, from the same region.
+/// Default Titan pAMM quote stream WebSocket endpoint, which carries the account state Titan priced
+/// the books on; same region as [`TITAN_PRICE_LEVEL_URL`].
 pub(super) const TITAN_QUOTE_STREAM_URL: &str =
     "wss://eu.data.titanbuilder.xyz/ws/pamm_quote_stream_v2";
 
-/// Environment variable that replaces [`TITAN_QUOTE_STREAM_URL`] when the builder is given no
-/// override endpoint.
+/// Environment variable that replaces [`TITAN_QUOTE_STREAM_URL`] when the builder's
+/// `quote_stream_endpoint` is not set.
 pub(super) const TITAN_QUOTE_STREAM_URL_ENV: &str = "TITAN_PAMM_QUOTE_STREAM_URL";
 
 /// The Unix second beacon slot 0 of Ethereum mainnet began at. A slot's second is
 /// `BEACON_GENESIS + slot · 12`.
 const BEACON_GENESIS: u64 = 1_606_824_023;
 
-/// A 20-byte address, the only width an identity has in either of Titan's messages.
+/// The width of an address in bytes; every address in both of Titan's messages has it.
 const ADDRESS_BYTES: usize = 20;
 
 /// A 32-byte EVM word, the width of every storage slot and stored value.
@@ -76,8 +74,8 @@ pub(super) struct ConnectionSettings {
     /// Longest a single connection attempt may take before it is aborted and retried, so a hung
     /// TCP/TLS handshake cannot block the stream forever.
     pub connect_timeout: Duration,
-    /// Longest gap between *parsed* Titan frames tolerated before the socket is treated as dead
-    /// and re-established. Titan pushes one frame per second and sends no keepalives, so a
+    /// Longest gap between *parsed* Tita messages tolerated before the socket is treated as dead
+    /// and re-established. Titan pushes one message per second and sends no keepalives, so a
     /// half-open socket is indistinguishable from silence; the 10 s default reconnects before
     /// the 24 s `stale_after` default removes any component. Pings, binary frames, and
     /// unparsable text do not reset the gap.
@@ -119,26 +117,26 @@ pub(super) trait TitanMessage: DeserializeOwned + Send {
     const SOCKET: &'static str;
 }
 
-/// A parsed price level stream frame: every book Titan simulated in one build round, targeting
-/// the block currently being built.
+/// A parsed price level stream message: every book Titan simulated, targeting the block currently
+/// being built.
 ///
 /// Books are quoted in human units, so a level is a decimal price and a cumulative volume rather
 /// than a pair of token amounts, and tokens arrive as addresses, with symbols alongside them as
 /// display labels: a consumer resolves the addresses against its own token metadata before it can
 /// price anything.
 ///
-/// Frames are best effort, not complete snapshots: a venue or pair can be absent from one frame
-/// and present in the next (observed on 7.7% of frames in a 15 minute capture), so absence must
-/// never be read as retirement.
+/// Messages are best effort, and none lists every venue: a venue or pair can be absent from one
+/// message and present in the next (observed on 7.7% of messages in a 15 minute capture), so
+/// absence must never be read as retirement.
 #[derive(Debug, Deserialize)]
 pub(super) struct TitanPriceLevelMessage {
     /// The L1 block number the quotes target (the block currently being built).
     pub block: u64,
-    /// The beacon slot the frame was built for, when Titan reports one. No freshness decision
-    /// rests on it, so a frame without it is still usable.
+    /// The beacon slot the message was built for, when Titan reports one. No freshness decision
+    /// rests on it, so a message without it is still usable.
     pub slot: Option<u64>,
-    /// When Titan built this frame, in nanoseconds since the Unix epoch. Frames re-emitted
-    /// within one build round share a timestamp, so it is a freshness marker, not an identity.
+    /// When Titan built this message, in nanoseconds since the Unix epoch. Titan can send several
+    /// messages with one `ts`, so it is a freshness marker, not an identity.
     pub ts: u64,
     /// One book per venue and pair; a venue appears once for every pair it quotes.
     pub books: Vec<TitanBook>,
@@ -150,9 +148,9 @@ impl TitanMessage for TitanPriceLevelMessage {
 
 /// The quote sequence a book names in `calculated_from`: the one its price levels were priced at.
 ///
-/// The three cases are told apart here, at the parse boundary, because nothing downstream can: an
-/// absent quote sequence and an unreadable one both leave nothing to match, yet only the second
-/// says Titan sent something this parser does not understand.
+/// The parser tells the three cases apart because nothing downstream can: an absent quote sequence
+/// and an unreadable one both leave nothing to match, but only an unreadable one means Titan sent
+/// something this parser does not understand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum QuoteSequence {
     /// The book named none: the field was missing or null.
@@ -161,9 +159,9 @@ pub(super) enum QuoteSequence {
     /// The book was priced at this quote sequence.
     Valid(u128),
     /// The book named something this parser cannot read as a quote sequence: a string, a
-    /// boolean, a fraction, a negative, a number above `u128`, or a composite. Never a reason to
-    /// drop the book: the price levels are what quote, and the quote sequence is only used to find
-    /// their simulation overrides. Counted under `unreadable_quote_sequence_total`.
+    /// boolean, a fraction, a negative, a number above `u128::MAX`, or a composite. The book is
+    /// still served: its price levels quote without it, and the quote sequence only finds their
+    /// simulation overrides. Counted under `unreadable_quote_sequence_total`.
     Unreadable,
 }
 
@@ -184,7 +182,7 @@ where
     Ok(serde_json::from_str::<u128>(text).map_or(QuoteSequence::Unreadable, QuoteSequence::Valid))
 }
 
-/// One venue's two-sided quote ladder for one pair, priced in `token2` per `token1`.
+/// One venue's two-sided price levels for one pair, priced in `token2` per `token1`.
 ///
 /// Ask prices sit above bid prices, and either side can be empty when the venue quotes only one
 /// direction of the pair.
@@ -230,7 +228,7 @@ pub(super) struct TitanBook {
 /// A single quote level: selling `cum_volume` of `token1` in total executes at an average of
 /// `price`.
 ///
-/// An average, not a limit: `ladders_for_book` computes `amount_out = price · cum_volume`, which
+/// An average, not a limit: `quotes_for_book` computes `amount_out = price · cum_volume`, which
 /// holds only under that reading.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,7 +240,7 @@ pub(super) struct TitanLevel {
     pub cum_volume: f64,
 }
 
-/// A parsed quote stream message: the account state of every venue Titan priced in one round, one
+/// A parsed quote stream message: the account state of every venue Titan priced, one
 /// entry per venue.
 ///
 /// Each entry is kept as raw JSON and decoded on its own by [`validate`], so an entry this parser
@@ -250,11 +248,11 @@ pub(super) struct TitanLevel {
 /// of its own, and like price level messages it is best effort: a venue present in one message can
 /// be absent from the next without having retired.
 #[derive(Debug, Deserialize)]
-pub(super) struct TitanOverrideMessage {
+pub(super) struct TitanQuoteStreamMessage {
     pub venues: Vec<Box<RawValue>>,
 }
 
-impl TitanMessage for TitanOverrideMessage {
+impl TitanMessage for TitanQuoteStreamMessage {
     const SOCKET: &'static str = "quote_stream";
 }
 
@@ -304,7 +302,8 @@ pub(super) struct TitanAccountOverride {
     pub balance: Option<String>,
     /// The nonce, as a hex quantity.
     pub nonce: Option<String>,
-    /// The overridden storage words, keyed by slot — a diff, never a full storage image.
+    /// The overridden storage words, keyed by slot: a `stateDiff`, never a full `state`
+    /// replacement.
     #[serde(default)]
     pub state_diff: BTreeMap<Bytes, Bytes>,
     /// Set when the entry replaced the account's code. Only its presence is read: see
@@ -318,37 +317,18 @@ pub(super) struct TitanAccountOverride {
 /// The validated contents of one venue entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct VenueOverrides {
-    /// The venue address the entry was streamed under, exactly as Titan named it: the caller
-    /// normalizes it through the alias table, as it does a book's.
+    /// The venue address the entry was streamed under, exactly as Titan named it: the buffer
+    /// normalizes it through the alias table, as the tracker does a book's.
     pub quote_address: Bytes,
-    /// The other venues whose swaps read this entry's state, exactly as Titan named them.
+    /// The quote address plus every venue whose swaps read this entry's state, exactly as Titan
+    /// named them.
     pub priced_addresses: Vec<Bytes>,
     /// The quote sequence of each pair, in Titan's order and Titan's orientation.
     pub pairs: Vec<PairSequence>,
-    /// The accounts the simulation overrode, keyed by address.
-    pub accounts: BTreeMap<Bytes, AccountOverride>,
-    /// The block Titan was building, when the entry named one.
-    pub block_number: Option<u64>,
-    /// The beacon slot of that block, when the entry named one.
+    /// The beacon slot of the block Titan was building, when the entry named one.
     pub slot: Option<u64>,
-    /// The Unix second of that slot. `None` when the entry named no slot.
-    pub block_timestamp: Option<u64>,
-    /// When Titan took this state, in nanoseconds since the Unix epoch. Orders two entries of one
-    /// quote sequence, which is not the order they were received in.
-    pub built_at_ns: u64,
-}
-
-impl VenueOverrides {
     /// The entry's simulation overrides, as a state carries them.
-    pub fn overrides(&self) -> PammSimulationOverrides {
-        PammSimulationOverrides {
-            accounts: self.accounts.clone(),
-            block_number: self.block_number,
-            block_timestamp: self.block_timestamp,
-            built_at_ns: self.built_at_ns,
-            expires_at: expires_at(self.built_at_ns),
-        }
-    }
+    pub overrides: PammSimulationOverrides,
 }
 
 /// One pair of a venue entry and the quote sequence its state carries for it.
@@ -360,29 +340,13 @@ pub(super) struct PairSequence {
     pub sequence: u128,
 }
 
-/// What validation made of one venue entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum EntryOutcome {
-    /// The entry is usable.
-    Accepted(VenueOverrides),
-    /// The entry is refused whole, for this reason.
-    Rejected(EntryRejection),
-}
-
 /// Why a venue entry was refused whole.
 ///
 /// An entry is never partly used: the accounts of one entry were simulated together, so half of
 /// them describe a state no venue was ever in. Each variant's name in snake case is the `reason`
 /// label it is counted under.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    strum_macros::IntoStaticStr,
-    strum_macros::EnumIter,
-    strum_macros::EnumCount,
+    Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr, strum_macros::EnumIter,
 )]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum EntryRejection {
@@ -397,8 +361,8 @@ pub(super) enum EntryRejection {
     MalformedPair,
     /// A storage slot or a stored word is not a 32-byte EVM word.
     MalformedStorage,
-    /// A balance or a nonce is not a hex quantity, or a nonce does not fit the field that carries
-    /// it.
+    /// A balance or a nonce is not a hex quantity, a balance is wider than 32 bytes, or a nonce
+    /// does not fit the field that carries it.
     MalformedQuantity,
     /// The entry named no `timestamp`, so nothing orders it against another entry of the same
     /// quote sequence.
@@ -419,19 +383,17 @@ pub(super) enum EntryRejection {
     OverCap,
 }
 
-/// Validates every venue entry of `message`, in stream order: one outcome per entry.
-pub(super) fn validate(message: TitanOverrideMessage) -> Vec<EntryOutcome> {
+/// Validates every venue entry of `message`, in stream order: one result per entry.
+pub(super) fn validate(
+    message: TitanQuoteStreamMessage,
+) -> Vec<Result<VenueOverrides, EntryRejection>> {
     message
         .venues
         .into_iter()
         .map(|raw| {
-            let decoded = serde_json::from_str::<TitanVenueOverride>(raw.get())
+            serde_json::from_str::<TitanVenueOverride>(raw.get())
                 .map_err(|_| EntryRejection::Undecodable)
-                .and_then(validated);
-            match decoded {
-                Ok(overrides) => EntryOutcome::Accepted(overrides),
-                Err(rejection) => EntryOutcome::Rejected(rejection),
-            }
+                .and_then(validated)
         })
         .collect()
 }
@@ -461,18 +423,21 @@ fn validated(entry: TitanVenueOverride) -> Result<VenueOverrides, EntryRejection
         quote_address: entry.quote_address,
         priced_addresses: entry.priced_addresses,
         pairs: pair_sequences(entry.asset_pairs, &entry.pair_sequences)?,
-        accounts: validated_accounts(entry.state_override)?,
-        block_number: entry.block_number,
         slot: entry.slot,
-        block_timestamp: block_timestamp(entry.slot),
-        built_at_ns,
+        overrides: PammSimulationOverrides {
+            accounts: validated_accounts(entry.state_override)?,
+            block_number: entry.block_number,
+            block_timestamp: block_timestamp(entry.slot),
+            built_at_ns,
+            expires_at: expires_at(built_at_ns),
+        },
     })
 }
 
 /// Errors unless the entry fits every per-entry cap.
 ///
-/// Counted on Titan's own values, before any width is checked, so one entry cannot make this
-/// process hold more than the caps allow even when its widths turn out wrong.
+/// It counts accounts and storage words before any width check, so an entry with wrong widths still
+/// cannot make this process hold more than the caps allow.
 fn ensure_within_caps(
     accounts: &BTreeMap<Bytes, TitanAccountOverride>,
 ) -> Result<(), EntryRejection> {
@@ -555,9 +520,9 @@ fn quantity_digits(quantity: &str) -> Option<&str> {
 
 /// A hex quantity as its minimal big-endian bytes, at most a `u256` wide.
 ///
-/// A quantity drops leading zero digits, so it can carry an odd number of them —
-/// `0x31a98d578d71685db` — which is exactly what fixed-width hex parsing rejects. A zero
-/// quantity decodes to one zero byte, never to no bytes at all.
+/// A quantity drops leading zero digits, so it can have an odd number of digits, as
+/// `0x31a98d578d71685db` does, which fixed-width hex parsing rejects. A zero quantity decodes to
+/// one zero byte, never to no bytes.
 fn quantity_bytes(quantity: &str) -> Option<Bytes> {
     let digits = quantity_digits(quantity)?;
     if digits.len() > 2 * WORD_BYTES {
@@ -584,16 +549,15 @@ fn block_timestamp(slot: Option<u64>) -> Option<u64> {
         .checked_add(BEACON_GENESIS)
 }
 
-/// Yields parsed frames from `url` for as long as the returned stream is polled.
+/// Yields parsed messages from `url` for as long as the returned stream is polled.
 ///
 /// Maintains the connection in the background of the stream itself: any disconnect, read error,
 /// server-side close, or idle timeout is retried forever with capped exponential backoff (reset
-/// only once a frame is actually parsed, so a socket that connects and immediately drops still
-/// backs off instead of busy-looping). Malformed frames are logged and skipped; this stream never
+/// only once a message is actually parsed, so a socket that connects and immediately drops still
+/// backs off instead of busy-looping). Malformed messages are logged and skipped; this stream never
 /// terminates.
 ///
-/// Both Titan sockets are read through this one function; the frame type names which socket its
-/// logs describe.
+/// Both Titan sockets use this one function; the message type names the socket in its logs.
 pub(super) fn messages<T: TitanMessage>(
     url: String,
     settings: ConnectionSettings,
@@ -604,8 +568,8 @@ pub(super) fn messages<T: TitanMessage>(
             match timeout(settings.connect_timeout, connect_async(url.as_str())).await {
                 Ok(Ok((mut ws_stream, _))) => {
                     info!(%url, socket = T::SOCKET, "Connected to Titan pAMM stream");
-                    // The deadline moves only when a frame parses, so control frames and
-                    // unparsable text cannot keep a socket that sends no frames alive.
+                    // The deadline moves only when a message parses, so control frames and
+                    // unparsable text cannot keep a socket that sends no messages alive.
                     let mut idle_deadline = deadline_after(settings.read_idle_timeout);
                     loop {
                         let message = match timeout_at(idle_deadline, ws_stream.next()).await {
@@ -616,12 +580,12 @@ pub(super) fn messages<T: TitanMessage>(
                                 telemetry::record_reconnect(T::SOCKET, ReconnectReason::Ended);
                                 break;
                             }
-                            // No parsed frame within the idle window: assume a stalled socket.
+                            // No parsed message within the idle window: assume a stalled socket.
                             Err(_elapsed) => {
                                 warn!(
                                     socket = T::SOCKET,
                                     idle_secs = settings.read_idle_timeout.as_secs(),
-                                    "No parsed Titan frame within idle timeout; reconnecting"
+                                    "No parsed Tita message within idle timeout; reconnecting"
                                 );
                                 let reason = ReconnectReason::IdleTimeout;
                                 telemetry::record_reconnect(T::SOCKET, reason);
@@ -633,7 +597,7 @@ pub(super) fn messages<T: TitanMessage>(
                             Ok(Message::Text(text)) => {
                                 match serde_json::from_str::<T>(text.as_str())
                                 {
-                                    // A parsed frame proves the connection is healthy: reset the
+                                    // A parsed message proves the connection is healthy: reset the
                                     // reconnect backoff. The idle window restarts only once the
                                     // consumer resumes the stream after the yield, so it measures
                                     // the time spent waiting on the socket, not the time the
@@ -643,12 +607,12 @@ pub(super) fn messages<T: TitanMessage>(
                                         yield message;
                                         idle_deadline = deadline_after(settings.read_idle_timeout);
                                     }
-                                    // Unparseable frame: log and keep the connection.
+                                    // Unparseable message: log and keep the connection.
                                     Err(e) => {
                                         warn!(
                                             socket = T::SOCKET,
                                             error = %e,
-                                            "Failed to parse Titan message"
+                                            "Failed to parse Tita message"
                                         );
                                         telemetry::record_frame_rejected(
                                             T::SOCKET,
@@ -663,7 +627,7 @@ pub(super) fn messages<T: TitanMessage>(
                                 warn!(
                                     socket = T::SOCKET,
                                     len = bytes.len(),
-                                    "Ignoring unexpected binary Titan frame"
+                                    "Ignoring unexpected binary Tita message"
                                 );
                             }
                             // Keep-alive frames. tokio-tungstenite answers pings with pongs
@@ -740,40 +704,39 @@ mod tests {
 
     use super::{
         super::{
-            overrides::test_overrides,
             telemetry::{
                 recorded::{counter_value, record_async},
                 FRAMES_REJECTED, RECONNECTS,
             },
             test_support::{
-                address, frame_text, frame_then_repeat, wall_nanos_now, FakeTitan, PAMM, USDC,
-                WBTC, WETH,
+                address, captured_quote_stream_message, captured_quote_stream_text,
+                captured_venue_overrides, message_text, message_then_repeat, test_overrides,
+                wall_nanos_now, FakeTitan, PAMM, USDC, WBTC, WETH,
             },
         },
         *,
     };
 
-    /// A frame captured verbatim from the live stream (2026-10-16); the file name carries the
-    /// frame's `ts` field.
+    /// A message captured verbatim from the live stream (2026-10-16); the file name carries the
+    /// message's `ts` field.
     const CAPTURED_MESSAGE: &str =
         include_str!("test_responses/pamm_price_levels_v2_1792115918290990905.json");
 
-    /// Quote stream messages captured verbatim from the live `pamm_quote_stream_v2` socket
-    /// (2026-10-16). A message carries no timestamp of its own — every timestamp is per venue
-    /// entry — so the file names carry the nanosecond the capture received each message at, which
-    /// unlike the price level fixtures above cannot be checked against their contents.
-    const CAPTURED_OVERRIDES: &str =
-        include_str!("test_responses/pamm_quote_stream_v2_1792115920248724389.json");
-    const EARLIER_CAPTURED_OVERRIDES: &str =
+    /// The earlier quote stream message captured verbatim from the live `pamm_quote_stream_v2`
+    /// socket (2026-10-16); [`captured_quote_stream_text`] is the later one. A quote stream message
+    /// has no timestamp of its own, only one per venue entry, so each file name carries the
+    /// nanosecond the capture received the message. Unlike the price level fixtures, nothing in
+    /// the contents confirms that number.
+    const EARLIER_QUOTE_STREAM_MESSAGE: &str =
         include_str!("test_responses/pamm_quote_stream_v2_1792115920051017671.json");
 
     /// The venue Metric streams under, whose entry prices all eight of its pairs at one quote
     /// sequence.
     const METRIC: &str = "0xe844701934d9c6085b292e428f41b911cc0b3872";
-    /// The venue Goliath streams under, whose entry of [`CAPTURED_OVERRIDES`] [`test_overrides`]
-    /// transcribes by hand.
+    /// The venue Goliath streams under, whose captured entry [`test_overrides`] transcribes by
+    /// hand.
     const GOLIATH: &str = "0x4367985a63063fc970b009c6e599e9225181f551";
-    /// The account that entry overrides a balance and a nonce of, and nothing else.
+    /// An account whose balance and nonce the captured Metric entry overrides, and nothing else.
     const METRIC_ACCOUNT: &str = "0x629ef4396ec73973b5ea25c3f0cd1c45cd73948e";
     /// A token of the entry's fifth pair (`LINK`), which the defaults never bound.
     const LINK: &str = "0x514910771af9ca656af840dff83e8264ecf986ca";
@@ -819,7 +782,7 @@ mod tests {
         assert!(!fermi.asks.is_empty());
         assert!(!fermi.bids.is_empty());
 
-        // A level without volume carries no depth, so a zero would mean the ladder lost its
+        // A level without volume carries no depth, so a zero would mean the price levels lost their
         // quantities in parsing.
         for book in &message.books {
             for level in book.asks.iter().chain(&book.bids) {
@@ -829,8 +792,8 @@ mod tests {
         }
     }
 
-    /// `ts` is the only per-frame freshness signal, so a frame without it is unusable and must
-    /// not parse. `slot` carries no freshness decision, so a frame without it still parses.
+    /// `ts` is the only per-message freshness signal, so a message without it is unusable and must
+    /// not parse. `slot` carries no freshness decision, so a message without it still parses.
     #[test]
     fn requires_ts_but_not_slot() {
         let without_ts = r#"{"slot": 1, "block": 2, "books": []}"#;
@@ -899,40 +862,43 @@ mod tests {
         }
     }
 
-    fn frame() -> Message {
-        Message::Text(frame_text(100, wall_nanos_now()).into())
+    fn price_level_message() -> Message {
+        Message::Text(message_text(100, wall_nanos_now()).into())
     }
 
-    /// Polls `stream` until it yields a frame, failing if none arrives within two seconds.
-    async fn next_frame(stream: &mut (impl Stream<Item = TitanPriceLevelMessage> + Unpin)) {
+    /// Polls `stream` until it yields a message, failing if none arrives within two seconds.
+    async fn next_message(stream: &mut (impl Stream<Item = TitanPriceLevelMessage> + Unpin)) {
         tokio::time::timeout(Duration::from_secs(2), stream.next())
             .await
-            .expect("a frame within two seconds")
+            .expect("a message within two seconds")
             .expect("the stream never ends");
     }
 
-    /// Traffic that is not a parsed frame does not reset the idle timeout: the socket is
+    /// Traffic that is not a parsed message does not reset the idle timeout: the socket is
     /// dropped and reconnected even though it never went quiet.
     #[rstest]
     #[case::ping_only(Message::Ping(Vec::new().into()), false)]
     #[case::malformed_text(Message::Text("nonsense".into()), true)]
-    fn non_frame_traffic_does_not_count_as_liveness(
+    fn traffic_that_is_not_a_message_does_not_count_as_liveness(
         #[case] filler: Message,
         #[case] rejected_as_parse_error: bool,
     ) {
         let (connections, snapshot) = record_async(async {
-            let fake =
-                FakeTitan::spawn(frame_then_repeat(frame(), filler, Duration::from_millis(10)))
-                    .await;
+            let fake = FakeTitan::spawn(message_then_repeat(
+                price_level_message(),
+                filler,
+                Duration::from_millis(10),
+            ))
+            .await;
             let stream = messages(fake.url(), fast_settings());
             tokio::pin!(stream);
-            next_frame(&mut stream).await;
-            // The second frame can only come from a new connection, which the idle timeout
+            next_message(&mut stream).await;
+            // The second message can only come from a new connection, which the idle timeout
             // opens once the filler fails to reset it.
-            next_frame(&mut stream).await;
+            next_message(&mut stream).await;
             fake.connections.load(Ordering::SeqCst)
         });
-        assert!(connections >= 2, "no reconnect on non-frame traffic");
+        assert!(connections >= 2, "no reconnect on non-message traffic");
         assert!(
             counter_value(
                 &snapshot,
@@ -952,7 +918,11 @@ mod tests {
     fn server_close_frame_reconnects() {
         let (connections, snapshot) = record_async(async {
             let fake = FakeTitan::spawn(|_, mut socket| async move {
-                if socket.send(frame()).await.is_err() {
+                if socket
+                    .send(price_level_message())
+                    .await
+                    .is_err()
+                {
                     return;
                 }
                 let _ = socket.send(Message::Close(None)).await;
@@ -960,10 +930,10 @@ mod tests {
             .await;
             let stream = messages(fake.url(), fast_settings());
             tokio::pin!(stream);
-            next_frame(&mut stream).await;
-            // The close frame follows the first frame, so the second frame can only come from a
+            next_message(&mut stream).await;
+            // The close frame follows the first message, so the second message can only come from a
             // new connection.
-            next_frame(&mut stream).await;
+            next_message(&mut stream).await;
             fake.connections.load(Ordering::SeqCst)
         });
         assert_eq!(connections, 2);
@@ -987,10 +957,10 @@ mod tests {
                 let _ = socket.send(Message::Close(None)).await;
             })
             .await;
-            let stream = messages::<TitanOverrideMessage>(fake.url(), fast_settings());
+            let stream = messages::<TitanQuoteStreamMessage>(fake.url(), fast_settings());
             tokio::pin!(stream);
-            // The fake sends no frame, so the stream yields nothing: polling it is what drives the
-            // connect, close and back off loop at all.
+            // The fake sends no message, so the stream yields nothing; polling it drives the
+            // connect, close and back-off loop.
             let _ = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
         });
 
@@ -1018,15 +988,18 @@ mod tests {
     #[test]
     fn slow_consumer_does_not_trigger_the_idle_timeout() {
         let (connections, snapshot) = record_async(async {
-            let fake =
-                FakeTitan::spawn(frame_then_repeat(frame(), frame(), Duration::from_millis(20)))
-                    .await;
+            let fake = FakeTitan::spawn(message_then_repeat(
+                price_level_message(),
+                price_level_message(),
+                Duration::from_millis(20),
+            ))
+            .await;
             let stream = messages(fake.url(), fast_settings());
             tokio::pin!(stream);
-            next_frame(&mut stream).await;
+            next_message(&mut stream).await;
             // Three idle timeouts pass without a poll.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            next_frame(&mut stream).await;
+            next_message(&mut stream).await;
             fake.connections.load(Ordering::SeqCst)
         });
         assert_eq!(connections, 1, "reconnected while the consumer was not polling");
@@ -1041,15 +1014,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parsed_frames_keep_the_connection_alive() {
-        let fake =
-            FakeTitan::spawn(frame_then_repeat(frame(), frame(), Duration::from_millis(30))).await;
+    async fn parsed_messages_keep_the_connection_alive() {
+        let fake = FakeTitan::spawn(message_then_repeat(
+            price_level_message(),
+            price_level_message(),
+            Duration::from_millis(30),
+        ))
+        .await;
         let settings =
             ConnectionSettings { read_idle_timeout: Duration::from_millis(150), ..fast_settings() };
         let stream = messages(fake.url(), settings);
         tokio::pin!(stream);
         for _ in 0..10 {
-            next_frame(&mut stream).await;
+            next_message(&mut stream).await;
         }
         assert_eq!(fake.connections.load(Ordering::SeqCst), 1);
     }
@@ -1057,7 +1034,7 @@ mod tests {
     /// The endpoint and the variable that replaces it are the deployment contract of the second
     /// socket, so they are spelled out rather than derived.
     #[test]
-    fn the_override_endpoint_is_pinned() {
+    fn the_quote_stream_endpoint_is_pinned() {
         assert_eq!(
             TITAN_QUOTE_STREAM_URL,
             "wss://eu.data.titanbuilder.xyz/ws/pamm_quote_stream_v2"
@@ -1065,56 +1042,45 @@ mod tests {
         assert_eq!(TITAN_QUOTE_STREAM_URL_ENV, "TITAN_PAMM_QUOTE_STREAM_URL");
     }
 
-    /// One reader serves both sockets: the override socket is read, reconnected and parsed by
+    /// One reader serves both sockets: the quote stream socket is read, reconnected and parsed by
     /// exactly the machinery the price level socket is.
     #[tokio::test]
-    async fn the_reader_serves_the_override_socket() {
-        let fake = FakeTitan::spawn(frame_then_repeat(
-            Message::Text(CAPTURED_OVERRIDES.into()),
+    async fn the_reader_serves_the_quote_stream_socket() {
+        let fake = FakeTitan::spawn(message_then_repeat(
+            Message::Text(captured_quote_stream_text().into()),
             Message::Ping(Vec::new().into()),
             Duration::from_millis(50),
         ))
         .await;
-        let stream = messages::<TitanOverrideMessage>(fake.url(), fast_settings());
+        let stream = messages::<TitanQuoteStreamMessage>(fake.url(), fast_settings());
         tokio::pin!(stream);
         let message = tokio::time::timeout(Duration::from_secs(2), stream.next())
             .await
-            .expect("a frame within two seconds")
+            .expect("a message within two seconds")
             .expect("the stream never ends");
         assert_eq!(message.venues.len(), 9);
     }
 
-    fn parsed(frame: &str) -> TitanOverrideMessage {
-        serde_json::from_str(frame).expect("a valid quote stream message")
+    fn parsed(message: &str) -> TitanQuoteStreamMessage {
+        serde_json::from_str(message).expect("a valid quote stream message")
     }
 
-    /// Every venue entry of `frame`, decoded on its own as [`validate`] decodes it.
-    fn decoded(frame: &str) -> Vec<TitanVenueOverride> {
-        parsed(frame)
+    /// Every venue entry of `message`, decoded on its own as [`validate`] decodes it.
+    fn decoded(message: &str) -> Vec<TitanVenueOverride> {
+        parsed(message)
             .venues
             .iter()
             .map(|raw| serde_json::from_str(raw.get()).expect("a decodable venue entry"))
             .collect()
     }
 
-    /// The accepted entries of `frame`. An entry carrying neither a pair nor an account is
-    /// refused under `no_data` — the capture holds one — and any other refusal is a defect.
-    fn accepted(frame: &str) -> Vec<VenueOverrides> {
-        validate(parsed(frame))
-            .into_iter()
-            .filter_map(|outcome| match outcome {
-                EntryOutcome::Accepted(overrides) => Some(overrides),
-                EntryOutcome::Rejected(EntryRejection::Empty) => None,
-                EntryOutcome::Rejected(reason) => panic!("rejected a captured entry: {reason:?}"),
-            })
-            .collect()
-    }
-
     #[test]
-    fn parses_the_captured_override_frames() {
-        let venues = decoded(CAPTURED_OVERRIDES);
+    fn parses_the_captured_quote_stream_messages() {
+        let venues = decoded(captured_quote_stream_text());
+        let earlier = decoded(EARLIER_QUOTE_STREAM_MESSAGE);
+
         assert_eq!(venues.len(), 9);
-        assert_eq!(decoded(EARLIER_CAPTURED_OVERRIDES).len(), 9);
+        assert_eq!(earlier.len(), 9);
 
         let metric = venues
             .iter()
@@ -1127,8 +1093,8 @@ mod tests {
         assert_eq!(metric.block_number, Some(26_201_954));
         assert_eq!(metric.slot, Some(15_440_992));
         assert_eq!(metric.timestamp, Some(1_792_115_920_126_438_314));
-        // The captured sequences verbatim: every one above `u64::MAX`, which a narrower field
-        // would have failed the whole frame on, and all eight of them equal.
+        // The captured quote sequences verbatim: every one above `u64::MAX`, which a narrower
+        // field could not hold, and all eight of them equal.
         assert_eq!(metric.pair_sequences, vec![284_836_027_668_196_596_826_243_146; 8]);
         assert!(metric
             .pair_sequences
@@ -1142,46 +1108,46 @@ mod tests {
         assert_eq!(metric.state_override.len(), 2);
     }
 
-    /// The captured Goliath entry validates into exactly the overrides `overrides.rs` transcribes
-    /// from the same frame by hand: the hex quantities (the odd-digit and the zero one included),
-    /// the 32-byte storage words, the block the entry names, the slot-derived block timestamp and
-    /// the timestamp.
+    /// The captured Goliath entry validates into exactly the overrides `test_support` transcribes
+    /// from the same message by hand: the hex quantities (the odd-digit and the zero one
+    /// included), the 32-byte storage words, the block the entry names, the slot-derived block
+    /// timestamp and the timestamp.
     #[test]
     fn a_captured_entry_validates_into_the_transcribed_overrides() {
-        let goliath = accepted(CAPTURED_OVERRIDES)
+        let entries = captured_venue_overrides(captured_quote_stream_message());
+
+        let goliath = entries
             .into_iter()
             .find(|entry| entry.quote_address == address(GOLIATH))
             .expect("the Goliath entry");
-
-        assert_eq!(goliath.overrides(), test_overrides());
+        assert_eq!(goliath.overrides, test_overrides());
     }
 
     /// Live traffic must pass validation whole: every entry that carries data, in both captured
-    /// frames, with its sequences paired 1:1 to its pairs and its block dated from its beacon
-    /// slot. One entry of the newer frame carries neither a pair nor an account, which is why
-    /// the two counts differ by one there.
-    #[test]
-    fn every_captured_entry_carrying_data_validates() {
-        for (frame, accepted_entries) in [(CAPTURED_OVERRIDES, 8), (EARLIER_CAPTURED_OVERRIDES, 9)]
-        {
-            let entries = accepted(frame);
-            assert_eq!(entries.len(), accepted_entries);
-            for entry in entries {
-                assert_eq!(entry.quote_address.len(), 20);
-                assert!(!entry.pairs.is_empty(), "an entry carried no pair");
-                assert!(!entry.accounts.is_empty(), "an entry carried no account");
-                assert_eq!(entry.block_number, Some(26_201_954));
-                assert_eq!(entry.block_timestamp, Some(METRIC_BLOCK_SECOND));
-                assert_eq!(entry.slot, Some(15_440_992));
-            }
+    /// messages, with its block dated from its beacon slot. One entry of the later message carries
+    /// neither a pair nor an account, which is why the two counts differ by one.
+    #[rstest]
+    #[case::later(captured_quote_stream_text(), 8)]
+    #[case::earlier(EARLIER_QUOTE_STREAM_MESSAGE, 9)]
+    fn every_captured_entry_carrying_data_validates(
+        #[case] message: &str,
+        #[case] accepted_entries: usize,
+    ) {
+        let entries = captured_venue_overrides(parsed(message));
+
+        assert_eq!(entries.len(), accepted_entries);
+        for entry in entries {
+            assert_eq!(entry.overrides.block_number, Some(26_201_954));
+            assert_eq!(entry.overrides.block_timestamp, Some(METRIC_BLOCK_SECOND));
+            assert_eq!(entry.slot, Some(15_440_992));
         }
     }
 
     /// Titan prices a batch of pairs at one quote sequence, so a quote sequence is not an identity
     /// on its own: the captured Metric entry repeats one across all eight of its pairs.
     #[test]
-    fn one_sequence_can_cover_several_pairs_of_an_entry() {
-        let batched = accepted(CAPTURED_OVERRIDES)
+    fn one_quote_sequence_can_cover_several_pairs_of_an_entry() {
+        let batched = captured_venue_overrides(captured_quote_stream_message())
             .into_iter()
             .find(|entry| entry.pairs.len() == 8)
             .expect("the eight-pair entry");
@@ -1195,9 +1161,10 @@ mod tests {
     }
 
     /// The captured Metric entry's fields as raw JSON, so a case can replace exactly one and
-    /// stay anchored to the shape Titan sends. Every replacement makes the frame synthetic.
+    /// stay anchored to the shape Titan sends.
     struct Entry {
         quote_address: String,
+        block_number: String,
         slot: String,
         timestamp: String,
         asset_pairs: String,
@@ -1209,6 +1176,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 quote_address: format!(r#""{METRIC}""#),
+                block_number: "26148760".to_string(),
                 slot: "15440992".to_string(),
                 timestamp: "1792115920126438314".to_string(),
                 asset_pairs: format!(r#"[{{"token_1": "{LINK}", "token_2": "{USDC}"}}]"#),
@@ -1221,10 +1189,11 @@ mod tests {
     }
 
     impl Entry {
-        /// A one-entry override frame carrying these fields.
-        fn frame(&self) -> String {
+        /// A one-entry quote stream message carrying these fields.
+        fn message(&self) -> String {
             let Self {
                 quote_address,
+                block_number,
                 slot,
                 timestamp,
                 asset_pairs,
@@ -1236,7 +1205,7 @@ mod tests {
                     "maker": "TaurusFi",
                     "quoteAddress": {quote_address},
                     "pricedAddresses": ["{METRIC}"],
-                    "blockNumber": 26148760,
+                    "blockNumber": {block_number},
                     "slot": {slot},
                     "timestamp": {timestamp},
                     "assetPairs": {asset_pairs},
@@ -1246,38 +1215,51 @@ mod tests {
             )
         }
 
-        /// The outcome of validating this entry, which the frame carries as its only one.
-        fn outcome(&self) -> EntryOutcome {
-            let mut outcomes = validate(parsed(&self.frame()));
+        /// The result of validating this entry, which the message carries as its only one.
+        fn outcome(&self) -> Result<VenueOverrides, EntryRejection> {
+            let mut outcomes = validate(parsed(&self.message()));
             assert_eq!(outcomes.len(), 1, "expected exactly one venue entry");
             outcomes.remove(0)
         }
 
         fn rejection(&self) -> EntryRejection {
-            match self.outcome() {
-                EntryOutcome::Rejected(reason) => reason,
-                EntryOutcome::Accepted(overrides) => panic!("accepted {overrides:?}"),
-            }
+            self.outcome()
+                .expect_err("the entry was accepted")
         }
 
         fn validated(&self) -> VenueOverrides {
-            match self.outcome() {
-                EntryOutcome::Accepted(overrides) => overrides,
-                EntryOutcome::Rejected(reason) => panic!("rejected: {reason:?}"),
-            }
+            self.outcome()
+                .expect("the entry was refused")
         }
     }
 
-    /// The unmutated builder reproduces an accepted entry, so every rejection below is caused by
-    /// the one field its case replaces.
+    /// `Entry::default()` is accepted, so each rejection below comes from the one field its case
+    /// replaces.
     #[test]
     fn the_synthetic_entry_is_accepted_unmutated() {
         let entry = Entry::default().validated();
+
         assert_eq!(entry.quote_address, address(METRIC));
         assert_eq!(entry.pairs.len(), 1);
         assert_eq!(entry.pairs[0].sequence, 284_836_027_668_196_596_826_243_146);
-        assert_eq!(entry.accounts.len(), 1);
-        assert_eq!(entry.built_at_ns, 1_792_115_920_126_438_314);
+        assert_eq!(entry.overrides.accounts.len(), 1);
+        assert_eq!(entry.overrides.built_at_ns, 1_792_115_920_126_438_314);
+    }
+
+    /// An entry naming no block number, or no slot, is still accepted: the overrides then carry
+    /// no block number, or no block timestamp.
+    #[rstest]
+    #[case::no_block_number(Entry { block_number: "null".to_string(), ..Entry::default() }, None, Some(1_792_115_927))]
+    #[case::no_slot(Entry { slot: "null".to_string(), ..Entry::default() }, Some(26_148_760), None)]
+    fn an_entry_without_a_block_number_or_slot_is_accepted(
+        #[case] entry: Entry,
+        #[case] block_number: Option<u64>,
+        #[case] block_timestamp: Option<u64>,
+    ) {
+        let entry = entry.validated();
+
+        assert_eq!(entry.overrides.block_number, block_number);
+        assert_eq!(entry.overrides.block_timestamp, block_timestamp);
     }
 
     /// Sequences that do not pair 1:1 with the asset pairs leave it unknown which pair each
@@ -1337,7 +1319,14 @@ mod tests {
             ..Entry::default()
         };
 
-        assert_eq!(entry.validated().accounts.len(), 1);
+        assert_eq!(
+            entry
+                .validated()
+                .overrides
+                .accounts
+                .len(),
+            1
+        );
     }
 
     /// `accounts` synthetic accounts, each overriding `slots` storage words of `word_bytes`.
@@ -1375,8 +1364,9 @@ mod tests {
             Entry { state_override: synthetic_state_override(32, 16, 32), ..Entry::default() }
                 .validated();
 
-        assert_eq!(entry.accounts.len(), 32);
+        assert_eq!(entry.overrides.accounts.len(), 32);
         let slots: usize = entry
+            .overrides
             .accounts
             .values()
             .map(|account| account.state_diff.len())
@@ -1405,6 +1395,7 @@ mod tests {
 
         let account = entry
             .validated()
+            .overrides
             .accounts
             .remove(&address(METRIC_ACCOUNT))
             .expect("the overridden account");
@@ -1445,6 +1436,7 @@ mod tests {
 
         let account = entry
             .validated()
+            .overrides
             .accounts
             .remove(&address(METRIC_ACCOUNT))
             .expect("the overridden account");
@@ -1452,9 +1444,8 @@ mod tests {
         assert_eq!(account.balance, None);
     }
 
-    /// Addresses are 20 bytes and storage slots and words are 32: a payload that disagrees is not
-    /// the shape Titan documents, and an entry half-read from it simulates a state no venue was
-    /// ever in.
+    /// Addresses are 20 bytes and storage slots and words are 32: an entry that disagrees is not
+    /// the shape Titan documents, and half-read, it would simulate a state no venue was ever in.
     #[rstest]
     #[case::short_venue(
         Entry { quote_address: r#""0x3ce2672aa806138585920421406bf0decb81""#.to_string(),
@@ -1493,14 +1484,14 @@ mod tests {
                 ..Entry::default() },
         EntryRejection::MalformedStorage
     )]
-    fn a_malformed_identity_rejects_the_entry(
+    fn a_malformed_address_or_word_rejects_the_entry(
         #[case] entry: Entry,
         #[case] expected: EntryRejection,
     ) {
         assert_eq!(entry.rejection(), expected);
     }
 
-    /// An entry with nothing to match, or nothing to simulate, is not a usable snapshot.
+    /// An entry with no pair to match, or no account to simulate, is refused as `Empty`.
     #[rstest]
     #[case::no_pairs(
         "[]",
@@ -1541,7 +1532,7 @@ mod tests {
         let undecodable = format!(
             r#"{{"quoteAddress": "{METRIC}", {wrong_field} "timestamp": 1791475494775213874}}"#
         );
-        let good = Entry::default().frame();
+        let good = Entry::default().message();
         let good_entry = good
             .trim_start_matches(r#"{"venues": ["#)
             .trim_end_matches("]}");
@@ -1550,60 +1541,52 @@ mod tests {
         let outcomes = validate(parsed(&message));
 
         assert_eq!(outcomes.len(), 2);
-        assert_eq!(outcomes[0], EntryOutcome::Rejected(EntryRejection::Undecodable));
-        assert!(matches!(outcomes[1], EntryOutcome::Accepted(_)), "{:?}", outcomes[1]);
+        assert_eq!(outcomes[0], Err(EntryRejection::Undecodable));
+        assert!(outcomes[1].is_ok(), "{:?}", outcomes[1]);
     }
 
     /// A `pricedAddresses` address that is not 20 bytes refuses the entry, as a malformed
     /// `quoteAddress` does: the entry would otherwise be held under a venue that does not exist.
     #[test]
     fn a_malformed_priced_address_rejects_the_entry() {
-        let frame = Entry::default().frame().replace(
+        let message = Entry::default().message().replace(
             &format!(r#""pricedAddresses": ["{METRIC}"]"#),
             r#""pricedAddresses": ["0x99ab7c1c"]"#,
         );
 
-        assert_eq!(
-            validate(parsed(&frame)),
-            vec![EntryOutcome::Rejected(EntryRejection::NotAVenue)]
-        );
+        assert_eq!(validate(parsed(&message)), vec![Err(EntryRejection::NotAVenue)]);
     }
 
-    /// A frame can carry no venue at all, which is not an error: the socket simply priced nothing
-    /// this round.
+    /// A quote stream message can carry no venue entry at all, which is not an error: Titan priced
+    /// no venue.
     #[test]
-    fn a_frame_without_venues_yields_no_outcome() {
+    fn a_message_without_venues_yields_no_result() {
         assert!(validate(parsed(r#"{"venues": []}"#)).is_empty());
     }
 
-    /// `timestamp` is the only thing that orders one build of a venue's snapshot against another,
-    /// so an entry without it cannot be used at all — the local clock would date the entry to
-    /// when the frame was read instead.
-    #[test]
-    fn an_entry_without_a_timestamp_is_rejected() {
-        let null_timestamp = Entry { timestamp: "null".to_string(), ..Entry::default() };
-        assert_eq!(null_timestamp.rejection(), EntryRejection::NoTimestamp);
-
-        let no_timestamp = format!(
-            r#"{{"venues": [{{
-                "quoteAddress": "{METRIC}",
-                "blockNumber": 26148760,
-                "slot": 15387623,
-                "assetPairs": [{{"token_1": "{LINK}", "token_2": "{USDC}"}}],
-                "pairSequences": [283851543383726791766048793],
-                "stateOverride": {{"{METRIC_ACCOUNT}": {{"nonce": "0x1"}}}}
-            }}]}}"#
-        );
-        assert_eq!(
-            validate(parsed(&no_timestamp)),
-            vec![EntryOutcome::Rejected(EntryRejection::NoTimestamp)]
-        );
+    /// `timestamp` is the only field that orders two entries of one quote sequence, so an entry
+    /// without it is refused: the local clock would date the entry to when the stream read it.
+    #[rstest]
+    #[case::null(Entry { timestamp: "null".to_string(), ..Entry::default() }.message())]
+    #[case::absent(format!(
+        r#"{{"venues": [{{
+            "quoteAddress": "{METRIC}",
+            "blockNumber": 26148760,
+            "slot": 15387623,
+            "assetPairs": [{{"token_1": "{LINK}", "token_2": "{USDC}"}}],
+            "pairSequences": [283851543383726791766048793],
+            "stateOverride": {{"{METRIC_ACCOUNT}": {{"nonce": "0x1"}}}}
+        }}]}}"#
+    ))]
+    fn an_entry_without_a_timestamp_is_rejected(#[case] message: String) {
+        assert_eq!(validate(parsed(&message)), vec![Err(EntryRejection::NoTimestamp)]);
     }
+
     /// Fields the stream carries that nothing here reads, and fields it may add later, are
     /// tolerated rather than rejected.
     #[test]
     fn unread_and_unknown_fields_are_tolerated() {
-        let frame = format!(
+        let message = format!(
             r#"{{"venues": [{{
                 "quoteAddress": "{METRIC}",
                 "pricedAddresses": ["{METRIC}", "{USDC}"],
@@ -1617,18 +1600,23 @@ mod tests {
             }}]}}"#
         );
 
-        let mut outcomes = validate(parsed(&frame));
+        let mut outcomes = validate(parsed(&message));
+
         assert_eq!(outcomes.len(), 1);
-        match outcomes.remove(0) {
-            EntryOutcome::Accepted(entry) => assert_eq!(entry.pairs.len(), 1),
-            EntryOutcome::Rejected(reason) => panic!("rejected: {reason:?}"),
-        }
+        assert_eq!(
+            outcomes
+                .remove(0)
+                .expect("the entry was refused")
+                .pairs
+                .len(),
+            1
+        );
     }
 
     /// Every book of the captured price level message names the quote sequence it was priced at,
     /// and every one of those numbers overflows `u64`.
     #[test]
-    fn decodes_the_captured_pair_versions() {
+    fn decodes_the_captured_quote_sequences() {
         let message: TitanPriceLevelMessage =
             serde_json::from_str(CAPTURED_MESSAGE).expect("valid JSON");
 
@@ -1642,14 +1630,14 @@ mod tests {
                     assert!(sequence > u128::from(u64::MAX), "{sequence} fits a u64");
                 }
                 QuoteSequence::Absent | QuoteSequence::Unreadable => {
-                    panic!("a captured book carried no readable reference: {book:?}")
+                    panic!("a captured book carried no readable quote sequence: {book:?}")
                 }
             }
         }
     }
 
     #[test]
-    fn a_book_without_a_reference_decodes_as_absent() {
+    fn a_book_without_a_quote_sequence_decodes_as_absent() {
         let json = format!(
             r#"{{"quoteAddress": "{PAMM}", "token1": "WBTC", "token2": "USDC",
                  "token1Address": "{WBTC}", "token2Address": "{USDC}",
@@ -1660,14 +1648,11 @@ mod tests {
         assert_eq!(book.calculated_from, QuoteSequence::Absent);
     }
 
-    /// The captured multi-book frame with book `index`'s `calculated_from` value replaced by the
-    /// raw `literal` — synthetic from that one value on, every other book byte-identical to the
-    /// capture.
-    ///
-    /// The splice is textual on purpose: routing the frame through a `serde_json::Value` would
-    /// quantize every other book's reference to an `f64`, since a `Value` holds no integer wider
-    /// than `u64`.
-    fn frame_with_mutated_reference(index: usize, literal: &str) -> String {
+    /// The captured multi-book message with book `index`'s `calculated_from` value replaced by the
+    /// raw `literal`; every other byte matches the capture. It edits the text because a
+    /// `serde_json::Value` holds no integer wider than `u64`, so a round trip would turn every
+    /// other book's quote sequence into an `f64`.
+    fn message_with_mutated_quote_sequence(index: usize, literal: &str) -> String {
         const KEY: &str = r#""calculated_from""#;
         let references: Vec<usize> = CAPTURED_MESSAGE
             .match_indices(KEY)
@@ -1677,19 +1662,19 @@ mod tests {
         let value_at = key_at +
             CAPTURED_MESSAGE[key_at..]
                 .find(':')
-                .expect("the reference has a value") +
+                .expect("the quote sequence has a value") +
             1;
         let value_end = value_at +
             CAPTURED_MESSAGE[value_at..]
                 .find(',')
-                .expect("a field follows the reference");
+                .expect("a field follows the quote sequence");
         format!("{}{literal}{}", &CAPTURED_MESSAGE[..value_at], &CAPTURED_MESSAGE[value_end..])
     }
 
-    /// One book's unreadable reference costs that one reference and nothing else: not the book,
-    /// not its ladders, not a sibling book, not the frame. A frame carries every venue's
-    /// ladders, so rejecting it over a value only used to find overrides would be a quoting
-    /// liveness hazard.
+    /// One book's unreadable `calculated_from` costs that book its quote sequence and nothing
+    /// else: not the book, its price levels, another book or the message. A message carries every
+    /// venue's price levels, so rejecting it over a value that only finds overrides would stop
+    /// every venue quoting.
     #[rstest]
     #[case::null("null", QuoteSequence::Absent)]
     #[case::string(r#""283851543383726791766048878""#, QuoteSequence::Unreadable)]
@@ -1698,7 +1683,7 @@ mod tests {
     #[case::boolean("true", QuoteSequence::Unreadable)]
     #[case::object("{}", QuoteSequence::Unreadable)]
     #[case::above_u128("3402823669209384634633746074317682114560", QuoteSequence::Unreadable)]
-    fn a_malformed_reference_costs_only_that_reference(
+    fn an_unreadable_quote_sequence_costs_only_itself(
         #[case] literal: &str,
         #[case] expected: QuoteSequence,
     ) {
@@ -1706,9 +1691,9 @@ mod tests {
         let captured: TitanPriceLevelMessage =
             serde_json::from_str(CAPTURED_MESSAGE).expect("valid JSON");
 
-        let text = frame_with_mutated_reference(MUTATED, literal);
+        let text = message_with_mutated_quote_sequence(MUTATED, literal);
         let message: TitanPriceLevelMessage =
-            serde_json::from_str(&text).expect("the frame still parses");
+            serde_json::from_str(&text).expect("the message still parses");
 
         assert_eq!(message.books.len(), captured.books.len());
         assert_eq!(message.ts, captured.ts);
@@ -1727,17 +1712,15 @@ mod tests {
         }
     }
 
-    /// Leniency stops at the JSON: text that is not a frame is still rejected, as is a frame
-    /// whose ladders are unreadable.
-    ///
-    /// The last case is where the frame rather than the side is the unit: a level's `price` is
-    /// read as an `f64`, so a number the stream may legally write but that type cannot hold fails
-    /// the whole frame, before any side exists to drop on its own. The side isolation the solver
-    /// page promises begins once a frame has typed, which is what that page now says.
+    /// Leniency stops at the JSON: the parser still rejects text that is not a price level
+    /// message, and a message whose price levels it cannot read. In the last case the whole message
+    /// fails, not one side: the parser reads a level's `price` as an `f64`, so a number JSON
+    /// allows but `f64` cannot hold fails the message before any side exists to drop. Side
+    /// isolation applies only to a message that parsed.
     #[rstest]
     #[case::truncated(r#"{"block": 1, "ts": 2, "books": ["#)]
     #[case::not_json("nonsense")]
-    #[case::unreadable_ladder(
+    #[case::unreadable_price_levels(
         r#"{"block": 1, "ts": 2, "books": [{"quoteAddress": "0x01", "token1": "A",
              "token2": "B", "token1Address": "0x01", "token2Address": "0x02",
              "asks": "nope", "bids": []}]}"#

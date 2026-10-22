@@ -131,39 +131,39 @@ for any protocol indexed by Tycho.
   The line to `rfq/` is the counterparty: a maker who can decline a specific trade after pricing
   it makes an RFQ, a pool that fills any taker with fresh price data makes a pAMM
 - **`price_level_stream/`**: Titan pAMM price level stream — `PriceLevelStreamBuilder` turns the
-  Titan WebSocket's book frames directly into `Update`s (no indexer feed
-  round-trip); `PriceLevelStreamState` quotes by interpolating the ladder and refuses to quote
-  once its frame is one slot old (`quotable_until`, monotonic, never serialized, ignored by
-  `eq`; `without_quote_guard` on the builder turns it off for slow quoters). A frame carries one
+  Titan WebSocket's price level messages directly into `Update`s (no indexer feed
+  round-trip); `PriceLevelStreamState` quotes by interpolating its quotes and refuses to quote
+  once its message is one slot old (`quotable_until`, monotonic, never serialized, ignored by
+  `eq`; `without_quote_guard` on the builder turns it off for slow quoters). A message carries one
   flat `books` list — one book per venue and pair, priced in human units as float
   `price`/`cumVolume` levels, with both assets named by address in `token1Address`/`token2Address`
-  — so `convert.rs` derives the integer ladders the states serve: `resolve_book_tokens` looks the
-  two addresses up and `ladders_for_book`
-  turns the bids into the `token1 -> token2` ladder and the asks into the reverse, converting the
+  — so `convert.rs` derives the integer quotes the states serve: `resolve_book_tokens` looks the
+  two addresses up and `quotes_for_book`
+  turns the bids into the `token1 -> token2` quotes and the asks into the reverse, converting the
   sides independently so a rejected one never costs the other. `tracker.rs` groups the books per
   venue and feeds the freshness machinery below unchanged. Resolution is fail-closed: a pair
   prices only if both addresses are in the consumer's token map, which also supplies the decimals.
   The book's `token1`/`token2` symbols are display labels read for the DEBUG logs alone, never
   resolved — so a token calling itself `WBTC` neither captures another asset's quotes nor keeps
-  it from being served. Frames are best
-  effort, so `tracker.rs` never removes a component because a frame omits it. It gives every
+  it from being served. Messages are best
+  effort, so `tracker.rs` never removes a component because a message omits it. It gives every
   component its own deadline and emits `removed_pairs` only when the component's data is
-  `stale_after` old; the next accepted frame carrying the component re-adds it. Frames are
+  `stale_after` old; the next accepted message carrying the component re-adds it. Messages are
   accepted only if their stream `ts` is younger than `stale_after`, not more than one slot
   in the future, not older than the newest accepted one (equal allowed), and their block neither
   regresses nor jumps more than one block per elapsed slot plus 2; the block frontier lives in
-  `ServingState::Serving`, so it exists only while something is served. The frame's beacon `slot`
-  carries no freshness decision, so a frame without it is judged like one carrying it. The windows
-  and their
-  defaults are listed under `# Freshness contract` in `price_level_stream/mod.rs`; every window
-  is a multiple of `SLOT` in `mod.rs`; the `stale_after` setter caps its value at
-  `MAX_STALE_AFTER` (one hour). `build()` is an `async_stream` loop that selects over frames and
-  a timer set to the earliest component deadline, and the only place that reads a clock: the
-  tracker gets both clocks injected through `Now`. `titan.rs` reconnects
-  when no frame parses within the idle timeout; pings, unparsable text and the consumer's own
-  pauses between polls do not count. `telemetry.rs` emits `price_level_stream_*` metrics through
-  the `metrics` facade, with label values as enums there and a frame-age histogram at
-  acceptance; `skipped_books_total{reason}` counts the books left unpriced
+  `ServingState::Serving`, so it exists only while something is served. The message's beacon
+  `slot` carries no freshness decision, so a message without it is judged like one carrying it.
+  The windows and their defaults are listed under `# Freshness contract` in
+  `price_level_stream/mod.rs`; every window is a multiple of `SLOT` in `mod.rs`; the
+  `stale_after` setter caps its value at `MAX_STALE_AFTER` (one hour). `build()` is an
+  `async_stream` loop that selects over messages and a timer set to the earliest component
+  deadline, and the only place that reads a clock: the tracker gets both clocks injected through
+  `Now`. `titan.rs` reconnects when no message parses within the idle timeout; pings,
+  unparsable text and the consumer's own pauses between polls do not count. `telemetry.rs` emits
+  `price_level_stream_*` metrics through the `metrics` facade, with label values as enums there
+  and a message-age histogram (`frame_age_seconds`) at acceptance;
+  `skipped_books_total{reason}` counts the books left unpriced
   (`unadmitted_token`, `malformed_address`, `one_asset_pair`) and `rejected_sides_total{reason}` the
   sides dropped whole (`unsupported_level`, `non_finite_amount`, `zero_amount`,
   `conflicting_knots`). Per-venue series and every one of those reasons start at zero, and no
@@ -191,36 +191,21 @@ for any protocol indexed by Tycho.
   integration paths of the same liquidity (e.g. `vm:fermiswap`) — consumers must deduplicate by
   venue where double-counting matters.
   `build` also opens a **second Titan socket** by default, the quote stream
-  (`pamm_quote_stream_v2`; endpoint via `override_endpoint` or `TITAN_PAMM_QUOTE_STREAM_URL`, off
-  via `without_simulation_overrides`), carrying the account state Titan simulated each venue on.
-  `titan.rs` decodes each venue entry on its own and `validate` refuses an entry **whole**
-  (`EntryRejection`: undecodable, malformed addresses/slots/quantities, no `timestamp`,
-  `assetPairs`/`pairSequences` of unequal length, empty, `code`/full `state`, over 32 accounts or
-  512 storage words). `overrides.rs`'s `OverrideBuffer` holds accepted entries keyed by
-  `(venue, sorted pair)`, under the entry's own normalized `quoteAddress` and every venue its
-  `pricedAddresses` name — **only venues the tracker serves**. Retention reads no clock: a quote
-  sequence carries its beacon slot in its high 64 bits, and the buffer keeps the latest price level
-  message's slot ±1 (`advance`), capped at 100,000 entries. `find` gives a book (venue, pair, quote
-  sequence `S` from `calculated_from`) the venue's own newest entry of the same slot with sequence
-  ≤ `S` (most books name a sequence no entry carries — exact-only matched ~57% live, this ~99.7%),
-  merged with the other sources' matching entries, the venue's own winning on conflicts (Metric's
-  router reads two quote addresses). The result rides in the state as
-  `Option<Arc<PammSimulationOverrides>>`, serialized as `overrides` (no `u128` in it — quote
-  sequences never serialize; old recordings read back `None`); `eq` compares only its
-  `block_number`; `consumed()` keeps it; `expires_at` is information only. Quoting never reads
-  it, and nothing on this path removes a component, delays an update or shortens a quote's
-  validity. `telemetry.rs` adds `override_match_total{venue, outcome}`,
-  `override_buffer_total{event}` (`BufferEvent`), `refused_override_entries_total{reason}`
-  (`EntryRejection`, labels derived
-  from the enum), `sequence_slot_mismatch_total{socket}`, `override_block_mismatch_total`,
-  `override_merged_sources_total`, `override_entry_missing_field_total{field}`,
-  `unserved_venue_entries_total`, `duplicate_books_total`, `quotes_refused_total{reason}` (per
-  refused quote call) and the `override_entry_{accounts,storage_slots}` histograms. The series
-  read off price level books — `quotes_refused_total`, `duplicate_books_total`,
-  `unreadable_quote_sequence_total` and `sequence_slot_mismatch_total{socket="price_levels"}` —
-  are registered unconditionally; the rest only while overrides are on. It
-  also adds a `socket` label (`price_levels`/`quote_stream`) to the released
-  `frames_rejected_total`/`reconnects_total`, which **changes the identity of those two series**.
+  (`pamm_quote_stream_v2`), carrying the account state Titan simulated each venue on:
+  - `quote_stream_endpoint` or `TITAN_PAMM_QUOTE_STREAM_URL` sets its endpoint, and
+    `without_simulation_overrides` turns it off.
+  - `titan.rs` validates each venue entry on its own and refuses it whole (`EntryRejection`).
+    `overrides.rs`'s `OverrideBuffer` stores accepted entries under the venues the tracker serves
+    and matches them to books by quote sequence; its module doc states the matching rule and the
+    slot window. `tracker.rs` attaches the match to the state as
+    `Option<Arc<PammSimulationOverrides>>` (`simulation_overrides()`), serialized as `overrides`.
+  - Invariants: quoting never reads the overrides, and nothing on this path removes a component,
+    delays an update or shortens a quote's validity; both sockets normalize venue addresses
+    through `PAMM_ADDRESS_ALIASES`; quote sequences (`u128`) are never serialized; `eq` compares
+    the overrides' block and account addresses, never their values.
+  - `telemetry.rs` documents every metric of this path, and the solver page
+    (`docs/for-solvers/price-level-stream.md`) lists them with their baselines.
+
   This path is the price level stream's own; `evm/override_stream/` is the separate
   per-simulation override path of the `vm:` protocols and stays untouched
 

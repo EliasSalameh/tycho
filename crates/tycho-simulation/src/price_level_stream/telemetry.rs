@@ -1,38 +1,38 @@
 //! Metrics of the price level stream, emitted through the `metrics` facade. A consumer that
 //! installs a `metrics` recorder receives them with no further setup; without a recorder every
 //! call is a no-op. Label values are registered venue names, the name of one of the two Titan
-//! sockets ([`TitanMessage::SOCKET`](super::titan::TitanMessage::SOCKET)), or the enumerations
-//! below, never values from the stream, with one exception: an auto-detected venue is named by its
-//! address, so its `venue` label carries the address the frame named it by.
+//! sockets ([`TitanMessage::SOCKET`]), or the enumerations below, never values from the stream,
+//! with one exception: an auto-detected venue is named by its address, so its `venue` label
+//! carries the address the price level message named it by.
 
 use metrics::{counter, gauge, histogram};
 use strum::IntoEnumIterator;
-use strum_macros::IntoStaticStr;
+use strum_macros::{EnumIter, IntoStaticStr};
 
 use super::{
     overrides::BufferEvent,
-    titan::{EntryRejection, TitanMessage, TitanOverrideMessage, TitanPriceLevelMessage},
+    titan::{EntryRejection, TitanMessage, TitanPriceLevelMessage, TitanQuoteStreamMessage},
 };
 
-/// The two `socket` label values, taken from the frame types that name them so that a socket is
+/// The two `socket` label values, taken from the message types that name them so that a socket is
 /// named identically in a log and in a series.
 const PRICE_LEVEL_SOCKET: &str = TitanPriceLevelMessage::SOCKET;
-const OVERRIDE_SOCKET: &str = TitanOverrideMessage::SOCKET;
+const QUOTE_STREAM_SOCKET: &str = TitanQuoteStreamMessage::SOCKET;
 
-/// Counter, no labels. Incremented once per frame the tracker accepts.
+/// Counter, no labels. Incremented once per message the tracker accepts.
 pub(super) const FRAMES_ACCEPTED: &str = "price_level_stream_frames_accepted_total";
-/// Counter, labels `socket` and `reason`, one of [`RejectReason`]. Incremented once per frame the
+/// Counter, labels `socket` and `reason`, one of [`RejectReason`]. Incremented once per message the
 /// stream drops. `socket` names which Titan socket sent it: only `parse_error` reaches this
-/// counter from the override socket, because every other reason is a freshness check the tracker
-/// makes of a price level frame.
+/// counter from the quote stream socket, because every other reason is a freshness check the
+/// tracker makes of a price level message.
 pub(super) const FRAMES_REJECTED: &str = "price_level_stream_frames_rejected_total";
-/// Histogram, no labels. The age of every accepted frame at acceptance, in seconds: the local
-/// wall clock minus the frame's `timestamp`, negative when the frame is stamped ahead of
+/// Histogram, no labels. The age of every accepted message at acceptance, in seconds: the local
+/// wall clock minus the message's `ts`, negative when the message is stamped ahead of
 /// the local clock. It measures Titan's lag plus delivery delay, and a clock skew between Titan
-/// and this host; a frame older than one slot yields states that refuse to quote.
+/// and this host; a message older than one slot yields states that refuse to quote.
 pub(super) const FRAME_AGE: &str = "price_level_stream_frame_age_seconds";
-/// Gauge, label `venue`. The frame's `timestamp` of the newest accepted frame that carried the
-/// venue, in seconds since the Unix epoch; 0 until the first such frame. `venue` is the
+/// Gauge, label `venue`. The message's `ts` of the newest accepted message that carried the
+/// venue, in seconds since the Unix epoch; 0 until the first such message. `venue` is the
 /// registered venue name, or the address of an auto-detected venue.
 pub(super) const LAST_SEEN: &str = "price_level_stream_last_seen_timestamp_seconds";
 /// Gauge, label `venue`. The number of components the stream currently serves for the venue;
@@ -45,18 +45,18 @@ pub(super) const STALE_REMOVALS: &str = "price_level_stream_stale_removals_total
 /// 1 = serving.
 pub(super) const SERVING_STATE: &str = "price_level_stream_serving_state";
 /// Counter, labels `socket` and `reason`, one of [`ReconnectReason`]. Incremented once per Titan
-/// connection the stream gives up on, or fails to establish, before backing off. Both sockets are
-/// maintained by one function, so `socket` is what tells an override socket that keeps dropping
-/// from the price level socket flapping — only the second puts quoting at risk.
+/// connection the stream gives up on, or fails to establish, before backing off. One function
+/// maintains both sockets, so `socket` tells the two apart. Only reconnects of `price_levels` put
+/// quoting at risk; reconnects of `quote_stream` only cost overrides.
 pub(super) const RECONNECTS: &str = "price_level_stream_reconnects_total";
-/// Counter, no labels. Incremented once per venue an accepted frame carries books of that is
-/// neither registered nor served under auto-detection — once per venue and frame, however many
-/// books the frame carried for it.
+/// Counter, no labels. Incremented once per venue an accepted price level message carries books
+/// of that is neither registered nor served under auto-detection: once per venue and message,
+/// however many books the message carried for it.
 pub(super) const UNREGISTERED_PAMM_ENTRIES: &str =
     "price_level_stream_unregistered_pamm_entries_total";
 /// Counter, label `reason`, one of [`SkipReason`]. Incremented once per book of a served venue
 /// whose token addresses do not name a pair this consumer can serve, so the book is not priced at
-/// all. Every reason starts at zero. The address itself is never a label — it appears only in the
+/// all. Every reason starts at zero. The address itself is never a label; it appears only in the
 /// accompanying DEBUG log.
 pub(super) const SKIPPED_BOOKS: &str = "price_level_stream_skipped_books_total";
 /// Counter, label `reason`, one of [`SideRejectReason`]. Incremented once per book side whose
@@ -70,38 +70,38 @@ pub(super) const REJECTED_SIDES: &str = "price_level_stream_rejected_sides_total
 /// served. `venue` is as on [`LAST_SEEN`]. Every outcome of every registered venue starts at zero.
 pub(super) const OVERRIDE_MATCHES: &str = "price_level_stream_override_match_total";
 /// Counter, label `event`, one of [`BufferEvent`]. Incremented once per venue and pair an entry is
-/// held under, and once per held entry the slot window drops. It counts what the buffer holds,
-/// never whether a state got overrides, which is [`OVERRIDE_MATCHES`], so the two must not be
-/// divided by one another. Every event starts at zero while overrides are on.
+/// stored under, once per pair the buffer skips (`same_token_pair`, `arrived_outside_slot_window`),
+/// and once per held entry the slot window drops. It counts what the
+/// buffer holds, not whether a state got overrides, which [`OVERRIDE_MATCHES`] counts, so do not
+/// divide one by the other. Every event starts at zero while overrides are on.
 pub(super) const OVERRIDE_BUFFER: &str = "price_level_stream_override_buffer_total";
-/// Counter, label `reason`, one of [`EntryRejection`]. Incremented once per venue entry refused
-/// whole before the buffer saw it, meaning Titan sent something this parser does not accept.
-/// `empty` has a permanent baseline of about one a second (see [`EntryRejection::Empty`]), so
-/// alerts must exclude it. Every reason starts at zero while overrides are on.
+/// Counter, label `reason`, one of [`EntryRejection`]. Incremented once per venue entry the parser
+/// refuses whole, before the buffer sees it: Titan sent something this parser does not accept.
+/// `empty` has a steady rate of about one a second (see [`EntryRejection::Empty`]), so alerts must
+/// exclude it. Every reason starts at zero while overrides are on.
 pub(super) const REFUSED_OVERRIDE_ENTRIES: &str =
-    "price_level_stream_refused_override_entries_total";
-/// Counter, no labels. Incremented once per **served** book whose `calculated_from` this parser
-/// cannot read: a book whose tokens did not resolve never has it read. A book naming none is not
-/// counted, so a change in Titan's format stands out instead of hiding among books that name
-/// nothing. Counted per book, where [`OVERRIDE_MATCHES`] counts per pair, so the two must not be
-/// divided by one another. Registered whether or not overrides are on, because the field is read
-/// off the price level socket either way.
+    "price_level_stream_override_entries_refused_total";
+/// Counter, no labels. Incremented once per served book whose `calculated_from` this parser
+/// cannot read; the tracker never reads it on a book whose tokens did not resolve. A book naming
+/// none is not counted, so a change in Titan's format stands out. Counted per book, where
+/// [`OVERRIDE_MATCHES`] counts per pair, so do not divide one by the other. Registered whether or
+/// not overrides are on, because the field comes from the price level socket.
 pub(super) const UNREADABLE_QUOTE_SEQUENCE: &str =
     "price_level_stream_unreadable_quote_sequence_total";
 /// Counter, label `reason`, one of [`QuoteRefusedReason`]. Incremented once per call to
-/// `spot_price`, `get_amount_out` or `get_limits` that a state refused, before any node is
-/// involved. Counted per call, so its rate follows how often a router asks, not how many states
-/// refused. `ladders_expired` is the reason to watch: a consumer that quotes promptly should
-/// almost never see it, and a rising rate means states go unrefreshed for a slot.
+/// `spot_price`, `get_amount_out` or `get_limits` that a state refused. Counted per call, so its
+/// rate follows how often a router asks, not how many states refused. `price_levels_expired` is
+/// the reason to watch: a consumer that quotes promptly should almost never see it, and a rising
+/// rate means states go a slot without an update.
 pub(super) const QUOTES_REFUSED: &str = "price_level_stream_quotes_refused_total";
 /// Counter, label `socket`. Incremented once per quote sequence whose high 64 bits are not the
-/// beacon slot of the message carrying it: a book's on `price_levels`, a venue entry's pair on
-/// `quote_stream`.
+/// beacon slot it should carry: a book's, against its price level message's slot, on
+/// `price_levels`; a venue entry's pair, against the entry's own slot, on `quote_stream`.
 ///
 /// **This watches an assumption.** Titan does not document that encoding, and matching relies on
-/// it: a book only matches an entry of its own slot, and the buffer keeps entries by slot. It
-/// held for 29,772 books and 324,956 entry pairs on 2026-10-21. If it moves, matching needs
-/// revisiting.
+/// it: a book only matches an entry of its own slot, and the buffer keeps entries by slot. It held
+/// for 29,772 books and 324,956 entry pairs on 2026-10-21. If this counter rises, revisit how
+/// books are matched to entries.
 pub(super) const SEQUENCE_SLOT_MISMATCH: &str = "price_level_stream_sequence_slot_mismatch_total";
 /// Counter, label `field`, one of [`MissingField`]. Incremented once per accepted venue entry
 /// that omits a field a consumer needs to simulate a quote: the block number, or the slot its
@@ -109,14 +109,15 @@ pub(super) const SEQUENCE_SLOT_MISMATCH: &str = "price_level_stream_sequence_slo
 /// non-zero rate is a change on Titan's side.
 pub(super) const OVERRIDE_ENTRY_MISSING_FIELD: &str =
     "price_level_stream_override_entry_missing_field_total";
-/// Counter, no labels. Incremented once per price level message that carries two or more books
-/// for one venue and pair, where the last one is served. Never observed in 795 messages on
-/// 2026-10-21; counted because the replacement changes a served price silently.
+/// Counter, no labels. Incremented once per book that replaces an earlier book of the same venue
+/// and pair in one price level message; the last book is served. None of the 795 messages
+/// recorded on 2026-10-21 carried one; counted because the replacement changes a served price
+/// silently.
 pub(super) const DUPLICATE_BOOKS: &str = "price_level_stream_duplicate_books_total";
 /// Counter, no labels. Incremented once per accepted venue entry streamed under a quote address
-/// this consumer does not serve. Such an entry is still held under any served venue its
-/// `pricedAddresses` name, as Metric's second quote address's entries are, and dropped
-/// otherwise.
+/// this consumer does not serve. The buffer still stores the entry under each served venue its
+/// `pricedAddresses` name, as it does Metric's second quote address's entries, and drops it if
+/// there is none.
 pub(super) const UNSERVED_VENUE_ENTRIES: &str = "price_level_stream_unserved_venue_entries_total";
 /// Histogram. The storage words one accepted venue entry overrode, so growth toward the
 /// per-entry cap of 512 shows before the cap refuses anything. Median 7 and maximum 16 on
@@ -126,27 +127,29 @@ pub(super) const OVERRIDE_ENTRY_SLOTS: &str = "price_level_stream_override_entry
 /// Median 3 and maximum 9 on 2026-10-21.
 pub(super) const OVERRIDE_ENTRY_ACCOUNTS: &str = "price_level_stream_override_entry_accounts";
 /// Counter, no labels. Incremented once per state whose attached overrides name a block other
-/// than the price level message's. A book only matches an entry of its own slot, so this stays
-/// at zero while Titan's encoding holds; it watches the block a consumer will simulate at
-/// directly, where [`SEQUENCE_SLOT_MISMATCH`] watches the encoding.
+/// than the price level message's, or name no block. A book only matches an entry of its own
+/// slot, so this stays at zero while Titan's encoding holds and its entries name their block. It
+/// watches the block a consumer simulates at, where [`SEQUENCE_SLOT_MISMATCH`] watches the
+/// encoding. A mismatch does not remove the overrides.
 pub(super) const OVERRIDE_BLOCK_MISMATCH: &str = "price_level_stream_override_block_mismatch_total";
-/// Counter, no labels. Incremented by the number of other quote addresses' entries merged into a
-/// state's overrides. Only Metric does this today: its router reads the state of two quote
-/// addresses.
+/// Counter, label `venue`, as on [`LAST_SEEN`]. Incremented by the number of other quote
+/// addresses' entries merged into a state's overrides. Only Metric has any today: its router reads
+/// the state of its other quote addresses. Every registered venue starts at zero while overrides
+/// are on.
 pub(super) const OVERRIDE_MERGED_SOURCES: &str = "price_level_stream_override_merged_sources_total";
 
-/// The `reason` label of [`FRAMES_REJECTED`]: why the stream dropped a frame. The label value
+/// The `reason` label of [`FRAMES_REJECTED`]: why the stream dropped a message. The label value
 /// is the variant name in snake case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum RejectReason {
-    /// The text did not parse as a frame.
+    /// The text did not parse as a message.
     ParseError,
-    /// The frame's `timestamp` is `stale_after` old or older.
+    /// The message's `ts` is `stale_after` old or older.
     TooOld,
-    /// The frame's `timestamp` is more than one slot ahead of the local wall clock.
+    /// The message's `ts` is more than one slot ahead of the local wall clock.
     InFuture,
-    /// The frame's `timestamp` is older than the newest accepted frame's.
+    /// The message's `ts` is older than the newest accepted message's.
     OutOfOrder,
     /// The block is below the newest accepted block.
     BlockRegression,
@@ -155,25 +158,12 @@ pub(super) enum RejectReason {
     BlockJump,
 }
 
-impl RejectReason {
-    /// Every reason, so [`init_socket_counters`] can register all of them against the price level
-    /// socket. A new variant belongs here too.
-    const ALL: [Self; 6] = [
-        Self::ParseError,
-        Self::TooOld,
-        Self::InFuture,
-        Self::OutOfOrder,
-        Self::BlockRegression,
-        Self::BlockJump,
-    ];
-}
-
 /// The `reason` label of [`RECONNECTS`]: why the stream gave up on a Titan connection. The
 /// label value is the variant name in snake case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum ReconnectReason {
-    /// No frame parsed within the idle timeout.
+    /// No message parsed within the idle timeout.
     IdleTimeout,
     /// The server hung up without a close frame.
     Ended,
@@ -187,22 +177,9 @@ pub(super) enum ReconnectReason {
     ConnectTimeout,
 }
 
-impl ReconnectReason {
-    /// Every reason, so [`init_socket_counters`] can register all of them against each socket this
-    /// consumer reads. A new variant belongs here too.
-    const ALL: [Self; 6] = [
-        Self::IdleTimeout,
-        Self::Ended,
-        Self::Closed,
-        Self::ReadError,
-        Self::ConnectFailed,
-        Self::ConnectTimeout,
-    ];
-}
-
 /// The `reason` label of [`SKIPPED_BOOKS`]: why a book named no pair this consumer can serve.
 /// The label value is the variant name in snake case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum SkipReason {
     /// One of the two addresses is not 20 bytes, so it identifies no asset. A producer-side
@@ -214,16 +191,10 @@ pub(super) enum SkipReason {
     OneAssetPair,
 }
 
-impl SkipReason {
-    /// Every reason, so [`init_book_counters`] can register all of them. A new variant belongs
-    /// here too.
-    const ALL: [Self; 3] = [Self::MalformedAddress, Self::UnadmittedToken, Self::OneAssetPair];
-}
-
 /// The `reason` label of [`REJECTED_SIDES`]: why a book side was dropped whole. The label value
 /// is the variant name in snake case. Mirrors the conversion's own rejection reasons, which
 /// [`tracker`](super::tracker) maps onto these.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum SideRejectReason {
     /// A level's stream price or volume is not a finite positive number.
@@ -236,16 +207,9 @@ pub(super) enum SideRejectReason {
     ConflictingKnots,
 }
 
-impl SideRejectReason {
-    /// Every reason, so [`init_book_counters`] can register all of them. A new variant belongs
-    /// here too.
-    const ALL: [Self; 4] =
-        [Self::UnsupportedLevel, Self::NonFiniteAmount, Self::ZeroAmount, Self::ConflictingKnots];
-}
-
 /// The `outcome` label of [`OVERRIDE_MATCHES`]: whether a served pair's state got simulation
 /// overrides. The label value is the variant name in snake case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum MatchOutcome {
     /// The venue's entry carried the book's own quote sequence.
@@ -260,20 +224,13 @@ pub(super) enum MatchOutcome {
     NoQuoteSequence,
 }
 
-impl MatchOutcome {
-    /// Every outcome, so [`init_override_matches`] can register all of them. A new variant
-    /// belongs here too.
-    const ALL: [Self; 4] =
-        [Self::SameSequence, Self::EarlierSequence, Self::NoneInSlot, Self::NoQuoteSequence];
-}
-
-/// The `reason` label of [`QUOTES_REFUSED`]: why a state refused a quote, before any node call.
-/// The label value is the variant name in snake case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+/// The `reason` label of [`QUOTES_REFUSED`]: why a state refused a quote. The label value is the
+/// variant name in snake case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum QuoteRefusedReason {
     /// The message that carried the price levels is one slot old.
-    LaddersExpired,
+    PriceLevelsExpired,
     /// The quotes either side of the amount asked for do not increase in output.
     NotMonotonic,
     /// The two tokens asked for are not this component's pair.
@@ -283,35 +240,17 @@ pub(super) enum QuoteRefusedReason {
     NoLiquidity,
     /// The amount asked for is below the smallest quote the venue gave.
     BelowSmallestQuote,
-    /// A quote amount does not fit the `f64` a spot price is returned in.
-    SpotPriceUnrepresentable,
-}
-
-impl QuoteRefusedReason {
-    /// Every reason, so [`init_book_counters`] can register all of them.
-    const ALL: [Self; 6] = [
-        Self::LaddersExpired,
-        Self::NotMonotonic,
-        Self::UnknownPair,
-        Self::NoLiquidity,
-        Self::BelowSmallestQuote,
-        Self::SpotPriceUnrepresentable,
-    ];
 }
 
 /// The `field` label of [`OVERRIDE_ENTRY_MISSING_FIELD`]: the field an accepted venue entry
 /// omitted. The label value is the variant name in snake case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub(super) enum MissingField {
     /// `blockNumber`: which block the state was taken for.
     BlockNumber,
     /// `slot`: the only source of that block's timestamp.
     Slot,
-}
-
-impl MissingField {
-    const ALL: [Self; 2] = [Self::BlockNumber, Self::Slot];
 }
 
 /// The stream's serving state, exported as the numeric value of `SERVING_STATE`.
@@ -380,8 +319,8 @@ pub(super) fn record_override_match(venue: &str, outcome: MatchOutcome) {
     counter!(OVERRIDE_MATCHES, "venue" => venue.to_string(), "outcome" => outcome).increment(1);
 }
 
-pub(super) fn record_buffer_event(event: BufferEvent) {
-    counter!(OVERRIDE_BUFFER, "event" => <&'static str>::from(event)).increment(1);
+pub(super) fn record_buffer_event(event: BufferEvent, times: u64) {
+    counter!(OVERRIDE_BUFFER, "event" => <&'static str>::from(event)).increment(times);
 }
 
 pub(super) fn record_refused_override_entry(reason: EntryRejection) {
@@ -417,8 +356,8 @@ pub(super) fn record_override_block_mismatch() {
     counter!(OVERRIDE_BLOCK_MISMATCH).increment(1);
 }
 
-pub(super) fn record_override_merged_sources(sources: usize) {
-    counter!(OVERRIDE_MERGED_SOURCES).increment(sources as u64);
+pub(super) fn record_override_merged_sources(venue: &str, sources: usize) {
+    counter!(OVERRIDE_MERGED_SOURCES, "venue" => venue.to_string()).increment(sources as u64);
 }
 
 pub(super) fn record_unreadable_quote_sequence() {
@@ -434,13 +373,13 @@ pub(super) fn record_unreadable_quote_sequence() {
 /// This consumer reads the price level socket whether or not overrides are on, so all of these
 /// are registered unconditionally.
 pub(super) fn init_book_counters() {
-    for reason in SkipReason::ALL {
+    for reason in SkipReason::iter() {
         counter!(SKIPPED_BOOKS, "reason" => <&'static str>::from(reason)).increment(0);
     }
-    for reason in SideRejectReason::ALL {
+    for reason in SideRejectReason::iter() {
         counter!(REJECTED_SIDES, "reason" => <&'static str>::from(reason)).increment(0);
     }
-    for reason in QuoteRefusedReason::ALL {
+    for reason in QuoteRefusedReason::iter() {
         counter!(QUOTES_REFUSED, "reason" => <&'static str>::from(reason)).increment(0);
     }
     counter!(UNREADABLE_QUOTE_SEQUENCE).increment(0);
@@ -448,13 +387,9 @@ pub(super) fn init_book_counters() {
     counter!(DUPLICATE_BOOKS).increment(0);
 }
 
-/// Registers every series of the overrides path at zero, except the per-venue match outcomes,
-/// which [`init_override_matches`] registers per venue.
-///
-/// Called only while overrides are on: otherwise no quote stream socket is connected, none of
-/// these can ever move, and a flat zero would advertise a path this process does not run. The
-/// buffer events and refusal reasons are enumerated from their enums, so a new variant cannot
-/// miss its zero.
+/// Registers every series of the overrides path at zero, except the per-venue ones, which
+/// [`init_override_venue_series`] registers. Every label set is enumerated from its enum, so a new
+/// variant cannot miss its zero.
 pub(super) fn init_override_counters() {
     for event in BufferEvent::iter() {
         counter!(OVERRIDE_BUFFER, "event" => <&'static str>::from(event)).increment(0);
@@ -462,50 +397,52 @@ pub(super) fn init_override_counters() {
     for reason in EntryRejection::iter() {
         counter!(REFUSED_OVERRIDE_ENTRIES, "reason" => <&'static str>::from(reason)).increment(0);
     }
-    for field in MissingField::ALL {
+    for field in MissingField::iter() {
         let field = <&'static str>::from(field);
         counter!(OVERRIDE_ENTRY_MISSING_FIELD, "field" => field).increment(0);
     }
-    counter!(SEQUENCE_SLOT_MISMATCH, "socket" => OVERRIDE_SOCKET).increment(0);
+    counter!(SEQUENCE_SLOT_MISMATCH, "socket" => QUOTE_STREAM_SOCKET).increment(0);
     counter!(UNSERVED_VENUE_ENTRIES).increment(0);
     counter!(OVERRIDE_BLOCK_MISMATCH).increment(0);
-    counter!(OVERRIDE_MERGED_SOURCES).increment(0);
 }
 
-/// Registers every match outcome of `venue` at zero, while overrides are on.
-pub(super) fn init_override_matches(venue: &str) {
-    for outcome in MatchOutcome::ALL {
+/// Registers the per-venue series of the overrides path for `venue` at zero: every match outcome,
+/// and the merged sources.
+pub(super) fn init_override_venue_series(venue: &str) {
+    for outcome in MatchOutcome::iter() {
         let outcome = <&'static str>::from(outcome);
         counter!(OVERRIDE_MATCHES, "venue" => venue.to_string(), "outcome" => outcome).increment(0);
     }
+    counter!(OVERRIDE_MERGED_SOURCES, "venue" => venue.to_string()).increment(0);
 }
 
 /// Registers the rejection and reconnect series of the sockets this consumer reads, at zero, so a
 /// socket that has never failed reads as zeros rather than as a gap — the distinction an operator
 /// needs to tell a healthy socket from one that was never configured.
 ///
-/// Asymmetric on purpose. `parse_error` is the only [`RejectReason`] the override socket can ever
-/// carry, because every other one is a freshness check [`tracker`](super::tracker) makes of a price
-/// level frame; registering the rest against it would advertise five series no code path can reach.
-/// Reconnects, by contrast, are recorded by the one function that maintains both sockets, so every
-/// reason belongs to each socket that exists.
-pub(super) fn init_socket_counters(override_socket: bool) {
-    for reason in RejectReason::ALL {
+/// The two sockets get different sets on purpose. `parse_error` is the only [`RejectReason`] the
+/// quote stream socket can carry, because every other one is a freshness check
+/// [`tracker`](super::tracker) makes of a price level message; registering the rest against it
+/// would show five series nothing can increment. One function records reconnects for both
+/// sockets, so every reconnect reason is registered for each socket this consumer reads.
+pub(super) fn init_socket_counters(quote_stream_socket: bool) {
+    for reason in RejectReason::iter() {
         let reason = <&'static str>::from(reason);
         counter!(FRAMES_REJECTED, "socket" => PRICE_LEVEL_SOCKET, "reason" => reason).increment(0);
     }
-    for reason in ReconnectReason::ALL {
+    for reason in ReconnectReason::iter() {
         let reason = <&'static str>::from(reason);
         counter!(RECONNECTS, "socket" => PRICE_LEVEL_SOCKET, "reason" => reason).increment(0);
     }
-    if !override_socket {
+    if !quote_stream_socket {
         return;
     }
     let parse_error = <&'static str>::from(RejectReason::ParseError);
-    counter!(FRAMES_REJECTED, "socket" => OVERRIDE_SOCKET, "reason" => parse_error).increment(0);
-    for reason in ReconnectReason::ALL {
+    counter!(FRAMES_REJECTED, "socket" => QUOTE_STREAM_SOCKET, "reason" => parse_error)
+        .increment(0);
+    for reason in ReconnectReason::iter() {
         let reason = <&'static str>::from(reason);
-        counter!(RECONNECTS, "socket" => OVERRIDE_SOCKET, "reason" => reason).increment(0);
+        counter!(RECONNECTS, "socket" => QUOTE_STREAM_SOCKET, "reason" => reason).increment(0);
     }
 }
 
@@ -633,8 +570,6 @@ pub(super) mod recorded {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    // The enum's own count, which only the vocabulary test reads.
-    use strum::EnumCount;
 
     use super::{recorded::*, *};
 
@@ -656,7 +591,7 @@ mod tests {
             record_skipped_book(SkipReason::MalformedAddress);
             record_rejected_side(SideRejectReason::ConflictingKnots);
             record_override_match("fermiswap", MatchOutcome::EarlierSequence);
-            record_buffer_event(BufferEvent::ResentWithDifferentState);
+            record_buffer_event(BufferEvent::ResentWithDifferentState, 2);
             record_refused_override_entry(EntryRejection::PairsAndSequencesDiffer);
             record_unreadable_quote_sequence();
             record_quote_refused(QuoteRefusedReason::BelowSmallestQuote);
@@ -666,7 +601,7 @@ mod tests {
             record_unserved_venue_entry();
             record_override_entry_size(3, 7);
             record_override_block_mismatch();
-            record_override_merged_sources(2);
+            record_override_merged_sources("metric", 2);
         });
         assert_eq!(counter_value(&snapshot, "price_level_stream_frames_accepted_total", &[]), 1);
         assert_eq!(
@@ -743,10 +678,10 @@ mod tests {
             (
                 "price_level_stream_override_buffer_total",
                 vec![("event", "resent_with_different_state")],
-                1,
+                2,
             ),
             (
-                "price_level_stream_refused_override_entries_total",
+                "price_level_stream_override_entries_refused_total",
                 vec![("reason", "pairs_and_sequences_differ")],
                 1,
             ),
@@ -769,7 +704,7 @@ mod tests {
             ("price_level_stream_duplicate_books_total", vec![], 1),
             ("price_level_stream_unserved_venue_entries_total", vec![], 1),
             ("price_level_stream_override_block_mismatch_total", vec![], 1),
-            ("price_level_stream_override_merged_sources_total", vec![], 2),
+            ("price_level_stream_override_merged_sources_total", vec![("venue", "metric")], 2),
         ] {
             assert_eq!(counter_value(&snapshot, name, &labels), value, "{name}");
         }
@@ -808,12 +743,11 @@ mod tests {
             assert_eq!(counter_value(&snapshot, REJECTED_SIDES, &labels), 0);
         }
         for reason in [
-            "ladders_expired",
+            "price_levels_expired",
             "not_monotonic",
             "unknown_pair",
             "no_liquidity",
             "below_smallest_quote",
-            "spot_price_unrepresentable",
         ] {
             let labels = [("reason", reason)];
             assert!(
@@ -835,14 +769,14 @@ mod tests {
     /// contract with dashboards, and every one exists at zero before anything is stored or
     /// matched, so an outcome that never happens is a visible zero.
     ///
-    /// Each labelled counter's series are also counted, so the vocabulary is pinned exactly
-    /// rather than as a lower bound, and the two enum-derived lists are checked against their
-    /// enum's `COUNT` so that a variant added to either fails here, naming the list to extend.
+    /// The test also counts each labelled counter's series, so it pins the vocabulary exactly
+    /// rather than as a lower bound. The two lists of enum-derived labels are checked against
+    /// their enum's length, so a new variant fails here and names the list to extend.
     #[test]
     fn override_counters_start_at_zero_under_every_label() {
         let ((), snapshot) = record_async(async {
             init_override_counters();
-            init_override_matches("fermiswap");
+            init_override_venue_series("fermiswap");
         });
         let outcomes = ["same_sequence", "earlier_sequence", "none_in_slot", "no_quote_sequence"];
         let events = [
@@ -870,10 +804,14 @@ mod tests {
             "over_cap",
         ];
 
-        assert_eq!(events.len(), BufferEvent::COUNT, "a BufferEvent is missing from this list");
+        assert_eq!(
+            events.len(),
+            BufferEvent::iter().count(),
+            "a BufferEvent is missing from this list"
+        );
         assert_eq!(
             refusals.len(),
-            EntryRejection::COUNT,
+            EntryRejection::iter().count(),
             "an EntryRejection is missing from this list"
         );
         for outcome in outcomes {
@@ -904,7 +842,7 @@ mod tests {
             (SEQUENCE_SLOT_MISMATCH, vec![("socket", "quote_stream")]),
             (UNSERVED_VENUE_ENTRIES, vec![]),
             (OVERRIDE_BLOCK_MISMATCH, vec![]),
-            (OVERRIDE_MERGED_SOURCES, vec![]),
+            (OVERRIDE_MERGED_SOURCES, vec![("venue", "fermiswap")]),
         ] {
             assert!(counter_registered(&snapshot, name, &labels), "{name} is a missing series");
         }
@@ -913,14 +851,14 @@ mod tests {
     /// The socket series are registered for exactly what each socket can record, so a socket that
     /// has never failed reads as zeros while one that was never configured has no series at all.
     ///
-    /// The asymmetry is the point: `parse_error` is the only rejection reason the override socket
-    /// can carry, so the other five must not exist under it. The counts pin that exactly — any
-    /// cross-product would register more series than there are reachable ones.
+    /// `parse_error` is the only rejection reason the quote stream socket can carry, so the other
+    /// five must not exist under it. The counts pin that exactly: registering every reason for
+    /// both sockets would register more series than can be reached.
     #[rstest]
-    #[case::with_the_override_socket(true)]
+    #[case::with_the_quote_stream_socket(true)]
     #[case::price_level_socket_only(false)]
-    fn socket_counters_start_at_zero_for_every_reachable_series(#[case] override_socket: bool) {
-        let ((), snapshot) = record_async(async { init_socket_counters(override_socket) });
+    fn socket_counters_start_at_zero_for_every_reachable_series(#[case] quote_stream_socket: bool) {
+        let ((), snapshot) = record_async(async { init_socket_counters(quote_stream_socket) });
         let reject_reasons = [
             "parse_error",
             "too_old",
@@ -940,7 +878,7 @@ mod tests {
         for reason in reconnect_reasons {
             for socket in ["price_levels", "quote_stream"] {
                 let labels = [("socket", socket), ("reason", reason)];
-                let reachable = socket == "price_levels" || override_socket;
+                let reachable = socket == "price_levels" || quote_stream_socket;
                 assert_eq!(
                     counter_registered(&snapshot, RECONNECTS, &labels),
                     reachable,
@@ -954,7 +892,7 @@ mod tests {
                 FRAMES_REJECTED,
                 &[("socket", "quote_stream"), ("reason", "parse_error")]
             ),
-            override_socket
+            quote_stream_socket
         );
         for reason in ["too_old", "in_future", "out_of_order", "block_regression", "block_jump"] {
             assert!(
@@ -963,16 +901,16 @@ mod tests {
                     FRAMES_REJECTED,
                     &[("socket", "quote_stream"), ("reason", reason)]
                 ),
-                "{reason} cannot be recorded against the override socket, yet it is registered"
+                "{reason} cannot be recorded against the quote stream socket, yet it is registered"
             );
         }
         assert_eq!(
             registered_series(&snapshot, FRAMES_REJECTED),
-            if override_socket { reject_reasons.len() + 1 } else { reject_reasons.len() }
+            if quote_stream_socket { reject_reasons.len() + 1 } else { reject_reasons.len() }
         );
         assert_eq!(
             registered_series(&snapshot, RECONNECTS),
-            if override_socket { reconnect_reasons.len() * 2 } else { reconnect_reasons.len() }
+            if quote_stream_socket { reconnect_reasons.len() * 2 } else { reconnect_reasons.len() }
         );
     }
 }

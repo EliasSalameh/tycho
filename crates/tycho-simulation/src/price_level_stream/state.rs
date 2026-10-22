@@ -20,9 +20,11 @@ use tycho_common::{
 
 use super::{overrides::PammSimulationOverrides, telemetry};
 
-/// How long the ladders of one frame stay quotable: one slot. Titan quotes the pending block, so
-/// a ladder older than that is not fillable directly (the venue reverts `StaleUpdate`) and must
-/// not be priced.
+/// How long the quotes of one price level message stay quotable: one slot after the message's `ts`.
+/// Titan prices the block it is building, so quotes older than one slot were priced for a block
+/// already built. The guard is loose on purpose: the builder usually refreshes a venue before
+/// inclusion, so a quote for the previous block often still fills, and the fallback router covers
+/// the cases where it does not.
 pub const QUOTE_TTL: Duration = super::SLOT;
 
 /// A single price level: the total `amount_out` a swap of exactly `amount_in` would deliver.
@@ -43,7 +45,7 @@ impl PriceLevelStreamQuote {
 
 /// State of a single pAMM pair fed from the price level stream.
 ///
-/// Holds the latest complete quote ladders for both trade directions. Quotes are absolute
+/// Holds the latest complete quotes for both trade directions. Quotes are absolute
 /// (`amount_in` → total `amount_out`), sorted ascending by `amount_in`; amounts between two
 /// quotes are interpolated linearly, mirroring how Titan itself densifies the simulated levels.
 /// Amounts outside the quoted range are not served.
@@ -57,8 +59,8 @@ pub struct PriceLevelStreamState {
     /// Monotonic instant from which this state refuses every query. `None` means the state never
     /// expires. The field is never serialized and deserializes as `None`, so a replayed
     /// recording always quotes. Only [`with_quotable_until`](Self::with_quotable_until) sets it,
-    /// and equality ignores it: two states carrying the same ladders compare equal whichever
-    /// frames they came from.
+    /// and equality ignores it: two states carrying the same quotes compare equal whichever
+    /// messages they came from.
     #[serde(skip)]
     quotable_until: Option<Instant>,
     /// The account state Titan priced these quotes on, when one was found for them. Shared,
@@ -72,7 +74,7 @@ pub struct PriceLevelStreamState {
 impl PriceLevelStreamState {
     /// Creates the state for the pair `(token0, token1)`.
     ///
-    /// Both quote ladders are sorted ascending by `amount_in` and deduplicated on it, so callers
+    /// Both quote lists are sorted ascending by `amount_in` and deduplicated on it, so callers
     /// may pass them in stream order.
     pub fn new(
         token0: Bytes,
@@ -128,7 +130,7 @@ impl PriceLevelStreamState {
     fn ensure_quotable(&self, now: Instant) -> Result<(), SimulationError> {
         match self.quotable_until {
             Some(until) if now >= until => {
-                telemetry::record_quote_refused(telemetry::QuoteRefusedReason::LaddersExpired);
+                telemetry::record_quote_refused(telemetry::QuoteRefusedReason::PriceLevelsExpired);
                 Err(SimulationError::RecoverableError(format!(
                     "price levels expired: the message that carried them is older than {} s (one \
                      slot)",
@@ -139,7 +141,7 @@ impl PriceLevelStreamState {
         }
     }
 
-    /// Returns the quote ladder selling `token_in` for `token_out`, or an error if the pair does
+    /// Returns the quotes selling `token_in` for `token_out`, or an error if the pair does
     /// not match this state's tokens.
     fn quotes(
         &self,
@@ -159,12 +161,12 @@ impl PriceLevelStreamState {
         }
     }
 
-    /// Computes the output amount for `amount_in` on the given ladder by linear interpolation
+    /// Computes the output amount for `amount_in` on the given quotes by linear interpolation
     /// between the two enclosing quotes.
     ///
     /// Callers must ensure `amount_in` lies within the quoted range (smallest to largest
-    /// `amount_in`) — the ladder holds no information outside of it. Errors if the enclosing
-    /// quotes are not monotonically increasing in `amount_out`: such a ladder is unreliable,
+    /// `amount_in`) — the quotes hold no information outside of it. Errors if the enclosing
+    /// quotes are not monotonically increasing in `amount_out`: such quotes are unreliable,
     /// and a venue with corrupt data should not be quoted at any price.
     fn interpolate(
         &self,
@@ -183,10 +185,10 @@ impl PriceLevelStreamState {
             .amount_out
             .checked_sub(&lower.amount_out)
         else {
-            // Recoverable: the next snapshot replaces the ladder wholesale.
+            // Recoverable: the next message replaces the quotes wholesale.
             telemetry::record_quote_refused(telemetry::QuoteRefusedReason::NotMonotonic);
             return Err(SimulationError::RecoverableError(format!(
-                "Quote ladder {}/{} is not monotonically increasing in amount_out around the \
+                "Quotes {}/{} are not monotonically increasing in amount_out around the \
                  requested amount {amount_in}: {} -> {}, but {} -> {}",
                 self.token0,
                 self.token1,
@@ -201,9 +203,9 @@ impl PriceLevelStreamState {
         Ok(&lower.amount_out + out_span * offset / in_span)
     }
 
-    /// The state after a fill: both ladders are consumed. The snapshot quotes fills of the
-    /// pre-fill venue only — post-fill pricing is unknown in either direction until the next
-    /// snapshot, and re-reading the cumulative ladder would double-count the maker's liquidity.
+    /// The state after a fill: both quote lists are consumed. The quotes price fills of the
+    /// pre-fill venue only: post-fill pricing is unknown in either direction until the next
+    /// message, and re-reading the cumulative quotes would double-count the maker's liquidity.
     ///
     /// The simulation overrides are kept: they are the state the consumed fill was priced on, and
     /// a consumer simulating the swap needs them after the quote, not only during it.
@@ -237,18 +239,12 @@ impl ProtocolSim for PriceLevelStreamState {
                 SimulationError::RecoverableError("No liquidity available".to_string())
             })?;
         let amount_in = best.amount_in.to_f64().ok_or_else(|| {
-            telemetry::record_quote_refused(
-                telemetry::QuoteRefusedReason::SpotPriceUnrepresentable,
-            );
             SimulationError::RecoverableError("Can't convert amount in to f64".to_string())
         })?;
         let amount_out = best
             .amount_out
             .to_f64()
             .ok_or_else(|| {
-                telemetry::record_quote_refused(
-                    telemetry::QuoteRefusedReason::SpotPriceUnrepresentable,
-                );
                 SimulationError::RecoverableError("Can't convert amount out to f64".to_string())
             })?;
         Ok((amount_out / 10f64.powi(quote.decimals as i32)) /
@@ -269,17 +265,17 @@ impl ProtocolSim for PriceLevelStreamState {
         };
         // Below the smallest quote nothing is served. The venue itself could still fill —
         // FermiSwap was observed quoting below the smallest streamed level — but if so, on its
-        // own price curve, which the ladder holds no information about: unlike interpolation
+        // own price curve, which the quotes hold no information about: unlike interpolation
         // between two quoted levels, whose result is bracketed by genuine samples on both
         // sides, extrapolating linearly from (0, 0) like Titan's quote API does is an unbounded
-        // guess even off a healthy ladder. (0, 0) is an assumption, not a sample, and the
+        // guess even off healthy quotes. (0, 0) is an assumption, not a sample, and the
         // bottom of that line is not even fillable: FermiSwap reverts below a venue-side
         // minimum (~$0.02 at the time of measurement) where the API keeps quoting. And a
-        // malformed ladder turns the guess absurd: on FermiSwap's flat cbBTC-input books
+        // malformed quotes turn the guess absurd: on FermiSwap's flat cbBTC-input books
         // (18-decimals grid bug) the smallest quote is the venue's depth clamp, not a price
         // sample, and the extrapolated quotes land ~3e6x below the venue's own (measured
         // 2026-07). All the rejection gives up are trades smaller than the first level —
-        // ~$10-30 on healthy ladders, negligible for routing. Hence no partial result either.
+        // ~$10-30 on healthy quotes, negligible for routing. Hence no partial result either.
         if amount_in < first.amount_in {
             telemetry::record_quote_refused(telemetry::QuoteRefusedReason::BelowSmallestQuote);
             return Err(SimulationError::InvalidInput(
@@ -347,16 +343,18 @@ impl ProtocolSim for PriceLevelStreamState {
         self
     }
 
-    /// Equal when the pair, both quote lists, the gas cost and the **block** of the simulation
-    /// overrides match.
+    /// Equal when the pair, both quote lists, the gas cost, and the block and overridden account
+    /// addresses of the simulation overrides match.
     ///
-    /// The overrides' accounts are left out. Quoting never reads them, and Titan republishes a
+    /// The overridden values are left out. Quoting never reads them, and Titan republishes a
     /// venue's accounts several times a second while its prices stand still, so comparing them
     /// would report a changed quote for an unchanged price.
     ///
-    /// Their block is compared. Prices can be identical across a block boundary, and without the
-    /// block those two states would compare equal, so a consumer that keeps the state it holds
-    /// would simulate on the previous block's overrides.
+    /// The block is compared because prices can be identical across a block boundary: without it,
+    /// a consumer that keeps the state it holds would simulate on the previous block's overrides.
+    /// The account addresses are compared because a merge can add or lose another quote address's
+    /// entry (see Metric); without them, a consumer would keep overrides missing an account the
+    /// swap reads.
     ///
     /// `quotable_until` is left out too: this process derives it, it is never serialized, and
     /// keeping the state already held only leaves the consumer on the older, earlier deadline.
@@ -374,19 +372,22 @@ impl ProtocolSim for PriceLevelStreamState {
                     quotable_until: _,
                     overrides,
                 } = other;
-                let same_block = self
-                    .overrides
-                    .as_ref()
-                    .map(|held| held.block_number) ==
-                    overrides
-                        .as_ref()
-                        .map(|arriving| arriving.block_number);
+                let same_overrides = match (&self.overrides, overrides) {
+                    (Some(held), Some(arriving)) => {
+                        held.block_number == arriving.block_number &&
+                            held.accounts
+                                .keys()
+                                .eq(arriving.accounts.keys())
+                    }
+                    (None, None) => true,
+                    _ => false,
+                };
                 &self.token0 == token0 &&
                     &self.token1 == token1 &&
                     &self.quotes_0_to_1 == quotes_0_to_1 &&
                     &self.quotes_1_to_0 == quotes_1_to_0 &&
                     &self.gas_cost == gas_cost &&
-                    same_block
+                    same_overrides
             })
     }
 }
@@ -399,9 +400,9 @@ mod tests {
 
     use super::{
         super::{
-            convert::ladders_for_book,
-            overrides::test_overrides,
-            test_support::{captured_book, token, tokens, USDC, WBTC, WETH},
+            convert::quotes_for_book,
+            telemetry::recorded::{counter_value, record_async},
+            test_support::{captured_book, test_overrides, token, tokens, USDC, WBTC, WETH},
         },
         *,
     };
@@ -447,7 +448,7 @@ mod tests {
         PriceLevelStreamQuote::new(BigUint::from(amount_in), BigUint::from(amount_out))
     }
 
-    /// WBTC (token0) / USDC (token1) ladder: 1 WBTC -> 100k USDC flat, then the second level
+    /// WBTC (token0) / USDC (token1) quotes: 1 WBTC -> 100k USDC flat, then the second level
     /// fills at a worse marginal price.
     fn state() -> PriceLevelStreamState {
         PriceLevelStreamState::new(
@@ -459,7 +460,7 @@ mod tests {
         )
     }
 
-    /// The Bebop WETH/USDC ladders of the captured live frame, converted as the stream converts
+    /// The Bebop WETH/USDC quotes of the captured live message, converted as the stream converts
     /// them: the amounts Titan actually quoted.
     fn captured_state() -> PriceLevelStreamState {
         let tokens = tokens();
@@ -470,7 +471,7 @@ mod tests {
         let usdc = tokens
             .get(&usdc().address)
             .expect("USDC is admitted");
-        let (bids, asks) = ladders_for_book(&book, weth, usdc);
+        let (bids, asks) = quotes_for_book(&book, weth, usdc);
         PriceLevelStreamState::new(
             weth.address.clone(),
             usdc.address.clone(),
@@ -517,22 +518,32 @@ mod tests {
         assert_eq!(result.amount, BigUint::from(145_000_000_000u64));
     }
 
-    #[test]
-    fn get_amount_out_on_glitched_ladder_is_rejected() {
-        // A ladder that is not monotonically increasing in amount_out (a stream glitch): the
-        // data is unreliable, so a quote landing in the glitched segment is refused instead of
-        // interpolated (or underflowing).
-        let state = PriceLevelStreamState::new(
+    /// A WBTC/USDC state whose WBTC quotes are not monotonically increasing in amount_out, as
+    /// after a stream glitch.
+    fn glitched_state() -> PriceLevelStreamState {
+        PriceLevelStreamState::new(
             wbtc().address,
             usdc().address,
             vec![quote(100, 200), quote(200, 150)],
             vec![],
             BigUint::ZERO,
-        );
+        )
+    }
+
+    /// A WBTC/USDC state with no quotes in either direction.
+    fn empty_state() -> PriceLevelStreamState {
+        PriceLevelStreamState::new(wbtc().address, usdc().address, vec![], vec![], BigUint::ZERO)
+    }
+
+    #[test]
+    fn get_amount_out_on_glitched_quotes_is_rejected() {
+        // The data is unreliable, so a quote landing in the glitched segment is refused instead
+        // of interpolated (or underflowing).
+        let state = glitched_state();
         let result = state.get_amount_out(BigUint::from(150u64), &wbtc(), &usdc());
         assert!(matches!(result, Err(SimulationError::RecoverableError(_))));
 
-        // Hitting a level exactly returns that genuine sample even on a glitched ladder.
+        // Hitting a level exactly returns that genuine sample even on glitched quotes.
         let result = state
             .get_amount_out(BigUint::from(100u64), &wbtc(), &usdc())
             .unwrap();
@@ -541,7 +552,7 @@ mod tests {
 
     #[test]
     fn get_amount_out_below_smallest_level_is_rejected() {
-        // The ladder holds no information below its smallest quote, and there is no partial
+        // The quotes hold no information below the smallest one, and there is no partial
         // result to offer.
         let result = state().get_amount_out(BigUint::from(50_000_000u64), &wbtc(), &usdc());
         assert!(matches!(result, Err(SimulationError::InvalidInput(_, None))));
@@ -567,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn get_amount_out_consumes_both_ladders() {
+    fn get_amount_out_consumes_both_quote_lists() {
         let result = state()
             .get_amount_out(BigUint::from(100_000_000u64), &wbtc(), &usdc())
             .unwrap();
@@ -588,14 +599,7 @@ mod tests {
 
     #[test]
     fn get_amount_out_without_liquidity() {
-        let state = PriceLevelStreamState::new(
-            wbtc().address,
-            usdc().address,
-            vec![],
-            vec![],
-            BigUint::ZERO,
-        );
-        let result = state.get_amount_out(BigUint::from(1u64), &wbtc(), &usdc());
+        let result = empty_state().get_amount_out(BigUint::from(1u64), &wbtc(), &usdc());
         assert!(matches!(result, Err(SimulationError::RecoverableError(_))));
     }
 
@@ -683,6 +687,34 @@ mod tests {
         );
     }
 
+    /// Each refusal is counted under its own `reason`, once per refused call.
+    #[rstest]
+    #[case::price_levels_expired(state().with_quotable_until(Instant::now()), 100_000_000, wbtc(), "price_levels_expired")]
+    #[case::unknown_pair(state(), 1, weth(), "unknown_pair")]
+    #[case::no_liquidity(empty_state(), 1, wbtc(), "no_liquidity")]
+    #[case::below_smallest_quote(state(), 50_000_000, wbtc(), "below_smallest_quote")]
+    #[case::not_monotonic(glitched_state(), 150, wbtc(), "not_monotonic")]
+    fn a_refused_quote_is_counted_under_its_reason(
+        #[case] state: PriceLevelStreamState,
+        #[case] amount_in: u64,
+        #[case] token_in: Token,
+        #[case] reason: &str,
+    ) {
+        let (result, snapshot) = record_async(async {
+            state.get_amount_out(BigUint::from(amount_in), &token_in, &usdc())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            counter_value(
+                &snapshot,
+                "price_level_stream_quotes_refused_total",
+                &[("reason", reason)]
+            ),
+            1
+        );
+    }
+
     #[test]
     fn state_without_quotable_until_never_expires() {
         let far = Instant::now() + Duration::from_secs(1_000_000);
@@ -754,7 +786,7 @@ mod tests {
             .is_ok());
     }
 
-    /// Two frames carrying the same ladders yield equal states, whatever their guards.
+    /// Two messages carrying the same quotes yield equal states, whatever their guards.
     #[test]
     fn eq_ignores_quotable_until() {
         let until = Instant::now() + Duration::from_secs(60);
@@ -775,32 +807,47 @@ mod tests {
         );
     }
 
-    /// `eq` compares the block of the simulation overrides, not their accounts: see `eq`'s own
-    /// documentation.
-    #[test]
-    fn eq_compares_the_block_not_the_accounts() {
-        let with_overrides = || state().with_simulation_overrides(test_overrides());
-        assert!(with_overrides().eq(&with_overrides()));
+    /// `eq` compares the block and the overridden account addresses of the simulation overrides,
+    /// not the overridden values: see `eq`'s own documentation.
+    #[rstest]
+    #[case::the_same_overrides(Some(test_overrides()), true)]
+    #[case::no_overrides(None, false)]
+    #[case::rebuilt_with_other_values(Some(rebuilt_with_other_values()), true)]
+    #[case::another_block(Some(PammSimulationOverrides { block_number: Some(26_201_955), ..test_overrides() }), false)]
+    #[case::fewer_accounts(Some(with_one_account_fewer()), false)]
+    fn eq_compares_the_block_and_the_accounts_not_the_values(
+        #[case] other: Option<PammSimulationOverrides>,
+        #[case] equal: bool,
+    ) {
+        let held = state().with_simulation_overrides(test_overrides());
+        let other = match other {
+            Some(overrides) => state().with_simulation_overrides(overrides),
+            None => state(),
+        };
 
-        // Carrying overrides is itself a difference: one state can be simulated with them and
-        // the other cannot.
-        assert!(!state().eq(&with_overrides()));
-        assert!(!with_overrides().eq(&state()));
+        assert_eq!(held.eq(&other), equal);
+        assert_eq!(other.eq(&held), equal);
+    }
 
-        // Same block, different accounts, a different build time and so a different
-        // `expires_at`: the same quote.
+    /// [`test_overrides`] taken later in the same block: every overridden value and the build time
+    /// differ, the accounts and the block do not.
+    fn rebuilt_with_other_values() -> PammSimulationOverrides {
         let mut rebuilt = test_overrides();
         rebuilt.built_at_ns += 1;
         rebuilt.expires_at += 1;
-        rebuilt.accounts.clear();
-        assert!(with_overrides().eq(&state().with_simulation_overrides(rebuilt)));
+        for account in rebuilt.accounts.values_mut() {
+            account.nonce = account.nonce.map(|nonce| nonce + 1);
+            account.state_diff.clear();
+        }
+        rebuilt
+    }
 
-        // A different block is a different quote, even with the quotes unchanged.
-        let mut next_block = test_overrides();
-        next_block.block_number = next_block
-            .block_number
-            .map(|block| block + 1);
-        assert!(!with_overrides().eq(&state().with_simulation_overrides(next_block)));
+    /// [`test_overrides`] without its first account, as when a merge loses another quote
+    /// address's entry.
+    fn with_one_account_fewer() -> PammSimulationOverrides {
+        let mut fewer = test_overrides();
+        fewer.accounts.pop_first();
+        fewer
     }
 
     /// The consumed quotes are empty, but the successor still carries the state the fill was
@@ -851,10 +898,6 @@ mod tests {
         #[case] recording: fn(&str, &str) -> String,
     ) {
         let state = captured_state().with_simulation_overrides(test_overrides());
-        // The tag these recordings carry is the one typetag itself writes.
-        assert!(serde_json::to_string(&state as &dyn ProtocolSim)
-            .expect("serializes")
-            .starts_with(&format!(r#"{{"protocol":{TAG},"#)));
         let text = recording(TAG, &serde_json::to_string(&state).expect("serializes"));
 
         let boxed: Box<dyn ProtocolSim> = serde_json::from_str(&text).expect("reads back");
@@ -865,6 +908,14 @@ mod tests {
             .downcast_ref::<PriceLevelStreamState>()
             .expect("price level state");
         assert_eq!(read.simulation_overrides(), Some(&test_overrides()));
+    }
+
+    /// The tag the recordings in these tests carry is the one typetag itself writes.
+    #[test]
+    fn typetag_writes_the_tag_the_recordings_carry() {
+        let text = serde_json::to_string(&state() as &dyn ProtocolSim).expect("serializes");
+
+        assert!(text.starts_with(&format!(r#"{{"protocol":{TAG},"#)), "{text}");
     }
 
     /// The persisted key is literally `overrides`, at the top level of the state object — in the
