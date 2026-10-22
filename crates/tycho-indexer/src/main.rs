@@ -224,39 +224,71 @@ fn spawn_jemalloc_stats_reporter() {
     });
 }
 
-/// Starts continuous CPU profiling if `PYROSCOPE_SERVER_URL` is set, and returns `Ok(None)`
-/// otherwise. Samples all threads `PYROSCOPE_SAMPLE_RATE` times per CPU-second (default 100) and
-/// pushes the profiles to the server every 10 s, as application `PYROSCOPE_APPLICATION_NAME`
-/// (default `tycho-indexer`) with the pod name as tag. Profiling stops when the agent is dropped.
+/// Starts continuous CPU profiling if `PYROSCOPE_SERVER_URL` is set and not empty, and returns
+/// `Ok(None)` otherwise. Samples all threads `PYROSCOPE_SAMPLE_RATE` times per CPU-second
+/// (default 100) and pushes the profiles to the server every 10 s. Profiling stops when the agent
+/// is dropped.
+///
+/// The profiles use the same service name and resource attributes as the traces:
+/// `OTEL_SERVICE_NAME` (default `tycho-indexer`) and `OTEL_RESOURCE_ATTRIBUTES`, see
+/// [`profile_labels`].
 ///
 /// # Panics
 ///
 /// Panics if `PYROSCOPE_SAMPLE_RATE` is not a number.
 fn start_cpu_profiler(
 ) -> Result<Option<PyroscopeAgent<PyroscopeAgentRunning>>, pyroscope::PyroscopeError> {
-    let Ok(url) = env::var("PYROSCOPE_SERVER_URL") else {
+    let Some(url) = env::var("PYROSCOPE_SERVER_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+    else {
         return Ok(None);
     };
-    let application =
-        env::var("PYROSCOPE_APPLICATION_NAME").unwrap_or_else(|_| "tycho-indexer".to_string());
+    let service_name =
+        env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "tycho-indexer".to_string());
     let sample_rate = env::var("PYROSCOPE_SAMPLE_RATE")
         .unwrap_or_else(|_| "100".to_string())
         .parse()
         .expect("PYROSCOPE_SAMPLE_RATE must be a number");
-    let pod = env::var("HOSTNAME").unwrap_or_default();
+    let labels = profile_labels(&env::var("OTEL_RESOURCE_ATTRIBUTES").unwrap_or_default());
     let backend = pprof_backend(PprofConfig { sample_rate }, BackendConfig::default());
     let agent = PyroscopeAgentBuilder::new(
         url,
-        application,
+        service_name,
         sample_rate,
         "pyroscope-rs",
         env!("CARGO_PKG_VERSION"),
         backend,
     )
-    .tags(vec![("pod", pod.as_str())])
+    .tags(
+        labels
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect(),
+    )
     .build()?
     .start()?;
     Ok(Some(agent))
+}
+
+/// Converts OpenTelemetry resource attributes (`key=value` pairs separated by commas) to profile
+/// labels. Pyroscope silently drops labels whose names contain characters other than ASCII
+/// letters, digits and `_`, so every other character becomes `_`: `k8s.namespace.name` becomes
+/// `k8s_namespace_name`. Pairs without `=` or with an empty value are skipped.
+fn profile_labels(attributes: &str) -> Vec<(String, String)> {
+    let mut labels = Vec::new();
+    for pair in attributes.split(',') {
+        let Some((name, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let (name, value) = (name.trim(), value.trim());
+        if name.is_empty() || value.is_empty() {
+            continue;
+        }
+        let name = name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "_");
+        labels.push((name, value.to_string()));
+    }
+    labels
 }
 
 /// Executes all extractors configured in the extractor configuration file and starts the server.
@@ -892,6 +924,30 @@ async fn run_analyze_tokens(
 #[cfg(test)]
 mod tests {
     use tycho_common::models::chain_config::ChainTokenConfig;
+
+    use super::profile_labels;
+
+    #[test]
+    fn test_profile_labels_from_resource_attributes() {
+        let labels = profile_labels(
+            "k8s.namespace.name=prod-tycho, k8s.pod.name=ethereum-tycho-indexer-1-54b4-n867p,\
+             service.version=0.479.0,no-value=,broken",
+        );
+
+        assert_eq!(
+            labels,
+            vec![
+                ("k8s_namespace_name".to_string(), "prod-tycho".to_string()),
+                ("k8s_pod_name".to_string(), "ethereum-tycho-indexer-1-54b4-n867p".to_string()),
+                ("service_version".to_string(), "0.479.0".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_profile_labels_empty() {
+        assert!(profile_labels("").is_empty());
+    }
 
     #[test]
     fn test_chain_token_invalid_hex() {
