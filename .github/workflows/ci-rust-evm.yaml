@@ -47,13 +47,14 @@ jobs:
             rust-toolchain.toml
             .github/workflows/ci-rust-evm.yaml
 
-      # The pAMM override check costs a live Titan capture and real RPC calls, so it runs only
-      # when the code it covers changes.
+      # The pAMM simulation overrides test dials the live Titan sockets and makes real RPC calls,
+      # so it runs only when the code it covers changes, or on a manual dispatch.
       - uses: tj-actions/changed-files@48d8f15b2aaa3d255ca5af3eba4870f807ce6b3c  # v45
         id: price-level-stream
         with:
           files: |
             crates/tycho-simulation/src/price_level_stream/**
+            crates/tycho-test/src/execution/**
             crates/tycho-integration-test/tests/pamm_simulation_overrides.rs
 
   test-evm:
@@ -106,7 +107,7 @@ jobs:
   test-pamm-overrides:
     name: pAMM simulation overrides (live)
     needs: [changes]
-    if: needs.changes.outputs.price-level-stream == 'true' || github.event_name != 'pull_request_target'
+    if: needs.changes.outputs.price-level-stream == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Same reason as test-evm: this runs fork code (cargo build/test) with an RPC secret in scope,
@@ -129,9 +130,11 @@ jobs:
         with:
           cache-on-failure: true
 
-      # Captures live pAMM quotes, then simulates each encoded swap at the block it targets with
-      # and without the quote's own overrides. The test skips itself when Titan serves no quote or
-      # the RPC cannot settle the quoted block, so it fails only on a real mismatch.
+      # Captures live pAMM quotes, then simulates each encoded swap on the parent of the block it
+      # targets, with and without the quote's own overrides. It fails when a quote's own overrides
+      # revert or miss the quoted amount, or when the stream served quotes and none carried
+      # overrides. It skips with a warning when Titan serves no quote or the RPC returns none of
+      # the quoted blocks.
       - name: Simulate live pAMM quotes with their overrides
         run: |
           cargo test -p tycho-integration-test --test pamm_simulation_overrides --locked \
@@ -142,7 +145,7 @@ jobs:
   test-pamm-overrides-skip:
     name: pAMM simulation overrides (live)
     needs: [changes]
-    if: needs.changes.outputs.price-level-stream != 'true' && github.event_name == 'pull_request_target'
+    if: needs.changes.outputs.price-level-stream != 'true' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No price level stream changes detected, skipping the pAMM override check"
