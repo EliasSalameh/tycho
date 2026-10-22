@@ -190,38 +190,38 @@ for any protocol indexed by Tycho.
   Consumers cannot tell a stale removal from a retired venue. Venues may overlap with other
   integration paths of the same liquidity (e.g. `vm:fermiswap`) — consumers must deduplicate by
   venue where double-counting matters.
-  `build` also opens a **second Titan socket** by default (`pamm_quote_stream_v2`; endpoint via
-  `override_endpoint` or `TITAN_PAMM_QUOTE_STREAM_URL`, off via `without_simulation_overrides`),
-  carrying the account state Titan simulated each venue on to price its ladders. `titan.rs`'s
-  `validate` refuses a venue entry **whole** (20/32-byte identities, hex quantities incl. odd-digit
-  balances, a build `timestamp`, 1:1 `assetPairs`/`pairSequences`, no `code`/full `state`, caps 32
-  accounts / 512 slots); `overrides.rs` holds what it
-  accepts in a fail-closed `OverrideBuffer` keyed by `(canonical venue, sorted pair)` — the sequence
-  is **not** part of `PairKey`: a key holds a pair's recent sequences together, and the stamping
-  lookup adds the sequence as its discriminator — served while the entry's `blockNumber` is still
-  the block being quoted and one slot has not passed since its build stamp, both derived from what
-  Titan sent so a re-send computes the same deadline and nothing has to be remembered about a
-  dropped build, 8 builds per key across all of that pair's sequences, 1,024
-  `(venue, pair)` keys, 16 entries per frame × 32 pairs per entry, newest-built wins, a same-build
-  conflicting payload poisons that build as a *recency bar* (older builds refused, newer ones still
-  supersede), plus a rotating sweep so a key no lookup visits still expires. `tracker.rs` stamps at
-  state construction on the **full identity only**: `PairProvenance` merges the books of one (venue,
-  pair), so books disagreeing on their version — or naming none — leave the state unstamped, and
-  the stamped clone's `expires_at` narrows to `min(ladder deadline, snapshot deadline)` while the
-  shared retained snapshot keeps its own. The snapshot rides inside the state as the serialized
-  `overrides` field (`PammSimulationOverrides`; no u128 at any serialization boundary — sequences
-  stay transient; `eq` compares it, `consumed()` keeps it, old recordings read back `None`).
-  Quoting never reads it: a dead/malformed second socket, a refused entry, an empty buffer, an
-  unreadable reference and the opt-out all end in a state that quotes and carries no snapshot.
-  `telemetry.rs` adds `override_match_total{outcome}` (5 `MatchResult` outcomes),
-  `override_buffer_total{event}` (16 `IngestEvent`s) and `refused_override_entries_total{reason}`
-  (10 `EntryRejection`s) — those three registered at zero only while stamping is on — plus
-  `invalid_provenance_total` (per **served** book, unreadable references only), which is registered
-  **unconditionally**, because the provenance read sits on the price level path: the series exists
-  at zero under `without_simulation_overrides`, so its presence is no evidence that stamping is on.
-  It also adds a `socket` label (`price_levels`/`quote_stream`) to the already-released
+  `build` also opens a **second Titan socket** by default, the quote stream
+  (`pamm_quote_stream_v2`; endpoint via `override_endpoint` or `TITAN_PAMM_QUOTE_STREAM_URL`, off
+  via `without_simulation_overrides`), carrying the account state Titan simulated each venue on.
+  `titan.rs` decodes each venue entry on its own and `validate` refuses an entry **whole**
+  (`EntryRejection`: undecodable, malformed addresses/slots/quantities, no `timestamp`,
+  `assetPairs`/`pairSequences` of unequal length, empty, `code`/full `state`, over 32 accounts or
+  512 storage words). `overrides.rs`'s `OverrideBuffer` holds accepted entries keyed by
+  `(venue, sorted pair)`, under the entry's own normalized `quoteAddress` and every venue its
+  `pricedAddresses` name — **only venues the tracker serves**. Retention reads no clock: a quote
+  sequence carries its beacon slot in its high 64 bits, and the buffer keeps the latest price level
+  message's slot ±1 (`advance`), capped at 100,000 entries. `find` gives a book (venue, pair, quote
+  sequence `S` from `calculated_from`) the venue's own newest entry of the same slot with sequence
+  ≤ `S` (most books name a sequence no entry carries — exact-only matched ~57% live, this ~99.7%),
+  merged with the other sources' matching entries, the venue's own winning on conflicts (Metric's
+  router reads two quote addresses). The result rides in the state as
+  `Option<Arc<PammSimulationOverrides>>`, serialized as `overrides` (no `u128` in it — quote
+  sequences never serialize; old recordings read back `None`); `eq` compares only its
+  `block_number`; `consumed()` keeps it; `expires_at` is information only. Quoting never reads
+  it, and nothing on this path removes a component, delays an update or shortens a quote's
+  validity. `telemetry.rs` adds `override_match_total{venue, outcome}`,
+  `override_buffer_total{event}` (`BufferEvent`), `refused_override_entries_total{reason}`
+  (`EntryRejection`, labels derived
+  from the enum), `sequence_slot_mismatch_total{socket}`, `override_block_mismatch_total`,
+  `override_merged_sources_total`, `override_entry_missing_field_total{field}`,
+  `unserved_venue_entries_total`, `duplicate_books_total`, `quotes_refused_total{reason}` (per
+  refused quote call) and the `override_entry_{accounts,storage_slots}` histograms. The series
+  read off price level books — `quotes_refused_total`, `duplicate_books_total`,
+  `unreadable_quote_sequence_total` and `sequence_slot_mismatch_total{socket="price_levels"}` —
+  are registered unconditionally; the rest only while overrides are on. It
+  also adds a `socket` label (`price_levels`/`quote_stream`) to the released
   `frames_rejected_total`/`reconnects_total`, which **changes the identity of those two series**.
-  This path's provenance is the price level stream's own; `evm/override_stream/` is the separate
+  This path is the price level stream's own; `evm/override_stream/` is the separate
   per-simulation override path of the `vm:` protocols and stays untouched
 
 ## Simulation Approaches

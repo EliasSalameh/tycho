@@ -4,7 +4,7 @@ description: Streaming Titan's pAMM price levels as Tycho protocol components.
 
 # pAMM Price Level Stream
 
-Tycho Simulation consumes <a href="https://docs.titanbuilder.xyz/propamms/takers#pamm-price-level" target="_blank" rel="noopener noreferrer">Titan Builder's pAMM price level stream</a>: a WebSocket that pushes, once per second, the quote books Titan simulated for the pAMMs it builds blocks with. `PriceLevelStreamBuilder` turns each frame into the same `Update` messages the protocol stream emits, so you consume it like any other stream. It covers Ethereum Mainnet only.
+Tycho Simulation consumes <a href="https://docs.titanbuilder.xyz/propamms/takers#pamm-price-level" target="_blank" rel="noopener noreferrer">Titan Builder's pAMM price level stream</a>: a WebSocket that pushes, once per second, the quote books Titan simulated for the pAMMs it builds blocks with. `PriceLevelStreamBuilder` turns each message into the same `Update` messages the protocol stream emits, so you consume it like any other stream. It covers Ethereum Mainnet only.
 
 ```rust
 use tycho_simulation::price_level_stream::stream::PriceLevelStreamBuilder;
@@ -16,80 +16,11 @@ let price_level_stream = PriceLevelStreamBuilder::new()
     .build();
 ```
 
-`with_tokens` takes the same token metadata the protocol stream uses; load it with `load_all_tokens`, as the [Simulation](simulation.md) page describes. The stream connects on its first poll, re-establishes the connection after a disconnect or a 10 s gap between frames, and never terminates on its own, so run it in its own task alongside your protocol stream. `endpoint()` points it at a closer Titan region than the EU default; without that call it honors the `TITAN_PAMM_PRICE_LEVEL_URL` environment variable.
-
-## Where this can be wrong, and in which direction
-
-Every guardrail below can misfire, and they do not misfire symmetrically. Stated plainly so you can
-judge what a counter means when it moves.
-
-**Too conservative** — the stream withholds a snapshot that would have checked out. You lose one
-chance to verify a leg. Quoting is unaffected. This is **invisible to you**: you simply see no
-snapshot, with no way to tell "Titan sent nothing" from "we declined it".
-
-**Too permissive** — the stream hands you a snapshot that makes your `eth_call` revert or disagree.
-You may read that as Tycho mispricing when it is not. This is **visible**: the node tells you.
-
-Because a wrong snapshot announces itself and a withheld one does not, every guardrail here is
-deliberately set loose rather than tight. The table says where each one sits.
-
-| Guardrail | Errs | Fired in a 13 min recording | What a wrong firing costs you |
-|---|---|---|---|
-| One-slot deadline on a snapshot | conservative | 0 on arrival; worst age seen 3.1 s of 12 | one check, silently |
-| Build stamped ahead of the clock | conservative | **0** of 71,762; Titan's stamps are always ≥103 ms behind | every snapshot, on a host whose clock trails Titan by more than a slot |
-| 128 snapshots per venue and pair | conservative | 0 | one pair's older sequences. An earlier revision set this to 8 and silently discarded 22.7% of all checks |
-| 1,024 venue-and-pair keys | conservative | 0 (peak 48 keys) | one pair's whole history |
-| 32 accounts / 512 storage words per entry | conservative | **0**; max seen 10 and 16 | one whole entry, every pair in it |
-| Whole-entry validation, 10 reasons | conservative | 861 (`no_data` only; the other 9 are 0) | one whole entry |
-| A pair of one token with itself | neither | 0 | nothing; it quotes nothing either way |
-| Lenient `calculated_from` decode | permissive, deliberately | 0 | nothing. It exists so one unreadable reference costs that book its snapshot instead of rejecting the whole message and every venue's ladders with it |
-| The one-slot quote guard | **conservative, and this one is on the quote** | see below | a route, not a check |
-
-**The last row is the only one that can affect a price you trade on**, and it is the one guardrail
-on this page that is *not* about the overrides. `get_amount_out` keeps answering for one slot after
-the message that carried the ladders, counted from Titan's own timestamp rather than from the block.
-Measured, 674 of 769 messages (87.6%) were still inside that window when the stream first reported
-the next block, by a median of 5.6 s. Tycho answers there; whether the chain agrees depends on
-whether the builder refreshed the venue and whether the price moved past your tolerance, and the
-fallback router is what covers you when it does not. Deliberately left loose: refusing to quote at
-the block boundary would drop routes that would have filled.
-
-## Two kinds of simulation
-
-Two different things on this page are called simulation. They fail in different ways, and the rest
-of the page depends on telling them apart.
-
-**Tycho's quote.** `get_amount_out`, `spot_price` and `get_limits` on `PriceLevelStreamState` do
-integer arithmetic over the ladders the stream built from Titan's price levels. There is no node
-call, no RPC and no account state in that path. This is what you route on. It answers whenever the
-state holds ladders for the direction you asked about; the only things that make it refuse are the
-ladder checks and the one-slot quote guard, both counted under
-`price_level_stream_quotes_refused_total{reason}`.
-
-**Your own `eth_call`.** You send the encoded swap to a node with the venue's account state applied
-as a State Override Set. This call can revert, and it can return an amount different from the one
-Tycho quoted.
-
-You want the first to agree with the second without having to make the second call, because node
-calls cost time and money. The simulation overrides are how you check that agreement when you want
-to: they carry the account state Titan priced the venue on, so you can take a quote, run it through
-your own node, and compare. **Use them to check Tycho's answer, not as an input to a route.**
-
-Nothing in the quoting path reads them. A state carrying no snapshot quotes exactly as it would
-with one, and a route over it is neither better nor worse. A missing snapshot costs you one chance
-to check, and nothing else. In a 13 minute recording of both EU sockets on 2026-10-21, 15,397 of
-28,825 books (53.4%) had a snapshot available to check them against.
-
-A snapshot used too late does not hand you a wrong price quietly. The venue's staleness check reads
-the block the call is made in, which the account overrides do not change, so the call reverts.
-Measured on mainnet with one snapshot and one swap: at block 26237959, the block the snapshot was
-taken for, the call succeeded and returned the quoted amount to the wei; at 26237960 and 26237961
-it reverted `StaleUpdate()` (`0x666a2814`). A revert of that kind tells you the snapshot was spent,
-not that the ladders were mispriced.
+`with_tokens` takes the same token metadata the protocol stream uses; load it with `load_all_tokens`, as the [Simulation](simulation.md) page describes. The stream connects on its first poll, re-establishes the connection after a disconnect or a 10 s gap between messages, and never terminates on its own, so run it in its own task alongside your protocol stream. `endpoint()` points it at a closer Titan region than the EU default; without that call it honors the `TITAN_PAMM_PRICE_LEVEL_URL` environment variable. The stream also reads Titan's quote stream by default, to attach [Simulation overrides](#simulation-overrides) to the states it emits; nothing about quoting depends on it.
 
 ## What the stream serves
 
-Every frame carries a flat list of books, one per venue and pair, and the stream emits one component per venue and pair. A component id concatenates the venue address with the pair's two token addresses, sorted ascending, so it survives a venue rename. The `pamm_address` static attribute carries the venue address your encoder sends the swap to.
+Every message carries a flat list of books, one per venue and pair, and the stream emits one component per venue and pair. A component id concatenates the venue address with the pair's two token addresses, sorted ascending, so it survives a venue rename. The `pamm_address` static attribute carries the venue address your encoder sends the swap to.
 
 `with_known_pamms()` registers the nine venues Tycho has measured — `bebop`, `elzorro`, `fermiswap`, `goliath`, `kipseli`, `metric`, `stelaxis`, `taurusfi` and `tempest` — each with its own per-swap gas estimate, and names their components after the venue. Titan quotes neither every venue nor every pair at all times, so the live set is usually smaller.
 
@@ -101,7 +32,7 @@ Every frame carries a flat list of books, one per venue and pair, and the stream
 
 The stream emits components under one of two protocol system families, and that choice decides how tycho-execution executes their swaps:
 
-* **`fallback:{pamm}`** (the default) — tycho-execution routes the swap through `TychoFallbackRouter`, which retries a reverted pAMM swap on the fallback pool your solution names in the swap's `user_data`. A pAMM quote targets the block Titan is building, so a venue reverts a fill against an older ladder; the fallback pool absorbs that case instead of losing the route.
+* **`fallback:{pamm}`** (the default) — tycho-execution routes the swap through `TychoFallbackRouter`, which retries a reverted pAMM swap on the fallback pool your solution names in the swap's `user_data`. A pAMM quote targets the block Titan is building, so a venue reverts a fill against an older price it has not refreshed; the fallback pool absorbs that case instead of losing the route.
 * **`pricelevelstream:{pamm}`** — `without_fallback_router()` keeps every venue on this direct path. The swap then executes on the venue itself, and a stale maker quote reverts the whole route.
 
 `{pamm}` is the venue name for a registered venue and the venue's lowercase hex address for an auto-detected one.
@@ -112,39 +43,41 @@ Distinct component ids do not imply distinct liquidity. A venue the stream serve
 
 ## Freshness contract
 
-Titan's frames are best effort, not complete snapshots: a venue or a pair can drop out of one frame and return in the next — in a 15 minute capture, 7.7% of frames omitted something the surrounding frames carried — so the stream never reads absence as retirement. Instead it serves a component only while an accepted frame carried it within the last `stale_after`, 24 s (two slots) by default.
+Titan's messages are best effort, not complete snapshots: a venue or a pair can drop out of one message and return in the next — in a 15 minute capture, 7.7% of messages omitted something the surrounding messages carried — so the stream never reads absence as retirement. Instead it serves a component only while an accepted message carried it within the last `stale_after`, 24 s (two slots) by default.
 
-### Which frames the stream accepts
+### Which messages the stream accepts
 
-The tracker accepts a frame only if its `ts`
+The tracker accepts a message only if its `ts`
 
 * is younger than `stale_after`,
 * lies no more than one slot ahead of the local wall clock, and
-* is no older than the newest accepted frame's — an equal timestamp passes, because Titan re-emits a frame within one build round,
+* is no older than the newest accepted message's — an equal timestamp passes, because Titan re-emits a message within one pricing round,
 
-and only if its `block` neither falls below the newest accepted block nor exceeds it by more than one block per elapsed slot plus two. A frame that fails any of these changes nothing and increments `price_level_stream_frames_rejected_total` under the matching reason. The beacon `slot` carries no freshness decision, so the tracker judges a frame without one exactly like a frame carrying one.
+and only if its `block` neither falls below the newest accepted block nor exceeds it by more than one block per elapsed slot plus two. A message that fails any of these changes nothing and increments `price_level_stream_frames_rejected_total` under the matching reason. The beacon `slot` carries no freshness decision, so the tracker judges a message without one exactly like a message carrying one.
 
 ### How components turn stale
 
-A component that no accepted frame has carried for `stale_after` turns stale. The stream then lists it in `removed_pairs`, together with every other component that turned stale at the same instant, and the next accepted frame carrying it re-adds it in `new_pairs`. Removal and re-add always arrive as separate updates. Silence, a disconnect, keepalive-only or unparsable traffic, and replayed frames all end in this same removal.
+A component that no accepted message has carried for `stale_after` turns stale. The stream then lists it in `removed_pairs`, together with every other component that turned stale at the same instant, and the next accepted message carrying it re-adds it in `new_pairs`. Removal and re-add always arrive as separate updates. Silence, a disconnect, keepalive-only or unparsable traffic, and replayed messages all end in this same removal.
 
-Recovery runs per component: a frame carrying one pair re-adds that pair and nothing else, and a frame carrying one direction of a pair re-adds the pair with the other direction unquotable. Treat a removal like any other — stop routing through the component until it reappears in `new_pairs`. A stale removal and a retired venue look identical from the outside, by design.
+Recovery runs per component: a message carrying one pair re-adds that pair and nothing else, and a message carrying one direction of a pair re-adds the pair with the other direction unquotable. Treat a removal like any other — stop routing through the component until it reappears in `new_pairs`. A stale removal and a retired venue look identical from the outside, by design.
 
 ### The one-slot quote guard
 
-Every state the stream emits refuses `spot_price`, `get_amount_out` and `get_limits` once its frame's `ts` is one slot (12 s) old, so you cannot quote a ladder past the block it targeted even before the removal arrives. A venue rejects a fill against an older ladder as stale, which makes such a quote unexecutable in any case. The deadline lives on this process's monotonic clock and never crosses serialization, so a replayed recording always quotes.
+Every state the stream emits refuses `spot_price`, `get_amount_out` and `get_limits` once its message's `ts` is one slot (12 s) old, so you cannot quote price levels a slot after Titan built them, even before the removal arrives. The deadline lives on this process's monotonic clock and never crosses serialization, so a replayed recording always quotes.
 
-`without_quote_guard()` emits states that never refuse. Opt out only for a consumer that quotes a state more than one slot after it arrived by design — a batch simulator, a validation harness — and never on a live router: `stale_after` then becomes the only bound on how old a quoted ladder can be, and the venue may no longer fill such a quote.
+`without_quote_guard()` emits states that never refuse. Opt out only for a consumer that quotes a state more than one slot after it arrived by design — a batch simulator, a validation harness — and never on a live router: `stale_after` then becomes the only bound on how old the quoted price levels can be, and the venue may no longer fill such a quote.
+
+The guard is deliberately loose. Between quoting and inclusion the builder usually refreshes a pAMM's state, so a quote for the previous block often still fills, and the fallback router covers the cases where it does not: the price moved past your slippage tolerance, or the builder did not refresh the venue. In a recording on 2026-10-21, 688 of 789 messages (87.2%) were still inside the window when the stream first reported the next block, by a median of 5.3 s.
 
 ### Block numbers and partial updates
 
-Quotes target the block currently being built, so the stream marks every update partial: an update supersedes the previous one for the pairs it contains and says nothing about the pairs it omits. Each update carries the block its frame targets, a removal the newest accepted block. That number never decreases while the stream serves something. Once every component has turned stale, the stream judges the next accepted frame as a first frame, which may carry a lower block — that is how it recovers from a frame with an implausible block, and why you must not order updates by block number across such a gap.
+Quotes target the block currently being built, so the stream marks every update partial: an update supersedes the previous one for the pairs it contains and says nothing about the pairs it omits. Each update carries the block its message targets, a removal the newest accepted block. That number never decreases while the stream serves something. Once every component has turned stale, the stream judges the next accepted message as a first message, which may carry a lower block — that is how it recovers from a message with an implausible block, and why you must not order updates by block number across such a gap.
 
-`stale_after(duration)` overrides the window, up to one hour. Set it shorter than the age frames arrive with and the stream rejects every one of them as `too_old`, which the rejection counter and a WARN log both show.
+`stale_after(duration)` overrides the window, up to one hour. Set it shorter than the age messages arrive with and the stream rejects every one of them as `too_old`, which the rejection counter and a WARN log both show.
 
 ## The V2 message
 
-A frame names its assets by address and prices every level in human units:
+A message names its assets by address and prices every level in human units:
 
 ```json
 {
@@ -159,6 +92,7 @@ A frame names its assets by address and prices every level in human units:
       "token2": "USDC",
       "token1Address": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
       "token2Address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "calculated_from": 284836009221452523116691695,
       "bids": [{ "price": 80970.38, "cumVolume": 0.0005 }],
       "asks": [{ "price": 80997.89405475458, "cumVolume": 0.00012346 }]
     }
@@ -168,13 +102,14 @@ A frame names its assets by address and prices every level in human units:
 
 * `block` — the L1 block the quotes target, the one Titan is building.
 * `slot` — the beacon slot, when Titan reports one.
-* `ts` — when Titan built the frame, in nanoseconds since the Unix epoch. Titan re-emits a frame within one build round under the same `ts`, which makes it a freshness marker rather than an identity.
+* `ts` — when Titan built the message, in nanoseconds since the Unix epoch. Titan re-emits a message within one pricing round under the same `ts`, which makes it a freshness marker rather than an identity.
 * `quoteAddress` — the venue key, which is not necessarily the venue's executable address. See [Venue identity](#venue-identity).
 * `token1Address` and `token2Address` — the pair's base and quote assets. These are the identity the stream resolves.
 * `token1` and `token2` — the same two assets' symbols. Display labels: the stream reads them for its DEBUG logs and nothing else.
 * `price` — `token2` per `token1`, in human units, as the average execution price of the level's whole cumulative size.
 * `cumVolume` — volume cumulated from the top of the book, in whole `token1`. It never decreases down a side, and consecutive levels can repeat a value.
 * `maker` — Titan's display label for the venue, which the stream sometimes leaves empty. Nothing reads it; identity rests on `quoteAddress` alone.
+* `calculated_from` — the quote sequence Titan priced the book at, which matches it to the quote stream's account state (see [Simulation overrides](#simulation-overrides)). The stream reads it leniently: a value it cannot read costs the book its overrides, never its quotes.
 
 Ask prices sit above bid prices, and either side can arrive empty when the venue quotes one direction of the pair only. The parser ignores every other field the stream carries.
 
@@ -214,7 +149,7 @@ Component ids, venue names, gas costs, denials and the `pamm_address` attribute 
 
 ## Conversion semantics
 
-A book prices its pair in human units while the states serve integer ladders, so the conversion applies the resolved tokens' decimals. The stream reads `price` as the average execution price of the level's cumulative size, in `token2` per `token1`, and `cumVolume` as whole `token1`. The bids therefore sell `token1` and the asks sell `token2`:
+A book prices its pair in human units while the states serve integer amounts, so the conversion applies the resolved tokens' decimals. The stream reads `price` as the average execution price of the level's cumulative size, in `token2` per `token1`, and `cumVolume` as whole `token1`. The bids therefore sell `token1` and the asks sell `token2`:
 
 ```text
 bids (token1 -> token2):
@@ -228,11 +163,11 @@ asks (token2 -> token1):
 
 Each level becomes one absolute quote: `amount_in` for a total `amount_out` that already contains every smaller level's liquidity. A state interpolates linearly between its knots, mirroring how Titan densifies its own simulated levels, and holds no information outside the quoted range: it rejects an input below the smallest level outright, and answers an input above the deepest level with a partial result at that level, as other level-based protocols do. `get_limits` reports the deepest level of the direction you ask about. The two sides convert independently, so a rejected side never costs the other one.
 
-**Precision.** Titan quantizes both `price` and `cumVolume` to `f64` before sending them, so the ladders carry Titan's own precision and nothing tighter. The conversion rounds every amount to the nearest base unit and keeps amounts beyond `u64::MAX` exact — an 18-decimal ladder passes that bound at about 18.5 tokens — but it promises no atomic-unit parity with whatever the venue computes internally.
+**Precision.** Titan quantizes both `price` and `cumVolume` to `f64` before sending them, so the converted amounts carry Titan's own precision and nothing tighter. The conversion rounds every amount to the nearest base unit and keeps amounts beyond `u64::MAX` exact — an 18-decimal token passes that bound at about 18.5 tokens — but it promises no atomic-unit parity with whatever the venue computes internally.
 
 ### Rejected sides
 
-When a side's levels do not state a usable price function, the stream drops that whole side instead of the offending level: the ladder interpolates between its knots, so dropping one level would turn a broken price function into a plausible invented one. Four cases reject a side, and `price_level_stream_rejected_sides_total` counts each one:
+When a side's levels do not state a usable price function, the stream drops that whole side instead of the offending level: the state interpolates between levels, so dropping one level would turn a broken price function into a plausible invented one. Four cases reject a side, and `price_level_stream_rejected_sides_total` counts each one:
 
 | `reason`            | Cause                                                                                                                                                      |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -243,26 +178,42 @@ When a side's levels do not state a usable price function, the stream drops that
 
 A rejection costs one trade direction only: the opposite side of the same book keeps serving, exactly as it does when the venue quotes one side empty. Levels that repeat a knot and agree on its price conflict with nothing — Titan does repeat a cumulative volume across consecutive levels.
 
-One corrupt shape slips past all four: a side whose `amount_in` strictly increases while its cumulative `amount_out` falls converts cleanly, so the state refuses it when you quote it instead. `get_amount_out` then returns a `RecoverableError` reporting that the quote ladder `is not monotonically increasing in amount_out` around the amount you asked for. That refusal fires only when the two levels enclosing your amount fall, so the rest of the ladder keeps quoting until the next frame replaces it.
+One corrupt shape slips past all four: a side whose `amount_in` strictly increases while its cumulative `amount_out` falls converts cleanly, so the state refuses it when you quote it instead. `get_amount_out` then returns a `RecoverableError` reporting that the quotes are `not monotonically increasing in amount_out` around the amount you asked for. That refusal fires only when the two levels enclosing your amount fall, so the rest of the side keeps quoting until the next message replaces it.
 
 ## Simulation overrides
 
-A pAMM ladder prices the block Titan is building, so an `eth_call` against mined state simulates a venue Titan never quoted: the venue rejects the fill as stale, or your route pays a fallback price. Titan therefore serves a second WebSocket, `pamm_quote_stream_v2`, carrying the account state it simulated each venue on to produce that venue's ladders. The stream reads that socket by default, holds every snapshot it accepts until its build's slot runs out, and attaches one to each state whose books name the exact build it belongs to. `simulation_overrides()` hands you what a state carries:
+A pAMM quote prices the block Titan is building. If you simulate a pAMM swap with `eth_call` on mined state, you simulate a venue state Titan never priced: the venue rejects the swap as stale, or a wrapper pays a fallback price. Titan publishes the account state it simulated each venue on over a second WebSocket, `pamm_quote_stream_v2`. The stream reads it by default and attaches to each state the part that belongs to its quotes, which `simulation_overrides()` returns:
 
 ```rust
 let Some(overrides) = state.simulation_overrides() else {
-    // The ladders quote as they always do; nothing here says what Titan simulated the venue on.
+    // The state quotes as it always does; you have no account state to simulate it on.
     return;
 };
 ```
 
-Quoting never reads that field: `spot_price`, `get_amount_out` and `get_limits` answer off the ladders alone. A quote stream that refuses the connection, falls silent, or sends a payload this parser declines therefore costs the states their snapshot and nothing else — it removes no component, changes no quote, and delays no update.
+### Two kinds of simulation
 
-**A stamp carries Titan's claim, not a fact this stream establishes.** One book says the venue priced its ladders at one version of its pair; one venue entry says one snapshot is the state it priced that version on. That both statements describe a single simulation is an assumption about the producer, and neither message lets this code check it. Tycho validates that assumption at the release gate, by re-simulating stamped states and holding the result against the ladders they arrived with.
+Two different things on this page go by the name simulation, and they fail in different ways.
 
-### The sequence contract
+**Tycho's quote.** `get_amount_out`, `spot_price` and `get_limits` on `PriceLevelStreamState` do integer arithmetic over the quotes the stream built from Titan's price levels. That path makes no node call and reads no account state, and it is what you route on. It refuses only for the reasons `price_level_stream_quotes_refused_total{reason}` lists.
 
-A book names the version behind its ladders in `calculated_from`. A venue entry of the quote stream advertises `pairSequences`, one sequence per entry of `assetPairs`:
+**Your own `eth_call`.** You send the encoded swap to a node with the venue's account state applied as state overrides. This call can revert, and it can return an amount different from the one Tycho quoted.
+
+The simulation overrides let you run the second to check the first. **Use them to check Tycho's answer, not as an input to a route:** nothing in the quoting path reads them, and a state without overrides quotes exactly as one with them.
+
+### How a state gets its overrides
+
+Every book names, in `calculated_from`, the quote sequence Titan priced it at. Every venue entry of the quote stream lists, in `pairSequences`, the quote sequence its account state carries for each pair in `assetPairs`. Titan does not publish an entry for every quote sequence, and its books arrive about a second after its entries, so most books name a quote sequence that no entry carries.
+
+The stream therefore gives a state the newest entry of the book's venue and pair, from the book's beacon slot, whose quote sequence is at or below the book's: the latest account state Titan published before it priced the book.
+
+* **The venue and the pair both have to match.** Titan prices a batch of pairs at once and gives them all one quote sequence, so the stream never takes an entry that another pair or another venue carries, however closely its quote sequence fits.
+* **The slot has to match.** A quote sequence carries its beacon slot in its high 64 bits, so the stream never gives a state an entry from another slot. Titan does not document that encoding; `price_level_stream_sequence_slot_mismatch_total` watches it.
+* **Some venues read more than one quote address.** An entry's `pricedAddresses` lists every venue whose swaps read its state. The stream stores each entry under those venues too, and merges their entries into the venue's own entry, which wins wherever both set a value. Metric's router reads two quote addresses today, and some Metric swaps revert without the second one's state.
+* **Of two entries with one quote sequence, the later-built one wins**, by `timestamp` rather than by arrival order. When Titan sends one entry twice, the stream keeps the copy it already holds: the second copy has always carried a subset of the first one's state.
+* **The pair's orientation does not matter,** and both sockets normalize a venue's address through the alias table of [Venue identity](#venue-identity), so Kipseli's and Metric's entries reach the states served under their public identity.
+
+The quote stream message has this shape, abridged from a capture:
 
 ```json
 {
@@ -270,6 +221,7 @@ A book names the version behind its ladders in `calculated_from`. A venue entry 
     {
       "maker": "TaurusFi",
       "quoteAddress": "0x3ce2672aa806138585920421406bf0decb8130cb",
+      "pricedAddresses": ["0x3ce2672aa806138585920421406bf0decb8130cb"],
       "blockNumber": 26148760,
       "slot": 15387623,
       "timestamp": 1791475494775213874,
@@ -294,136 +246,106 @@ A book names the version behind its ladders in `calculated_from`. A venue entry 
 }
 ```
 
-That example abridges the captured entry, which carries two pairs and three accounts, plus a `pricedAddresses` list the parser ignores as it ignores every other field either message adds.
+Quote sequences run past `u64::MAX`, so the stream reads them as `u128`.
 
-The join runs on the **full identity** — the venue, the pair, and the sequence — and matches exactly:
+### Using the overrides in `eth_call`
 
-* **A sequence alone identifies nothing.** Titan stamps a batch of pairs with one sequence: one captured entry repeats a single sequence across all eight pairs it advertises. Sequences also run past `u64::MAX` — the capture's sit near 2.8 · 10²⁶ — so the stream reads them as `u128`.
-* **Membership in a venue's entry is no match either.** The same capture holds a Fermi book whose reference that very Fermi entry advertises — for WBTC/USDT and cbBTC/USDT, while the entry's own WETH/USDC pair carries a different sequence. That book stays unstamped. The stream never substitutes a neighboring pair's snapshot, however close the two look.
-* **Orientation does not matter.** The key sorts the pair's two addresses, so a book quoting `token1`/`token2` the other way round still finds the entry's pair.
-* **Venue identity resolves the same way on both sockets.** Each socket names a venue by the address Titan streams it under, and the stream normalizes both through the alias table of [Venue identity](#venue-identity) — so Kipseli's snapshot reaches the ladders Kipseli serves under its public identity.
-* **Build time orders two snapshots of one version, not arrival time.** An entry's `timestamp` is the nanosecond Titan built it. A newer build of a pair version replaces the one the stream holds; an older one changes nothing. Titan re-stamps a pair several times a slot, and the two sockets deliver independently, so the receive order decides nothing here.
+`PammSimulationOverrides`, in `tycho_simulation::price_level_stream::overrides`, carries plain data:
 
-### Reading the embedded overrides
+| field             | what it holds                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts`        | the overridden accounts, keyed by address. Each carries `balance` (Titan's hex quantity as minimal big-endian bytes), `nonce`, and `state_diff` — 32-byte storage slot to 32-byte word. |
+| `block_number`    | the block Titan was building when it took this state.                                                                                                               |
+| `block_timestamp` | the Unix second of that block, from the entry's beacon slot (`1606824023 + 12 · slot`). `None` when the entry named no slot.                                         |
+| `built_at_ns`     | the nanosecond Titan took this state.                                                                                                                               |
+| `expires_at`      | one slot after `built_at_ns`, in Unix seconds. Information only: nothing in Tycho acts on it.                                                                       |
 
-`PammSimulationOverrides`, in `tycho_simulation::price_level_stream::overrides`, carries plain data, shaped for an `eth_call`-style state override:
+An absent field means Titan's simulation read the chain's value, never that the value is zero: `state_diff` is a diff, not a full storage image. The stream refuses a whole entry that carries `code` or a full-storage `state`, rather than dropping the field.
 
-| field             | what it holds                                                                                                                                                                                |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accounts`        | the overridden accounts, keyed by address. Each carries `balance` (Titan's hex quantity as minimal big-endian bytes), `nonce`, and `state_diff` — 32-byte storage slot to 32-byte word.    |
-| `block_number`    | the L1 block to simulate the snapshot on, when the entry named one.                                                                                                                          |
-| `block_timestamp` | the Unix second to date that block at, which comes from the entry's beacon slot and from nothing else. `None` when the entry named no plausible slot: a simulation then dates the block itself. |
-| `built_at_ns`     | the nanosecond Titan built the entry. It orders two snapshots of one pair version by source recency.                                                                                          |
-| `expires_at`      | the Unix second from which the snapshot no longer describes anything live. See [Expiry](#expiry).                                                                                             |
+Pass `accounts` as the State Override Set — the third `eth_call` parameter, or `stateOverrides` in `eth_simulateV1` — merged into whatever overrides you already build: the overrides describe the venue, not your sender's balance or allowance. Call on the latest mined block, and pass `block_number` and `block_timestamp` as block overrides, the fourth parameter. Venues compare the block's timestamp with the price they stored, so a call that keeps the mined block's context reverts even with the right storage.
 
-An absent field means Titan's simulation read the chain's value, never that the value is zero: `state_diff` is a diff rather than a full storage image, and an account that overrode only storage carries neither a balance nor a nonce. `code` and a whole-storage `state` replacement never appear — the validation declines an entry carrying either, whole, instead of quietly dropping the field.
+A route across several pAMM legs needs each leg's overrides, merged into one State Override Set.
 
-Pass `accounts` as the geth State Override Set (`eth_call` param 3, or `eth_simulateV1`'s `stateOverrides`) and `block_number` with `block_timestamp` as `BlockOverrides` (param 4). Merge `accounts` into whatever overrides you already build rather than replacing them: a snapshot describes the venue, and it says nothing about your own sender balance and allowance.
+### What a successful simulation tells you
 
-The block timestamp matters as much as the storage does: a pAMM reads the block time in its own staleness check, so a call that applies the storage overrides and keeps the mined timestamp can still revert. Param 4 changes the EVM context only, not the state param 2 selects, so do not pass `block_number` as a base-state selector — simulate promptly against latest instead. Do read it, though: it says which block the snapshot describes, and that is the check that matters. See [Expiry](#expiry).
+With those block overrides, the venue's freshness check passes however old the overrides are. A successful call therefore tells you the quote can execute **if** the venue's state is current at that price when your transaction lands, not that it will. Between quoting and inclusion the builder usually refreshes a pAMM's state, so a quote for the previous block often still fills. It fails on chain in two cases — the price moved past your slippage tolerance, or the builder did not refresh the venue or does not support pAMMs — and the fallback router covers both (see [Component families and execution](#component-families-and-execution)).
 
-### Expiry
+For the same reason the stream never invalidates a quote because of its overrides: a state quotes for as long as its price levels are valid, as [The one-slot quote guard](#the-one-slot-quote-guard) describes. If you want to know how old the overrides are, compare `block_number` with the block you simulate for.
 
-**Check `block_number` first.** A snapshot describes the state Titan simulated one block on, so it describes nothing once that block is built. The stream stops attaching a snapshot the moment it quotes a later block, and a client holding a quote should make the same check: if the chain has moved past `block_number`, the snapshot is spent, whatever `expires_at` says. This is the bound you cannot rediscover by testing — writing the snapshot's storage satisfies the venue's freshness guard whatever the snapshot's age, so a stale simulation succeeds cleanly and returns a price the venue would not fill.
+### When a state carries no overrides
 
-`expires_at` is the weaker backstop, and is **off-chain guidance only**, in Unix seconds: the earlier of two deadlines — the Unix second the state's own ladders stop quoting at, and the second the snapshot's own lifetime ends, one slot after Titan built it. Simulate before it.
+`price_level_stream_override_match_total{venue, outcome}` counts every served pair under one outcome:
 
-Nothing about it claims on-chain validity. A call that overrides the block timestamp can succeed long after `expires_at`, and such a success says nothing about what the venue would fill — the deadline tells you when to stop trusting the result, and makes staleness diagnosable. The narrowing lands on the copy the state carries; the snapshot the stream still holds for other pairs of the same entry keeps its own, unnarrowed deadline.
+| `outcome`           | What happened                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `same_sequence`     | The state carries the venue's entry at the book's own quote sequence.                                                                 |
+| `earlier_sequence`  | The state carries the venue's newest entry for the pair at an earlier quote sequence of the same slot.                                |
+| `none_in_slot`      | The venue had no entry for the pair in the book's slot at or below its quote sequence, so the state carries no overrides.            |
+| `no_quote_sequence` | The book named no quote sequence, or one the parser cannot read, so the stream looked nothing up.                                     |
 
-`without_quote_guard()` does not widen the field. A state that keeps quoting past its ladder deadline still reports the second its ladders went stale, so a consumer quoting late by design can still see how old the pre-state under its simulation is.
+A state without overrides does not mean its swap needs none: it means you cannot simulate that leg on Titan's account state, and simulating it on mined state can still revert. Three other counters say why the stream held no usable entry:
 
-**The snapshot half of that deadline is a fact about the build, not about when the stream admitted it.** It is one slot after Titan's own build stamp, floored, and therefore never later than the instant the stream stops serving the build. Two consequences worth relying on: the same build re-sent by Titan reports the same second however late the repeat arrives, including across a removal and a re-admission; and the second never moves later than the first one reported for that build. Both hold under the clock model the stream supports — a wall clock and a monotonic clock that advance together, neither stepping backwards. A host whose wall clock is stepped backwards between two messages is outside it, and no deadline is promised across such a step.
+* `price_level_stream_refused_override_entries_total{reason}` — the stream refused a venue entry whole, so the pairs it carried got nothing from it.
+* `price_level_stream_override_buffer_total{event}` — what the stream did with each entry it stored, including the ones it dropped.
+* `price_level_stream_unreadable_quote_sequence_total` — books whose `calculated_from` the parser cannot read.
 
-### When a state carries no snapshot
+The stream only stores entries for venues it serves. The stream starts serving an auto-detected venue with its first book, so that venue's first message gets no overrides.
 
-A pair the stream serves either carries a snapshot or arrives unstamped, and `price_level_stream_override_match_total{outcome}` names which case it fell into:
+### Limits
 
-| `outcome`   | What happened                                                                                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `matched`   | The state carries the snapshot of the exact build its books named.                                                                                                 |
-| `missing`   | The stream holds no snapshot for that venue, that pair and that sequence — the entry never arrived, never named this pair, or validation refused it.                |
-| `expired`   | The stream held a build of that version and no longer serves it: its slot of lifetime passed, or what it held was removed while the build was still barred from re-admission ([Bounds and limits](#bounds-and-limits)). |
-| `unreferenced` | The pair's book named no sequence, so no lookup was made. Counted so that the sum over this label equals the pairs served: a producer that stopped sending `calculated_from` would otherwise show only as this series going quiet. |
+* **Per entry.** The stream refuses an entry with more than 32 accounts or 512 storage words (`over_cap`), and one whose storage slots or words are not 32 bytes (`malformed_storage`).
+* **Across entries.** The stream keeps the entries from the beacon slot of the latest price level message and from one slot either side, and drops the rest whenever that slot moves on. It reads no clock to decide this. It holds at most 100,000 entries: past that it stores nothing new until the slot moves, and counts `buffer_full`.
+* **Decoding.** The stream decodes each venue entry on its own, so an entry it cannot read costs that entry alone (`undecodable`), not the rest of the message.
 
-One further case produces no outcome at all, because it reaches no lookup: a book whose `calculated_from` the parser cannot read, and a book that names none, both leave nothing to look up. `price_level_stream_invalid_provenance_total` counts the unreadable case alone, so a parse regression cannot hide inside the ordinary rate of books that reference nothing. `without_simulation_overrides()` looks nothing up either — with no second socket the match-outcome, buffer and refusal series do not exist at all, while `price_level_stream_invalid_provenance_total` remains, because provenance is read off the price-level socket whether or not anything stamps.
+### Measured on 2026-10-21
 
-A refused venue entry and a dropped build get no outcome of their own: both arrive as `missing`, because the price level side still looks the build up and simply finds none. Validation declines a whole entry that contradicts the documented shape — a malformed identity, a quantity that does not decode, an entry carrying no build stamp, no pair or no account, `pairSequences` and `assetPairs` of unequal length, `code` or whole-storage `state`, or a payload past the per-entry caps — and `price_level_stream_refused_override_entries_total{reason}` names which; every pair that entry carried then goes unstamped for the rest of its build. The buffer's own retention rules ([Bounds and limits](#bounds-and-limits)) drop or refuse a build the same way. Read both of those counters beside the match outcomes rather than instead of them: they name the cause a `missing` does not.
+A 13 minute recording of both EU sockets — 795 price level messages, 8,022 quote stream messages, 29,772 books and 77,377 venue entries — showed:
 
-**Two honest contracts.** A state without a snapshot does not mean your simulation needs none: absence means the join found nothing usable, and simulating that leg against mined state can still revert or pay the fallback price. A state with a snapshot does not cover a whole route either: each state carries the snapshot of its own venue and pair alone, so a route across several pAMM legs reaches only as far as its weakest leg, and merging snapshots that target different builds remains a best-effort decision you make rather than a guarantee the stream hands you.
+* 56.9% of books found their venue's entry at their own quote sequence, and 99.7% at their own or an earlier one of the same slot.
+* Every entry arrived before the book that named it: 0.83 s earlier at the median, 3.8 s at most.
+* No quote sequence appeared in two blocks, and every quote sequence carried its message's slot.
+* Titan sent 268 entries a second time with fewer accounts and slots and the same values.
+* 1.2% of entries carried only a quote address and a timestamp, which the stream refuses as `empty`: about one a second.
+* Replaying the recording through these rules, with every streamed venue served, the stream would have held at most 11,655 entries at once.
 
-### Bounds and limits
-
-Per venue entry, validation declines the whole entry under `over_cap` past 32 accounts or 512 storage words. A slot or word that is not a 32-byte EVM word is declined separately, under `malformed_storage`, so the two caps bound what one entry can make the process retain and the width check bounds its shape. The widest entry of either committed capture fixture overrode 9 accounts with 16 storage words.
-
-The stream bounds what it retains between the two sockets, because Titan rather than a consumer decides that: **128 snapshots per venue and pair** and 1,024 venue-and-pair keys. Both are memory ceilings sized so that they do not bind — a key receives about 9.35 new sequences a second and so holds roughly 112 live snapshots, measured 2026-10-21, and the recording never came within 21× of the key cap. Past a bound the stream drops the oldest snapshot of that pair, or the key whose traffic it saw longest ago, and counts `evicted_entry` or `evicted_key`. **Those two counters should sit near zero.** If they move, Titan's rate has risen past what these numbers were sized for and a consumer is losing snapshots it could have checked against.
-
-**A build's lifetime is fixed once, and a removal does not reset it.** A snapshot is served until one slot has passed since Titan's build stamp. That deadline is a function of the stamp alone, not of when the stream admitted the build, so every admission of one build computes the same instant: Titan re-sending an envelope the stream already holds changes nothing, including its deadline, and a build the stream has dropped under pressure is re-admitted on exactly the deadline it always had. The stream therefore keeps no record of what it has forgotten. A build stamped more than a second ahead of the admitting clock is refused outright, under `rejected_future_skew` — Titan's stamps were observed at least 120 ms *behind* the local clock, so a stamp ahead of it is this host's clock trailing, and the allowance bounds how much lifetime such a stamp can add.
-
-**The block bound is the one that usually ends a snapshot's usefulness, well before the deadline does.** Titan repeats a quiet venue's unchanged ladder, under the same sequence, for minutes. The join keeps matching for as long as the buffer holds the entry, so the deadline alone would keep attaching a snapshot of a block that has already been built. The stream compares the snapshot's `blockNumber` against the block it is quoting and attaches nothing once the chain has moved on, which no clock can get wrong.
-
-### Coverage, as one capture measured it
-
-In a 45 s capture of both EU sockets on 2026-10-16, **784 of 1,316 books (59.6%)** had a prior exact-pair match, counted after a 5 s warmup; across the whole capture, warmup included, it is 875 of 1,489 (58.8%). Every book resolved, because Titan now names both assets by address. Of the rest, 58 had a prior hit at their venue under the *wrong* pair — all of them Fermi — and 474 had no prior venue-and-sequence hit at all. For the books that did match, the snapshot arrived a median 1,011 ms and at most 2.213 s before its ladders.
-
-Read those as finite-capture observations, not as steady-state guarantees, and not as a predicted rate of overrides on your routes — they count raw match opportunities, before the caps, and before anything admission refuses, which includes a future-skewed build, a saturated key and an exhausted buffer. An unmatched reference means Titan did not publish that snapshot during this capture, and nothing more. Lower coverage is truthful best effort: it is never a licence to stamp a snapshot from a different pair.
+On mainnet, simulated the way a client does — on the parent block, with the quoted block's number and timestamp — every leg reproduced its quoted amount within 1 bps: one leg for each of 9 venues in the live test (Metric's with both of its quote addresses merged), and 10 of 10 legs in a separate run whose overrides came from an earlier quote sequence. Without overrides, every one of them reverted. These simulations applied the storage part of the overrides only. Read all of this as one day's observations, not as guarantees.
 
 ### Turning it off, and pointing it elsewhere
 
-`without_simulation_overrides()` connects no second socket: every state then arrives unstamped, the stream holds no snapshot, and the match-outcome, buffer and refusal series do not exist at all — `price_level_stream_invalid_provenance_total` is the one that remains, because provenance is read off the price-level socket whether or not anything stamps. Use it for a consumer that only quotes the ladders — it spares the connection and the memory the unmatched snapshots occupy.
+`without_simulation_overrides()` connects no second socket: every state then arrives without overrides, the stream stores nothing, and the overrides series do not exist. Use it for a consumer that never simulates a swap with `eth_call`.
 
-`override_endpoint(url)` names the quote stream socket, exactly as `endpoint` names the price level one; without it the stream honors the `TITAN_PAMM_QUOTE_STREAM_URL` environment variable, else the EU default. Name both endpoints when you move region: the two sockets of one region describe one build round, and nobody has established whether one region's snapshot joins another region's ladders.
+`override_endpoint(url)` names the quote stream socket, as `endpoint` names the price level one; without it the stream honors the `TITAN_PAMM_QUOTE_STREAM_URL` environment variable, else the EU default. Name both endpoints when you move region: the two sockets of one region describe one pricing round, and nobody has tested whether one region's quote stream matches another region's price levels.
 
 ## Metrics
 
-The stream emits `price_level_stream_*` metrics through the `metrics` facade; a consumer that installs a `metrics` recorder receives them with no further setup, and without a recorder every call does nothing. The `venue` label carries the registered venue name, or the address of an auto-detected venue — the one exception to the rule that no label ever carries a value from the stream. A token address never becomes a label, and neither does a component id, a pair version or a token symbol; the DEBUG log accompanying the counter names those instead. The `socket` label names one of the two Titan sockets, `price_levels` or `quote_stream`, and never anything else.
+The stream emits `price_level_stream_*` metrics through the `metrics` facade; a consumer that installs a `metrics` recorder receives them with no further setup, and without a recorder every call does nothing. The `venue` label carries the registered venue name, or the address of an auto-detected venue — the one exception to the rule that no label ever carries a value from the stream. A streamed token address or symbol, a component id and a quote sequence never become labels; the DEBUG log accompanying the counter names them instead. Per-venue series start at zero for every registered venue, and every `reason` of the two book counters starts at zero, so a reason that never fires reads as a visible zero rather than a missing series.
 
-Per-venue series start at zero for every registered venue, and every `reason` of the two book counters starts at zero, so a reason that never fires reads as a visible zero rather than a missing series. The same holds for the override path and for the `quote_stream` socket while stamping stays on — `price_level_stream_invalid_provenance_total` alone starts at zero either way: 19 socket series exist then, against 12 with `without_simulation_overrides()`, which connects no second socket. The five rejection reasons `quote_stream` cannot carry stay deliberately unregistered, so a series that exists is one something can move.
-
-**The `socket` label changes the identity of two already-released series.** `price_level_stream_frames_rejected_total` and `price_level_stream_reconnects_total` carried `reason` alone before this release. On deploy each old series goes stale and a labelled one starts from zero — harmless for `rate` and `increase`, and indistinguishable from a restart, but any recording rule, alert or `sum without(...)` keyed on the exact label set sees both the stale and the new series for the length of your staleness window.
-
-* `price_level_stream_frames_accepted_total` — one increment per frame the tracker accepts. Titan pushes one frame per second, so a rate much below that points at delivery gaps, or at the rejections the next counter breaks down.
-* `price_level_stream_frames_rejected_total{socket, reason}` — one increment per frame the stream drops, under `parse_error`, `too_old`, `in_future`, `out_of_order`, `block_regression` or `block_jump`. A steady rate on any reason means the upstream, the local clock, or your `stale_after` disagrees with the freshness contract. Only `parse_error` ever carries `socket = quote_stream`; every other reason is a freshness check of a price level frame.
-* `price_level_stream_frame_age_seconds` — a histogram of every accepted frame's age at acceptance: the local wall clock minus the frame's `ts`, negative for a frame stamped ahead of the local clock. It measures Titan's lag plus delivery delay plus clock skew; above one slot, that frame's states refuse to quote.
-* `price_level_stream_last_seen_timestamp_seconds{venue}` — the `ts` of the newest accepted frame that carried the venue, in seconds since the Unix epoch; 0 until the first such frame. A value that stops advancing means the venue went quiet.
+* `price_level_stream_frames_accepted_total` — one increment per message the tracker accepts. Titan pushes one message per second, so a rate much below that points at delivery gaps, or at the rejections the next counter breaks down.
+* `price_level_stream_frames_rejected_total{socket, reason}` — one increment per message the stream drops, under `parse_error`, `too_old`, `in_future`, `out_of_order`, `block_regression` or `block_jump`. A steady rate on any reason means the upstream, the local clock, or your `stale_after` disagrees with the freshness contract. Only `parse_error` ever counts on `socket="quote_stream"`; the other reasons check price level messages.
+* `price_level_stream_frame_age_seconds` — a histogram of every accepted message's age at acceptance: the local wall clock minus the message's `ts`, negative for a message stamped ahead of the local clock. It measures Titan's lag plus delivery delay plus clock skew; above one slot, that message's states refuse to quote.
+* `price_level_stream_last_seen_timestamp_seconds{venue}` — the `ts` of the newest accepted message that carried the venue, in seconds since the Unix epoch; 0 until the first such message. A value that stops advancing means the venue went quiet.
 * `price_level_stream_served_components{venue}` — how many components the stream currently serves for the venue. A drop to zero means every pair of that venue turned stale.
 * `price_level_stream_stale_removals_total{venue}` — one increment per component the stream removes at its stale deadline. A burst across every venue at once points at the connection rather than at the venues.
 * `price_level_stream_serving_state` — 0 while the stream serves nothing, 1 while it serves at least one component.
-* `price_level_stream_reconnects_total{socket, reason}` — one increment per Titan connection the stream gives up on, or fails to establish, before it backs off: `idle_timeout`, `ended`, `closed`, `read_error`, `connect_failed` or `connect_timeout`, each on `price_levels` or `quote_stream`. A `quote_stream` socket that keeps dropping is a stamping outage where the same on `price_levels` is a quoting outage, and only the label separates the two.
-* `price_level_stream_unregistered_pamm_entries_total` — one increment per venue and frame that the stream passes over because neither a registration nor auto-detection covers that venue, however many books the frame carried for it. A steady rate means Titan streams liquidity your configuration leaves on the table.
+* `price_level_stream_reconnects_total{socket, reason}` — one increment per Titan connection the stream gives up on, or fails to establish, before it backs off: `idle_timeout`, `ended`, `closed`, `read_error`, `connect_failed` or `connect_timeout`, on `socket="price_levels"` or `socket="quote_stream"`. A quote stream that keeps dropping costs states their overrides; a price level socket that keeps dropping costs quotes.
+* `price_level_stream_unregistered_pamm_entries_total` — one increment per venue and message that the stream passes over because neither a registration nor auto-detection covers that venue, however many books the message carried for it. A steady rate means Titan streams liquidity your configuration leaves on the table.
 * `price_level_stream_skipped_books_total{reason}` — one increment per book the stream leaves unpriced, under `unadmitted_token`, `malformed_address` or `one_asset_pair`. A steady rate means an asset a venue quotes goes unserved; admit it to serve it.
 * `price_level_stream_rejected_sides_total{reason}` — one increment per book side the stream drops whole, under `unsupported_level`, `non_finite_amount`, `zero_amount` or `conflicting_knots`. Each increment leaves one trade direction unquotable while the opposite one keeps serving.
 
-The four counters below cover the override path. Three move only while stamping stays on; `price_level_stream_invalid_provenance_total` moves either way, because a book's reference is read off the price-level socket whether or not anything stamps:
+* `price_level_stream_quotes_refused_total{reason}` — one increment per call to `spot_price`, `get_amount_out` or `get_limits` that a state refused, before any node call: `ladders_expired`, `not_monotonic`, `unknown_pair`, `no_liquidity`, `below_smallest_quote` or `spot_price_unrepresentable`. It counts calls, so its rate follows how often your router asks. Watch `ladders_expired`: a consumer that quotes promptly should almost never see it.
+* `price_level_stream_duplicate_books_total` — one increment per message carrying two books for one venue and pair, where the stream serves the last one. Never observed; it exists because the replacement changes a served price without a trace.
 
-* `price_level_stream_override_match_total{outcome}` — one increment per served pair the stream joined to the snapshots it holds for that venue, under `matched`, `missing`, `expired` or `unreferenced`. The sum over the label equals the pairs served.
-* `price_level_stream_override_buffer_total{event}` — one increment per decision of one ingest: `admitted`, `restamped`, `replayed`, `older_build`, `reissued_with_different_accounts`, `rejected_future_skew`, `rejected_expired`, `degenerate_pair`, `evicted_entry`, `evicted_key` or `swept_expired`. These are retention events, not lookup misses. **The buffer holds snapshots for venues this consumer does not serve** — 21.2% of entries on 2026-10-21 — so never divide `admitted` by `override_match_total`; `price_level_stream_unserved_venue_entries_total` sizes the difference.
-* `price_level_stream_quotes_refused_total{reason}` — one increment per quote **Tycho itself**
-  refused, before any node call: `ladders_expired`, `not_monotonic`, `unknown_pair`,
-  `no_liquidity`, `below_smallest_quote`, `spot_price_unrepresentable`. `ladders_expired` is the
-  one that matters: it is the only guard between you and a price built for a block that has since
-  been built. A consumer that quotes promptly should almost never see it.
-* `price_level_stream_sequence_slot_mismatch_total` — a book whose sequence does not carry the
-  message's beacon slot in its high 64 bits. **This watches an assumption, not a fault.** That
-  encoding is why the stream does not compare the block a snapshot was simulated for against the
-  block being quoted: the two cannot disagree. It held for 28,825 of 28,825 books on 2026-10-21. If
-  this moves, that reasoning is void.
-* `price_level_stream_override_entry_missing_field_total{field}` — an accepted entry omitting
-  `block_number` or `slot`, each of which you need in order to check a quote. Titan sent both on
-  all 71,762 entries measured.
-* `price_level_stream_duplicate_books_total` — a message carrying two books for one venue and pair,
-  where the last one's ladders win. Never observed in 774 messages, counted because the replacement
-  changes a served price silently.
-* `price_level_stream_override_entry_storage_slots` — a histogram of the storage words one accepted
-  entry overrode, so growth toward the per-entry cap is visible before the cap refuses anything.
-  p50 6, p99 16, max 16 on 2026-10-21, against a cap of 512.
+These series exist only while simulation overrides are on, except `price_level_stream_unreadable_quote_sequence_total` and the `price_levels` series of `price_level_stream_sequence_slot_mismatch_total`, which the stream reads off the price level socket either way:
 
-**One baseline you must know before alerting on refusals.**
-`price_level_stream_refused_override_entries_total{reason="no_data"}` runs at about **1.1 per
-second, permanently**: Titan sends roughly 1.2% of its venue entries carrying a `quoteAddress` and
-a `timestamp` and nothing else, spread across every venue. Those are placeholders, not faults, and
-the stream declines them whole. An alert on the unlabelled total therefore fires forever, and a
-genuine fault at 0.1/s would hide inside that floor. **Exclude `reason="no_data"` from any alert on
-this series**, and alert on a 10× move in the `no_data` rate separately — that would be a change in
-the producer.
-* `price_level_stream_refused_override_entries_total{reason}` — one increment per venue entry the validation declined whole, before any retention rule applied: `not_a_venue`, `not_an_account`, `malformed_pair`, `malformed_storage`, `malformed_quantity`, `unstamped`, `sequence_mismatch`, `no_data`, `unsupported_override` or `over_cap`. A steady rate means the producer sends something this parser does not accept, where a buffer event above means this process's own retention rule did its work.
-* `price_level_stream_invalid_provenance_total` — one increment per **served** book whose version reference the parser cannot read. A book naming no reference never counts here, and neither does a book the stream left unpriced, so a parse regression stands out instead of blending into the ordinary miss rate. It counts per book where the match counter counts per pair, so do not ratio the two against each other.
+* `price_level_stream_override_match_total{venue, outcome}` — one increment per served pair, under `same_sequence`, `earlier_sequence`, `none_in_slot` or `no_quote_sequence` (see [When a state carries no overrides](#when-a-state-carries-no-overrides)). The sum over `outcome` equals the pairs served.
+* `price_level_stream_override_buffer_total{event}` — one increment per venue and pair the stream stores an entry under, and per stored entry it drops: `added`, `replaced_by_newer`, `older_than_held`, `resent_unchanged`, `resent_with_different_state`, `same_token_pair`, `arrived_outside_slot_window`, `left_slot_window` or `buffer_full`. `left_slot_window` moves all the time, as the slot advances; `arrived_outside_slot_window` and `buffer_full` should sit near zero. Never divide these by the match total: they count storage, not matches.
+* `price_level_stream_refused_override_entries_total{reason}` — one increment per venue entry the stream refused whole: `undecodable`, `not_a_venue`, `not_an_account`, `malformed_pair`, `malformed_storage`, `malformed_quantity`, `no_timestamp`, `pairs_and_sequences_differ`, `empty`, `unsupported_override` or `over_cap`. **`empty` runs at about one a second permanently**, because Titan sends entries carrying only a quote address and a timestamp; exclude it from alerts, and alert separately on a large change in its rate.
+* `price_level_stream_unreadable_quote_sequence_total` — one increment per served book whose `calculated_from` the parser cannot read. A book naming none does not count, so a change in Titan's format stands out. It counts books, where the match counter counts pairs.
+* `price_level_stream_sequence_slot_mismatch_total{socket}` — one increment per quote sequence whose high 64 bits are not its message's slot: a book's on `price_levels`, an entry's pair on `quote_stream`. Matching relies on that encoding, so this should stay at zero.
+* `price_level_stream_override_block_mismatch_total` — one increment per state whose overrides name a block other than its message's. This should stay at zero too; it watches the block you simulate at directly.
+* `price_level_stream_override_merged_sources_total` — the number of other quote addresses' entries merged into states' overrides. Only Metric moves it today.
+* `price_level_stream_override_entry_missing_field_total{field}` — one increment per accepted entry missing `block_number` or `slot`, each of which you need to simulate a quote. Titan sent both on every entry measured.
+* `price_level_stream_unserved_venue_entries_total` — one increment per accepted entry streamed under a quote address the stream does not serve. The stream still stores it under any served venue its `pricedAddresses` name, as it does Metric's second quote address's entries.
+* `price_level_stream_override_entry_accounts` and `price_level_stream_override_entry_storage_slots` — histograms of the accounts and storage words each accepted entry overrides, so growth toward the per-entry caps of 32 and 512 shows early. Measured at most 9 and 16.
+
+**The `socket` label changes two released series.** `price_level_stream_frames_rejected_total` and `price_level_stream_reconnects_total` carried `reason` alone before this release. On deploy each old series goes stale and a labelled one starts from zero. That is harmless for `rate` and `increase`, but a recording rule, alert or `sum without(...)` keyed on the exact label set sees both series for the length of your staleness window.
