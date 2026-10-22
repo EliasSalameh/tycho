@@ -1,3 +1,11 @@
+## [0.476.0](https://github.com/propeller-heads/tycho/compare/0.475.1...0.476.0) (2026-10-22)
+
+
+### Features
+
+* **execution:** prepare Metric fallbacks on Polygon ([a5c8342](https://github.com/propeller-heads/tycho/commit/a5c8342253d041a12d27e8e5aec11575a12bc45a))
+* **execution:** support Metric fallbacks on Polygon ([#1655](https://github.com/propeller-heads/tycho/issues/1655)) ([7d3673a](https://github.com/propeller-heads/tycho/commit/7d3673a72fe97601bfe1aee92b45d64d11ffb659))
+
 ## [0.475.1](https://github.com/propeller-heads/tycho/compare/0.475.0...0.475.1) (2026-10-21)
 
 
