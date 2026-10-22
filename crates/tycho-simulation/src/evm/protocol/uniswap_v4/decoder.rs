@@ -28,9 +28,9 @@ use crate::{
     },
 };
 
-/// Protocol systems whose pool manager reads hook permissions from the pool key rather than the
-/// hook address, and which only emit pools whose hook takes part in swaps.
-const POOL_KEY_PERMISSION_SYSTEMS: [&str; 1] = ["pancakeswap_infinity_cl_hooks"];
+/// The protocol system whose pool manager reads hook permissions from the pool key rather than
+/// the hook address, and which only emits pools whose hook takes part in swaps.
+const POOL_KEY_PERMISSION_SYSTEM: &str = "pancakeswap_infinity_cl_hooks";
 
 /// Whether a hook can take part in a swap at all, which it can exactly when its address carries
 /// the `beforeSwap` or the `afterSwap` permission bit. Uniswap V4 encodes a hook's permissions in
@@ -187,14 +187,10 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV4State {
         // in a swap is a plain V4 pool too, on every chain: no handler, no chain needed. A hook
         // with a native handler registered on this chain is always simulated by it, because some
         // pool managers (PancakeSwap Infinity) do not encode permissions in the hook address. For
-        // the systems that only emit such hooks the address bits are never consulted, so a missing
+        // the system that only emits such hooks the address bits are never consulted, so a missing
         // chain or handler fails the decode instead of hinging on whatever bits the address has.
-        let permissions_in_pool_key = POOL_KEY_PERMISSION_SYSTEMS.contains(
-            &snapshot
-                .component
-                .protocol_system
-                .as_str(),
-        );
+        let permissions_in_pool_key =
+            snapshot.component.protocol_system == POOL_KEY_PERMISSION_SYSTEM;
         let hook_address = hook_attribute
             .map(bytes_to_address)
             .transpose()
