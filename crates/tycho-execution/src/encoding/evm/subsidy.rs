@@ -248,19 +248,24 @@ fn check_reaches_token_out(
         .iter()
         .filter(|consumer| consumer.token_in == group.token_out)
         .collect();
-    if let [wrap] = consumers.as_slice() {
-        if wrap.protocol_system == NATIVE_WRAPPER_PROTOCOL_SYSTEM &&
-            wrap.split == 0.0 &&
-            wrap.token_out == *token_out
-        {
-            return Ok(());
-        }
+    let Some(wrap) = consumers.iter().find(|consumer| {
+        consumer.protocol_system == NATIVE_WRAPPER_PROTOCOL_SYSTEM &&
+            consumer.token_out == *token_out
+    }) else {
+        return Err(EncodingError::InvalidInput(format!(
+            "The subsidized swap group outputs {}, which reaches token_out {token_out} neither \
+             directly nor through a final wrap/unwrap",
+            group.token_out
+        )));
+    };
+    if consumers.len() > 1 || wrap.split != 0.0 {
+        return Err(EncodingError::InvalidInput(format!(
+            "The final wrap/unwrap into token_out {token_out} takes only part of the subsidized \
+             swap group's output {}",
+            group.token_out
+        )));
     }
-    Err(EncodingError::InvalidInput(format!(
-        "The subsidized swap group outputs {}, which reaches token_out {token_out} neither \
-         directly nor through a final wrap/unwrap that takes all of it",
-        group.token_out
-    )))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -502,14 +507,14 @@ mod tests {
             swap("uniswap_v4", WETH, ETH, 0.0),
         ],
         0,
-        "neither directly"
+        "takes only part"
     )]
     #[case::sole_unwrap_with_a_split(
         DAI,
         ETH,
         vec![swap("uniswap_v2", DAI, WETH, 0.0), swap(NATIVE_WRAPPER_PROTOCOL_SYSTEM, WETH, ETH, 0.6)],
         0,
-        "neither directly"
+        "takes only part"
     )]
     fn test_select_subsidized_group_invalid_swap(
         #[case] token_in: &str,
