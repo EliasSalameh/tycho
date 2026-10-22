@@ -1033,13 +1033,13 @@ mod tests {
         use super::*;
         use crate::encoding::{
             errors::EncodingError,
-            evm::subsidy::SUBSIDY_SIGNATURE_OFFSET,
+            evm::subsidy::{SUBSIDY_SIGNATURE_LEN, SUBSIDY_SIGNATURE_OFFSET},
             models::{default_token, SubsidyTerms, Swap},
         };
 
         const EXECUTOR: [u8; 20] = [0x11; 20];
         const PAYER: [u8; 20] = [0x33; 20];
-        const SIGNATURE: [u8; 65] = [0xab; 65];
+        const SIGNATURE: [u8; SUBSIDY_SIGNATURE_LEN] = [0xab; SUBSIDY_SIGNATURE_LEN];
         const DAI: &str = "0x6b175474e89094c44da98b954eedeac495271d0f";
         const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
         const ETH: &str = "0x0000000000000000000000000000000000000000";

@@ -321,21 +321,21 @@ mod tests {
 
         /// One invalid solution fails the batch before any RFQ quote request.
         #[rstest]
-        #[case::without_swaps(solution(dai(), wbtc(), vec![]), "FatalError", "No swaps")]
+        #[case::without_swaps(
+            solution(dai(), wbtc(), vec![]),
+            |error: &EncodingError| matches!(error, EncodingError::FatalError(message) if message.contains("No swaps"))
+        )]
         #[case::subsidized_swap_index_out_of_range(
             with_subsidy(solution(dai(), wbtc(), vec![univ2_swap(&dai(), &wbtc(), 0.0)]), 5),
-            "InvalidInput",
-            "out of range"
+            |error: &EncodingError| matches!(error, EncodingError::InvalidInput(message) if message.contains("out of range"))
         )]
         #[case::subsidy_without_subsidizing_executor(
             with_subsidy(solution(dai(), wbtc(), vec![univ2_swap(&dai(), &wbtc(), 0.0)]), 0),
-            "FatalError",
-            "No subsidizing executor"
+            |error: &EncodingError| matches!(error, EncodingError::FatalError(message) if message.contains("No subsidizing executor"))
         )]
         fn test_encode_solutions_rejects_an_invalid_solution_before_requesting_quotes(
             #[case] invalid_solution: Solution,
-            #[case] variant: &str,
-            #[case] message: &str,
+            #[case] is_expected_error: fn(&EncodingError) -> bool,
         ) {
             let encoder = get_tycho_router_encoder();
             let delay = Duration::from_millis(300);
@@ -346,8 +346,8 @@ mod tests {
             let result = encoder.encode_solutions(vec![delayed_solution, invalid_solution]);
             let elapsed = start.elapsed();
 
-            let error = format!("{:?}", result.unwrap_err());
-            assert!(error.starts_with(variant) && error.contains(message), "{error}");
+            let error = result.unwrap_err();
+            assert!(is_expected_error(&error), "{error:?}");
             assert!(elapsed < delay, "encoding took {elapsed:?}");
         }
 

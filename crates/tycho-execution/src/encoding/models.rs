@@ -11,9 +11,9 @@ use tycho_common::{
     Bytes,
 };
 
-#[cfg(feature = "evm")]
-use crate::encoding::errors::EncodingError;
 use crate::encoding::serde_primitives::biguint_string;
+#[cfg(feature = "evm")]
+use crate::encoding::{errors::EncodingError, evm::subsidy::SUBSIDY_SIGNATURE_LEN};
 
 /// Specifies the method for transferring user funds into Tycho execution.
 ///
@@ -528,7 +528,10 @@ impl EncodedSolution {
     /// Writes the subsidy signature into `swaps`. Fails when the solution has no subsidy.
     ///
     /// The client fee signature covers `swaps`: write the subsidy signature before computing it.
-    pub fn write_subsidy_signature(&mut self, signature: &[u8; 65]) -> Result<(), EncodingError> {
+    pub fn write_subsidy_signature(
+        &mut self,
+        signature: &[u8; SUBSIDY_SIGNATURE_LEN],
+    ) -> Result<(), EncodingError> {
         let offset = self
             .subsidy_signature_offset_in_swaps()
             .ok_or_else(|| {

@@ -32,8 +32,8 @@ mod typed {
 }
 
 const PAYER_CONFIG_KEY: &str = "payer_address";
-const MAX_DEADLINE: u64 = (1 << 48) - 1;
-const SIGNATURE_LEN: usize = 65;
+const MAX_ENCODABLE_DEADLINE: u64 = (1 << 48) - 1;
+pub(crate) const SUBSIDY_SIGNATURE_LEN: usize = 65;
 
 /// Start of the signature in the subsidizing executor's swap data.
 pub(crate) const SUBSIDY_SIGNATURE_OFFSET: usize = 20 + 32 + 32 + 32 + 6;
@@ -113,14 +113,15 @@ impl SubsidizedGroup<'_> {
         let amount = biguint_to_u256(&self.terms.amount);
         let min_amount_in = biguint_to_u256(&self.terms.min_amount_in);
 
-        let mut data =
-            Vec::with_capacity(SUBSIDY_SIGNATURE_OFFSET + SIGNATURE_LEN + 20 + protocol_data.len());
+        let mut data = Vec::with_capacity(
+            SUBSIDY_SIGNATURE_OFFSET + SUBSIDY_SIGNATURE_LEN + 20 + protocol_data.len(),
+        );
         data.extend_from_slice(bound_to.as_slice());
         data.extend_from_slice(&amount.to_be_bytes::<32>());
         data.extend_from_slice(&min_amount_in.to_be_bytes::<32>());
         data.extend_from_slice(self.terms.nonce.as_slice());
         data.extend_from_slice(&self.terms.deadline.to_be_bytes()[2..]);
-        data.extend_from_slice(&[0; SIGNATURE_LEN]);
+        data.extend_from_slice(&[0; SUBSIDY_SIGNATURE_LEN]);
         data.extend_from_slice(bytes_to_address(executor_address)?.as_slice());
         data.extend_from_slice(protocol_data);
 
@@ -129,7 +130,7 @@ impl SubsidizedGroup<'_> {
             token: convert_to_router_token(bytes_to_address(self.token_out)?),
             amount,
             minAmountIn: min_amount_in,
-            innerSwapHash: keccak256(&data[SUBSIDY_SIGNATURE_OFFSET + SIGNATURE_LEN..]),
+            innerSwapHash: keccak256(&data[SUBSIDY_SIGNATURE_OFFSET + SUBSIDY_SIGNATURE_LEN..]),
             nonce: U256::from_be_bytes(self.terms.nonce.0),
             deadline: U256::from(self.terms.deadline),
         };
@@ -218,7 +219,7 @@ fn validate_subsidy(
             terms.amount
         )));
     }
-    if terms.deadline > MAX_DEADLINE {
+    if terms.deadline > MAX_ENCODABLE_DEADLINE {
         return Err(EncodingError::InvalidInput(format!(
             "Subsidy deadline {} does not fit in 48 bits",
             terms.deadline
@@ -373,7 +374,7 @@ mod tests {
         let (executor_address, protocol_data, signature) = wrap(DAI);
 
         assert_eq!(executor_address, Bytes::from(EXECUTOR));
-        assert_eq!(signature.signature_from_end, SIGNATURE_LEN + 20 + 3);
+        assert_eq!(signature.signature_from_end, SUBSIDY_SIGNATURE_LEN + 20 + 3);
         assert_eq!(
             encode(protocol_data),
             [
@@ -382,7 +383,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000de0b6b3a7640000",
                 "0000000000000000000000000000000000000000000000000000000000000007",
                 "00006553f100",
-                &"00".repeat(SIGNATURE_LEN),
+                &"00".repeat(SUBSIDY_SIGNATURE_LEN),
                 "4444444444444444444444444444444444444444",
                 "cdcdcd",
             ]

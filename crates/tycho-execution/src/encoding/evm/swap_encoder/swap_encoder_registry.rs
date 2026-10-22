@@ -482,9 +482,6 @@ mod tests {
         assert_eq!(hooks.executor_address(), &Bytes::from_str(executor).unwrap());
     }
 
-    /// A registry configured with `uniswap_v4_hooks` alone — what the integration-test harness
-    /// builds from a test config's protocol system — resolves both names to that entry's
-    /// executor rather than failing to build.
     #[test]
     fn test_registry_configured_with_subsidizing_executor_without_payer() {
         let executors =
@@ -500,6 +497,9 @@ mod tests {
         );
     }
 
+    /// A registry configured with `uniswap_v4_hooks` alone — what the integration-test harness
+    /// builds from a test config's protocol system — resolves both names to that entry's
+    /// executor rather than failing to build.
     #[test]
     fn test_registry_configured_with_uniswap_v4_hooks_alone_builds() {
         let executor = "0xaE04CA7E9Ed79cBD988f6c536CE11C621166f41B";
