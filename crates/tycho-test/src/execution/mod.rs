@@ -24,7 +24,7 @@ use tycho_simulation::evm::protocol::u256_num::u256_to_biguint;
 use crate::{
     execution::{
         encoding::{detect_token_slots, setup_router_overwrites},
-        execution_simulator::ExecutionSimulator,
+        execution_simulator::{ExecutionSimulator, SimulationBase},
         models::{
             RouterOverwritesData, SimulationInput, SimulationResult, TychoExecutionInput,
             TychoExecutionResult,
@@ -35,7 +35,6 @@ use crate::{
 
 pub mod encoding;
 mod execution_simulator;
-pub use execution_simulator::SimulationBase;
 mod four_byte_client;
 pub mod models;
 pub mod tenderly;
@@ -48,7 +47,8 @@ const MAX_CALLS_PER_BATCH: usize = 30;
 const MAX_CONCURRENT_BATCHES: usize = 4;
 
 /// Simulates every encoded swap in `execution_info` on the state after `block`, in `block`'s own
-/// context, via `debug_traceCall`, and returns one result per simulation id.
+/// context, via `debug_traceCall`, and returns one result per simulation id. A pending block, whose
+/// hash is zero, simulates on the pending state instead.
 ///
 /// `router_overwrites_data` decides which contracts are simulated as deployed and which are
 /// overwritten — see [`RouterOverwritesData`]; its default simulates everything as deployed.
@@ -80,7 +80,9 @@ pub async fn simulate_swap_transaction(
 
 /// [`simulate_swap_transaction`], but on the state `block` was built on — its parent's — with
 /// `block`'s number, timestamp, coinbase and base fee: the call a client makes before `block`
-/// exists, such as one simulating a quote for the block a builder is building.
+/// exists, such as one simulating a quote for the block a builder is building. The FermiSwap and
+/// BopAMM registry lanes are read from the parent's state too. A pending block, whose hash is
+/// zero, simulates on the pending state as [`simulate_swap_transaction`] does.
 pub async fn simulate_swap_transaction_before_block(
     rpc_tools: &RPCTools,
     execution_info: HashMap<String, TychoExecutionInput>,
@@ -145,9 +147,14 @@ async fn simulate_swap_transaction_on(
         None
     } else {
         Some(
-            encoding::setup_fermiswap_overwrites(rpc_tools, block, &fermiswap_pairs)
-                .await
-                .map_err(|e| (e, None, None))?,
+            encoding::setup_fermiswap_overwrites(
+                rpc_tools,
+                block,
+                base.state_block_id(block),
+                &fermiswap_pairs,
+            )
+            .await
+            .map_err(|e| (e, None, None))?,
         )
     };
 
@@ -157,9 +164,14 @@ async fn simulate_swap_transaction_on(
         None
     } else {
         Some(
-            encoding::setup_bopamm_overwrites(rpc_tools, block, &bopamm_asset_ids)
-                .await
-                .map_err(|e| (e, None, None))?,
+            encoding::setup_bopamm_overwrites(
+                rpc_tools,
+                block,
+                base.state_block_id(block),
+                &bopamm_asset_ids,
+            )
+            .await
+            .map_err(|e| (e, None, None))?,
         )
     };
 
@@ -463,10 +475,13 @@ fn collect_bopamm_asset_ids(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy::{
         primitives::{address, b256},
-        rpc::types::TransactionRequest,
+        rpc::types::{BlockId, BlockOverrides, TransactionRequest},
     };
+    use alloy_rpc_types_trace::geth::GethDebugTracingCallOptions;
     use mockito::{Mock, Request, ServerGuard};
     use serde_json::{json, Value};
 
@@ -525,24 +540,24 @@ mod tests {
             .collect()
     }
 
-    fn batch_len(request: &Request) -> usize {
-        let body: Value = serde_json::from_slice(
+    fn request_json(request: &Request) -> Value {
+        serde_json::from_slice(
             request
                 .body()
                 .expect("request has a body"),
         )
-        .expect("request body is JSON");
-        body.as_array().map_or(1, Vec::len)
+        .expect("request body is JSON")
+    }
+
+    fn batch_len(request: &Request) -> usize {
+        request_json(request)
+            .as_array()
+            .map_or(1, Vec::len)
     }
 
     /// Answers every call of a JSON-RPC batch with a successful call trace returning `1`.
     fn successful_traces(request: &Request) -> Vec<u8> {
-        let body: Value = serde_json::from_slice(
-            request
-                .body()
-                .expect("request has a body"),
-        )
-        .expect("request body is JSON");
+        let body = request_json(request);
         let calls = body
             .as_array()
             .expect("request is a JSON-RPC batch");
@@ -633,7 +648,7 @@ mod tests {
             &server.url(),
             &inputs,
             &Block::default(),
-            SimulationBase::default(),
+            SimulationBase::AfterBlock,
         )
         .await
         .expect("every batch fits the RPC limit");
@@ -664,7 +679,7 @@ mod tests {
             &server.url(),
             &simulation_inputs(5),
             &Block::default(),
-            SimulationBase::default(),
+            SimulationBase::AfterBlock,
         )
         .await
         .expect_err("the RPC rejects every batch");
@@ -672,6 +687,74 @@ mod tests {
         assert!(
             format!("{error:?}").contains("Failed to simulate batch 1 of 1 after retries"),
             "unexpected error: {error:?}"
+        );
+    }
+
+    const PARENT_HASH: B256 =
+        b256!("00000000000000000000000000000000000000000000000000000000000000bb");
+    const COINBASE: Address = address!("4838b106fce9647bdf1e7877bf73ce8b0bad5f97");
+
+    /// A mined block as the RPC returns one: a hash, a parent, a number, a timestamp, a
+    /// beneficiary and a base fee.
+    fn mined_block() -> Block {
+        let mut block: Block = Block::default();
+        block.header.hash =
+            b256!("00000000000000000000000000000000000000000000000000000000000000aa");
+        block.header.parent_hash = PARENT_HASH;
+        block.header.number = 26_201_954;
+        block.header.timestamp = 1_792_115_927;
+        block.header.beneficiary = COINBASE;
+        block.header.base_fee_per_gas = Some(7);
+        block
+    }
+
+    /// Before the block, a simulation reads the parent's state, named by its hash, in the block's
+    /// own context: its number, timestamp, coinbase and base fee.
+    #[tokio::test]
+    async fn before_the_block_simulates_on_the_parent_in_the_blocks_context() {
+        let mut server = mockito::Server::new_async().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = requests.clone();
+        let _answered = server
+            .mock("POST", "/")
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |request| {
+                recorded
+                    .lock()
+                    .expect("the lock is not poisoned")
+                    .push(request_json(request));
+                successful_traces(request)
+            })
+            .create_async()
+            .await;
+
+        let results = simulate_in_batches(
+            &server.url(),
+            &simulation_inputs(1),
+            &mined_block(),
+            SimulationBase::BeforeBlock,
+        )
+        .await
+        .expect("the batch simulates");
+
+        assert_eq!(results.len(), 1);
+        let requests = requests
+            .lock()
+            .expect("the lock is not poisoned");
+        let params = &requests[0][0]["params"];
+        let block_id: BlockId = serde_json::from_value(params[1].clone()).expect("a block id");
+        assert_eq!(block_id, BlockId::from(PARENT_HASH));
+        let options: GethDebugTracingCallOptions =
+            serde_json::from_value(params[2].clone()).expect("tracing call options");
+        assert_eq!(
+            options.block_overrides,
+            Some(BlockOverrides {
+                number: Some(U256::from(26_201_954u64)),
+                time: Some(1_792_115_927),
+                coinbase: Some(COINBASE),
+                base_fee: Some(U256::from(7u64)),
+                ..Default::default()
+            })
         );
     }
 }

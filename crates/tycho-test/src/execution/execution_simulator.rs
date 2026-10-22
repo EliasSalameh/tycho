@@ -156,15 +156,49 @@ impl SolidityError {
     }
 }
 
-/// The chain state a simulation runs on.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The chain state a simulation runs on. A pending block, whose hash is zero, always simulates on
+/// the pending state, whichever variant is passed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SimulationBase {
     /// The state after the block, in the block's own context.
-    #[default]
     AfterBlock,
     /// The state the block was built on — its parent's — in the block's context: its number,
     /// timestamp, coinbase and base fee. The call a client makes before the block exists.
     BeforeBlock,
+}
+
+impl SimulationBase {
+    /// The block whose state a simulation for `block` reads. The parent is named by its hash, so a
+    /// reorg between fetching `block` and simulating cannot move the call onto another parent.
+    pub(crate) fn state_block_id(self, block: &Block) -> BlockId {
+        // Pending (flashblock) blocks have a zero hash — simulate against the pending state
+        // so the RPC uses the sequencer's pre-confirmed block rather than a specific number.
+        if block.header.hash == B256::ZERO {
+            return BlockId::from(BlockNumberOrTag::Pending);
+        }
+        match self {
+            SimulationBase::AfterBlock => BlockId::from(block.number()),
+            SimulationBase::BeforeBlock => BlockId::from(block.header.parent_hash),
+        }
+    }
+
+    /// The block overrides a simulation for `block` runs with: `block`'s own context when the
+    /// state is its parent's, and none otherwise.
+    fn block_overrides(self, block: &Block) -> Option<BlockOverrides> {
+        if block.header.hash == B256::ZERO || self == SimulationBase::AfterBlock {
+            return None;
+        }
+        Some(BlockOverrides {
+            number: Some(U256::from(block.number())),
+            time: Some(block.header.timestamp),
+            coinbase: Some(block.header.beneficiary),
+            base_fee: block
+                .header
+                .base_fee_per_gas
+                .map(U256::from),
+            ..Default::default()
+        })
+    }
 }
 
 /// Simulated the execution with meaningful revert reason decoding.
@@ -191,8 +225,8 @@ impl ExecutionSimulator {
         }
     }
 
-    /// Simulate a transaction with trace on the state `base` names, and return the
-    /// SimulationResult.
+    /// Simulate a transaction with trace on the state `base` names (see [`SimulationBase`]), and
+    /// return the SimulationResult.
     pub async fn batch_simulate_with_trace(
         &mut self,
         inputs: HashMap<String, SimulationInput>,
@@ -212,28 +246,8 @@ impl ExecutionSimulator {
         let (simulation_ids, simulation_inputs): (Vec<String>, Vec<SimulationInput>) =
             inputs.into_iter().unzip();
 
-        // Pending (flashblock) blocks have a zero hash — simulate against the pending state
-        // so the RPC uses the sequencer's pre-confirmed block rather than a specific number.
-        let (block_id, block_overrides) = if block.header.hash == B256::ZERO {
-            (BlockId::from(BlockNumberOrTag::Pending), None)
-        } else {
-            match base {
-                SimulationBase::AfterBlock => (BlockId::from(block.number()), None),
-                SimulationBase::BeforeBlock => (
-                    BlockId::from(block.number().saturating_sub(1)),
-                    Some(BlockOverrides {
-                        number: Some(U256::from(block.number())),
-                        time: Some(block.header.timestamp),
-                        coinbase: Some(block.header.beneficiary),
-                        base_fee: block
-                            .header
-                            .base_fee_per_gas
-                            .map(U256::from),
-                        ..Default::default()
-                    }),
-                ),
-            }
-        };
+        let block_id = base.state_block_id(block);
+        let block_overrides = base.block_overrides(block);
 
         let client = ClientBuilder::default().http(self.rpc_url.parse()?);
 
