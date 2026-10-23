@@ -1,3 +1,11 @@
+## [0.482.2](https://github.com/propeller-heads/tycho/compare/0.482.1...0.482.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([f7e4c79](https://github.com/propeller-heads/tycho/commit/f7e4c79eb301f4849b6e978891a2834eaf5c8def))
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([#1675](https://github.com/propeller-heads/tycho/issues/1675)) ([0257176](https://github.com/propeller-heads/tycho/commit/02571767e045b266e1e355797076a3c92142aa50))
+
 ## [0.482.1](https://github.com/propeller-heads/tycho/compare/0.482.0...0.482.1) (2026-10-23)
 
 
