@@ -1,3 +1,34 @@
+## [0.482.0](https://github.com/propeller-heads/tycho/compare/0.481.0...0.482.0) (2026-10-23)
+
+
+### Features
+
+* **simulation:** attach Titan's simulated pre-state to a pAMM state ([a223801](https://github.com/propeller-heads/tycho/commit/a223801fd96b39348aeadd15ca2c14d594a9dbff))
+* **simulation:** attach Titan's simulation overrides to price level states ([#1598](https://github.com/propeller-heads/tycho/issues/1598)) ([7d3edb7](https://github.com/propeller-heads/tycho/commit/7d3edb70cc06a1b725b65db2b18aa0684c5dca34))
+
+
+### Bug Fixes
+
+* **simulation:** apply the overrides budget to newer copies too ([904408c](https://github.com/propeller-heads/tycho/commit/904408c1e431e9bb6c6771b2230a65aa0a937dad))
+* **simulation:** bound the overrides buffer by size and count every skipped case ([7bc6846](https://github.com/propeller-heads/tycho/commit/7bc684682dffae86a1646802622faac0557f083e))
+* **simulation:** drop a cap that cannot bind, and docs that describe deleted code ([24709fc](https://github.com/propeller-heads/tycho/commit/24709fce7d094085b6dde11f115dce723bd9ca97))
+* **test:** override only the block's number and timestamp before a block ([6f31f35](https://github.com/propeller-heads/tycho/commit/6f31f3520dda21d73db4737107de86e4168a18c6))
+* **test:** read the parent's state throughout a before-block simulation ([6731828](https://github.com/propeller-heads/tycho/commit/67318288363b22d26e039a6c4d302a20f280a7dc))
+
+## [0.481.0](https://github.com/propeller-heads/tycho/compare/0.480.0...0.481.0) (2026-10-22)
+
+
+### Features
+
+* **indexer:** record entity cache copies of held entries ([dd46d58](https://github.com/propeller-heads/tycho/commit/dd46d584360c44002e6de4e8aba60d4f28c4f034))
+
+
+### Performance Improvements
+
+* **indexer:** hold no cache entry while a large answer waits ([2221137](https://github.com/propeller-heads/tycho/commit/2221137808811cdd8e5bba091bab5117844c4690))
+* **indexer:** write cached contract state answers without copies ([3d9fa2d](https://github.com/propeller-heads/tycho/commit/3d9fa2dcf3c90bd6af256db876ed6b9a28046708))
+* **indexer:** write cached protocol state answers without copies ([edc7c88](https://github.com/propeller-heads/tycho/commit/edc7c889129d699c1e4fe53b0a40f1d781f172c3))
+
 ## [0.480.0](https://github.com/propeller-heads/tycho/compare/0.479.1...0.480.0) (2026-10-22)
 
 
