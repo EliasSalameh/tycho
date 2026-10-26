@@ -1,64 +1,15 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-
 use tracing::debug;
-use tycho_common::Bytes;
 
 use crate::{
-    book::{
-        all_pairs::{BookCollector, ComponentLayout, MarketMaker, QuoteRule, VenueBook},
-        component::maker_component_id,
-        tvl, BookFeedConfig, BookSnapshot, ReceivedAt,
-    },
-    rfq::protocols::hashflow::{
-        client::HashflowClient,
-        models::HashflowMarketMakerLevels,
-        state::{HashflowAllPairsState, HashflowState},
-        PROTOCOL_TYPE,
-    },
+    book::{BookSnapshot, ReceivedAt},
+    rfq::protocols::hashflow::prices::HashflowBookAssembler,
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
-/// Fetches one complete Hashflow book per poll: every market maker's levels between the
-/// configured tokens whose normalized TVL clears the threshold, one simulate-ready book per maker
-/// and pair.
+/// Fetches one complete Hashflow book per poll, built by its [`HashflowBookAssembler`].
 #[derive(Clone, Debug)]
 pub struct HashflowBookSource {
-    /// The protocol system stamped on this source's components: the venue's own, or its
-    /// fallback-router one for a feed built with `with_fallback_router()`.
-    pub protocol_system: &'static str,
-    pub book_config: BookFeedConfig,
-    /// USD-priced tokens the book's TVL is normalized into before the threshold applies.
-    pub usd_quote_tokens: Arc<HashSet<Bytes>>,
-    /// Requests binding quotes; shared with every state this source emits.
-    pub client: Arc<HashflowClient>,
-    /// Whether the venue's pairs are published as one component or one each.
-    pub component_layout: ComponentLayout<QuoteRule>,
-}
-
-impl HashflowBookSource {
-    /// The TVL in USD quote-token units, converted through every pair the response priced —
-    /// each market maker's level set is one such pair.
-    fn normalized_tvl(
-        &self,
-        raw_tvl: f64,
-        quote_token: &Bytes,
-        levels_by_mm: &HashMap<String, Vec<HashflowMarketMakerLevels>>,
-    ) -> Option<f64> {
-        tvl::tvl_in_usd(
-            raw_tvl,
-            quote_token,
-            &self.usd_quote_tokens,
-            levels_by_mm
-                .values()
-                .flatten()
-                .map(|mm_level| {
-                    (&mm_level.pair.base_token, &mm_level.pair.quote_token, &mm_level.levels)
-                }),
-        )
-    }
+    pub(super) assembler: HashflowBookAssembler,
 }
 
 impl HttpSource for HashflowBookSource {
@@ -67,68 +18,18 @@ impl HttpSource for HashflowBookSource {
     /// Both requests (market makers, then their levels) count as one poll.
     async fn fetch(&self) -> Result<BookSnapshot<ReceivedAt>, FeedError> {
         let market_makers = self
+            .assembler
             .client
             .fetch_market_makers()
             .await?;
         let levels_by_mm = self
+            .assembler
             .client
             .fetch_price_levels(&market_makers)
             .await?;
         debug!(market_makers = levels_by_mm.len(), "fetched price levels");
 
-        let mut collector = BookCollector::new(
-            self.protocol_system,
-            PROTOCOL_TYPE,
-            self.book_config.chain,
-            self.component_layout,
-        );
-        for (mm_name, mm_levels) in levels_by_mm.iter() {
-            for mm_level in mm_levels {
-                let base_bytes = &mm_level.pair.base_token;
-                let quote_bytes = &mm_level.pair.quote_token;
-                let Some((base_token, quote_token)) = self
-                    .book_config
-                    .pair_tokens(base_bytes, quote_bytes)
-                else {
-                    continue;
-                };
-
-                // Hashflow's levels price one direction, so the reverse pair is a different book.
-                let component_id =
-                    maker_component_id(self.protocol_system, base_bytes, quote_bytes, mm_name);
-                let tvl = mm_level.levels.notional();
-                let Some(normalized_tvl) = self.normalized_tvl(tvl, quote_bytes, &levels_by_mm)
-                else {
-                    debug!(
-                        %component_id,
-                        market_maker = %mm_name,
-                        "skipping pair, no levels price its quote token in a USD quote token"
-                    );
-                    continue;
-                };
-
-                if !self
-                    .book_config
-                    .clears_min_tvl(normalized_tvl, &component_id)
-                {
-                    continue;
-                }
-
-                // `levels_by_mm` stays borrowed for the TVL normalization lookups above.
-                let state = HashflowState::new(
-                    base_token.clone(),
-                    quote_token.clone(),
-                    mm_level.clone(),
-                    mm_name.clone(),
-                    Arc::clone(&self.client),
-                );
-                collector.push(
-                    component_id,
-                    VenueBook { signer: MarketMaker(mm_name.clone()), updated_at: None, state },
-                );
-            }
-        }
-        Ok(BookSnapshot::received_now(collector.finish::<HashflowAllPairsState>()))
+        Ok(BookSnapshot::received_now(self.assembler.build_books(levels_by_mm)))
     }
 }
 

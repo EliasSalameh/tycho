@@ -11,8 +11,8 @@ use crate::{
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::hashflow::{
-            client::HashflowClient, source::HashflowBookSource, FALLBACK_PROTOCOL_SYSTEM,
-            PROTOCOL_SYSTEM,
+            client::HashflowClient, prices::HashflowBookAssembler, source::HashflowBookSource,
+            FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     },
     snapshot_feed::{
@@ -118,17 +118,19 @@ impl HashflowFeedBuilder {
         Ok(HashflowFeed {
             feed_config: self.feed_config,
             source: HashflowBookSource {
-                component_layout: self.component_layout,
-                protocol_system: self.protocol_system,
-                client: Arc::new(HashflowClient::new(
-                    None,
-                    chain_id,
-                    self.auth_user,
-                    self.auth_key,
-                    self.quote_timeout,
-                )),
-                book_config: self.book_config,
-                usd_quote_tokens: self.usd_quote_tokens,
+                assembler: HashflowBookAssembler {
+                    component_layout: self.component_layout,
+                    protocol_system: self.protocol_system,
+                    client: Arc::new(HashflowClient::new(
+                        None,
+                        chain_id,
+                        self.auth_user,
+                        self.auth_key,
+                        self.quote_timeout,
+                    )),
+                    book_config: self.book_config,
+                    usd_quote_tokens: self.usd_quote_tokens,
+                },
             },
         })
     }
