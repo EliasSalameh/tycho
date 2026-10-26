@@ -231,6 +231,23 @@ pub(crate) fn test_token_map(entries: &[(&Bytes, &str, u32)]) -> HashMap<Bytes, 
         .collect()
 }
 
+/// Asserts that two book sets hold the same components under the same ids, with equal states and
+/// provider times.
+#[cfg(test)]
+pub(crate) fn assert_same_books(actual: &HashMap<String, Book>, expected: &HashMap<String, Book>) {
+    let mut actual_ids: Vec<_> = actual.keys().collect();
+    let mut expected_ids: Vec<_> = expected.keys().collect();
+    actual_ids.sort();
+    expected_ids.sort();
+    assert_eq!(actual_ids, expected_ids);
+    for (id, book) in actual {
+        let other = &expected[id];
+        assert_eq!(book.component, other.component, "{id}");
+        assert_eq!(book.updated_at, other.updated_at, "{id}");
+        assert!(book.state.eq(&*other.state), "{id}: states differ");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tycho_common::models::Chain;

@@ -311,6 +311,7 @@ mod tests {
         };
         let quote = feed
             .source
+            .assembler
             .client
             .request_binding_quote(&params)
             .await
@@ -385,6 +386,7 @@ mod tests {
         };
         let quote = feed
             .source
+            .assembler
             .client
             .request_binding_quote(&params)
             .await
@@ -431,6 +433,21 @@ mod tests {
 
         let error = BebopFeedBuilder::new(config, HashSet::new(), "key".to_string())
             .build()
+            .unwrap_err();
+
+        assert!(error.is_fatal(), "{error}");
+    }
+
+    #[test]
+    fn building_a_book_assembler_for_a_chain_bebop_does_not_serve_is_fatal() {
+        let config = BookFeedConfig {
+            chain: Chain::ZkSync,
+            tokens: Arc::new(HashMap::new()),
+            min_tvl_usd: 0.0,
+        };
+
+        let error = BebopFeedBuilder::new(config, HashSet::new(), "key".to_string())
+            .build_book_assembler()
             .unwrap_err();
 
         assert!(error.is_fatal(), "{error}");

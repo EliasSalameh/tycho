@@ -763,10 +763,12 @@ mod tests {
             Duration::from_secs(30),
             QuoteOrigin::default(),
         );
+        let pricing_client =
+            BebopPricingClient::new(BebopSupportedChain::Base, "secret_key".to_string());
 
         assert_eq!(client.quote_endpoint, "https://api.bebop.xyz/pmm/base/v3/quote");
         assert_eq!(
-            client.pricing_ws_endpoint,
+            pricing_client.pricing_ws_endpoint,
             "wss://api.bebop.xyz/pmm/base/v3/pricing?format=protobuf"
         );
     }
