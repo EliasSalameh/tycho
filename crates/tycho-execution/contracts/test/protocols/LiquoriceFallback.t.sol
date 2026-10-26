@@ -127,6 +127,21 @@ contract LiquoriceFallbackRouterTest is
         _assertRouterDrained(address(router), USDC_ADDR, WETH_ADDR);
     }
 
+    /// The `settle` entrypoint fills like `settleSingle`.
+    function testSettleQuote() public {
+        deal(USDC_ADDR, address(router), SIGNED_USDC_IN);
+
+        vm.recordLogs();
+        _swap(
+            SIGNED_USDC_IN,
+            _encodeSettle(address(router), SIGNED_USDC_IN, SIGNED_WETH_OUT)
+        );
+
+        assertEq(IERC20(WETH_ADDR).balanceOf(BOB), SIGNED_WETH_OUT);
+        _assertNoFallbackSwap(address(router), vm.getRecordedLogs());
+        _assertRouterDrained(address(router), USDC_ADDR, WETH_ADDR);
+    }
+
     function testUnknownSelector() public {
         bytes4 transfer = IERC20.transfer.selector;
         vm.expectRevert(
