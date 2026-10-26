@@ -68,6 +68,12 @@ for any protocol indexed by Tycho.
     from the builder's `default_feed_config()`). They publish what the source yields, count
     failures and back off (`failures.rs`), and name no venue: the `snapshot_feed{provider}` span
     comes from `SnapshotFeedStream::spawn(provider, feed)`, so a venue is spelled once
+  - the WebSocket half is public — `run_ws_feed`, `WsSource` and `WsPayload` — so a crate outside
+    Tycho implements a source and gets the reconnect, backoff, idle-timeout and staleness loop.
+    `decode` returning `Ok(None)` skips the frame; `Err` ends the connection and counts one
+    failure, `Fatal` ends the feed. `WsPayload` carries tokio-tungstenite's `Utf8Bytes`/`Bytes`,
+    re-exported from `snapshot_feed::ws`. `default_ws_feed_config` and the HTTP loop stay
+    crate-private
 - **`book/`**: the shared layer for off-chain market-maker venues, whose pricing arrives as a
   complete book rather than as chain state. A feed publishes `BookSnapshot<A>` (a provider's whole
   set of `Book`s at one anchor — `ReceivedAt` for every feed here; a block-anchored feed would pick
@@ -101,11 +107,28 @@ for any protocol indexed by Tycho.
     from those two types, so the four differ only in them and in what a venue refuses before a
     book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
     the state, so its tokens and its directions agree
+  - **`prices` (Bebop, Hashflow, Metric)**: each of these venues also splits its feed in two public
+    halves, in the venue's `prices.rs`. `<Venue>PricesFeed` is transport and parse only, needs
+    just the chain and the credentials (no token list, no TVL floor) and publishes
+    `<Venue>Prices`, the parsed answer — `Serialize`/`Deserialize`, so it can cross a wire, in the
+    venue API models' form, so both ends run the same tycho-simulation version.
+    `<Venue>BookAssembler::books(prices)` turns prices into the `HashMap<String, Book>` the
+    `*Feed` publishes; `<Venue>FeedBuilder::build_book_assembler()` makes it from the same
+    builder, so it carries the tokens, quote tokens, layout, fallback router and, where the venue
+    signs quotes, the `Arc` client the states share (not serializable, which is why a process
+    builds its own). `MetricBookAssembler::new(book_config)` makes one without a trading key. The
+    `*Feed` is these parts together: its book source holds the venue's prices source and the
+    assembler, parses or polls, asks the assembler for books and stamps `ReceivedAt`. Metric's
+    source filters by token list and TVL before asking for quotes, so it does not request pools
+    it would drop; its prices feed keeps every unpaused pool that answered and the assembler
+    filters. `Levels` and `PriceLevel` are re-exported from `book` because `BebopBook` and
+    `HashflowMarketMakerLevels` expose them
   - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the
     binding-quote request the states make), `source.rs` (what to make of the answers — decoding,
-    orientation, TVL normalization, building components and states), `state.rs`, `models.rs` and
+    orientation, TVL normalization, building components and states; for the three venues with a
+    `prices` module, the book assembler builds components and states), `state.rs`, `models.rs` and
     a module-level `PROTOCOL_SYSTEM` constant. No source holds a credential or builds a request:
     it asks its client. A venue that names the chain in its requests lists the ones it serves as a
     `<Venue>SupportedChain` in its `models.rs`, which `build()` resolves the configured `Chain`
