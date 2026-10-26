@@ -1,3 +1,11 @@
+## [0.482.3](https://github.com/propeller-heads/tycho/compare/0.482.2...0.482.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([4bc674c](https://github.com/propeller-heads/tycho/commit/4bc674cad2c48db9ee4d7d6160d937034bdb51a9))
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([#1679](https://github.com/propeller-heads/tycho/issues/1679)) ([4b7eeb6](https://github.com/propeller-heads/tycho/commit/4b7eeb66e1e09c6b2e511fc999e61b5d46779e76))
+
 ## [0.482.2](https://github.com/propeller-heads/tycho/compare/0.482.1...0.482.2) (2026-10-23)
 
 
