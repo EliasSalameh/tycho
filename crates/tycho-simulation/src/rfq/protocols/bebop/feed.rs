@@ -10,6 +10,7 @@ use crate::{
         protocols::bebop::{
             client::{BebopClient, QuoteOrigin},
             models::BebopSupportedChain,
+            prices::BebopBookAssembler,
             source::BebopBookSource,
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
@@ -141,16 +142,18 @@ impl BebopFeedBuilder {
         Ok(BebopFeed {
             feed_config: self.feed_config,
             source: BebopBookSource {
-                protocol_system: self.protocol_system,
-                book_config: self.book_config,
-                usd_quote_tokens: self.usd_quote_tokens,
-                client: Arc::new(BebopClient::new(
-                    chain,
-                    self.ws_key,
-                    self.quote_timeout,
-                    self.origin,
-                )),
-                all_pairs: self.all_pairs,
+                assembler: BebopBookAssembler {
+                    protocol_system: self.protocol_system,
+                    book_config: self.book_config,
+                    usd_quote_tokens: self.usd_quote_tokens,
+                    client: Arc::new(BebopClient::new(
+                        chain,
+                        self.ws_key,
+                        self.quote_timeout,
+                        self.origin,
+                    )),
+                    all_pairs: self.all_pairs,
+                },
             },
         })
     }

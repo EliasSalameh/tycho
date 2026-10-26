@@ -1,6 +1,7 @@
 mod client;
 pub mod feed;
 mod models;
+pub mod prices;
 mod source;
 pub mod state;
 
