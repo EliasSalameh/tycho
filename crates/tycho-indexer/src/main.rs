@@ -233,9 +233,10 @@ fn spawn_jemalloc_stats_reporter() {
 /// name of the traces), else `tycho-indexer-<chain>` with the first chain, the one the indexer
 /// uses.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `PYROSCOPE_SAMPLE_RATE` is not a number.
+/// Returns an error if `PYROSCOPE_SAMPLE_RATE` is not a number from 1 to 1_000_000, or if the
+/// agent fails to start.
 fn start_cpu_profiler(
     chains: &[String],
 ) -> Result<Option<PyroscopeAgent<PyroscopeAgentRunning>>, pyroscope::PyroscopeError> {
@@ -251,10 +252,20 @@ fn start_cpu_profiler(
             Some(chain) => format!("tycho-indexer-{chain}"),
             None => "tycho-indexer".to_string(),
         });
-    let sample_rate = env::var("PYROSCOPE_SAMPLE_RATE")
-        .unwrap_or_else(|_| "100".to_string())
-        .parse()
-        .expect("PYROSCOPE_SAMPLE_RATE must be a number");
+    // The pprof timer fires every 1_000_000 / rate µs: 0 divides by zero, and above 1_000_000 the
+    // interval is 0, which disarms the timer.
+    let sample_rate = match env::var("PYROSCOPE_SAMPLE_RATE") {
+        Ok(rate) => rate
+            .parse::<u32>()
+            .ok()
+            .filter(|rate| (1..=1_000_000).contains(rate))
+            .ok_or_else(|| {
+                pyroscope::PyroscopeError::new(&format!(
+                    "PYROSCOPE_SAMPLE_RATE must be a number from 1 to 1000000, got {rate:?}"
+                ))
+            })?,
+        Err(_) => 100,
+    };
     let pod = env::var("HOSTNAME").unwrap_or_default();
     let backend = pprof_backend(PprofConfig { sample_rate }, BackendConfig::default());
     let agent = PyroscopeAgentBuilder::new(
