@@ -227,7 +227,7 @@ fn spawn_jemalloc_stats_reporter() {
 /// Starts continuous CPU profiling if `PYROSCOPE_SERVER_URL` is set and not empty, and returns
 /// `Ok(None)` otherwise. Samples all threads `PYROSCOPE_SAMPLE_RATE` times per CPU-second
 /// (default 100) and pushes the profiles to the server every 10 s, with the pod name as tag.
-/// Profiling stops when the agent is dropped.
+/// Profiling runs until the process exits. Dropping the agent does not stop it.
 ///
 /// The application name is `PYROSCOPE_APPLICATION_NAME`, else `OTEL_SERVICE_NAME` (the service
 /// name of the traces), else `tycho-indexer-<chain>` with the first chain, the one the indexer
@@ -288,7 +288,6 @@ fn run_indexer(global_args: GlobalArgs, index_args: IndexArgs) -> Result<(), Ext
         .unwrap_or_else(|_| "3".to_string())
         .parse()
         .expect("MAIN_WORKER_THREADS must be a number");
-    // Kept until the indexer exits; dropping the agent stops profiling.
     let cpu_profiler = start_cpu_profiler(&index_args.chains);
     // We spawn a dedicated runtime for extraction
     let extraction_runtime = tokio::runtime::Builder::new_multi_thread()
