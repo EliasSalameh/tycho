@@ -1,0 +1,35 @@
+substreams_yaml_path: ./base-aero-basic.yaml
+protocol_system: "aero_basic"
+protocol_type_names:
+  - "aero_basic_pool"
+module_name: "map_protocol_changes"
+skip_balance_check: false
+initialized_accounts:
+tests:
+  # Starts at the factory deployments: their constructors emit the default fee and fee module that
+  # pool creation copies into each pool.
+  - name: test_first_volatile_and_stable_pools
+    start_block: 52880042
+    stop_block: 52886974
+    expected_components:
+      - id: "0xf634058dc94e6bf8e828e27621320c423bc8b18e"
+        tokens:
+          - "0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee"
+          - "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" # USDC
+        static_attributes:
+          pool_address: "0xf634058dc94e6bf8e828e27621320c423bc8b18e"
+          is_stable: "0x00"
+        creation_tx: "0x8ef2879877eb6829fa5df4d5e6fcf56dffb3becf127ffb28127284d5ae55edde"
+        # The aero_basic simulation and executor land in follow-up PRs.
+        skip_simulation: true
+        skip_execution: true
+      - id: "0x45adce4be5f602273c6e883a4c94133309af1d09"
+        tokens:
+          - "0x4200000000000000000000000000000000000006" # WETH
+          - "0x7ba6f01772924a82d9626c126347a28299e98c98"
+        static_attributes:
+          pool_address: "0x45adce4be5f602273c6e883a4c94133309af1d09"
+          is_stable: "0x01"
+        creation_tx: "0x7284f882b1d93e0d44929aa820ddf799033763df234bb677d35027989be4449a"
+        skip_simulation: true
+        skip_execution: true
