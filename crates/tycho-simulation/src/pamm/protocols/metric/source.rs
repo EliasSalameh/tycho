@@ -36,9 +36,9 @@ impl HttpSource for MetricBookSource {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+    use std::{str::FromStr, sync::Arc, time::Duration};
 
-    use num_bigint::BigUint;
+    use chrono::DateTime;
     use rstest::rstest;
     use tycho_common::{
         models::{token::Token, Chain},
@@ -47,17 +47,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::test_token_map,
-        evm::protocol::utils::bytes_to_address,
+        book::{assert_same_books, test_token_map, BookFeedConfig},
         pamm::protocols::metric::{
-            client::DEFAULT_BID_ASK_CONCURRENCY, feed::MetricFeedBuilder, FALLBACK_PROTOCOL_SYSTEM,
-            PROTOCOL_SYSTEM,
+            client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
+            feed::MetricFeedBuilder,
+            prices::{MetricBookAssembler, MetricPrices, MetricPricesSource},
+            test_support::{
+                assembler_for, batch_body, bid_ask_json, error_entry, metadata_page, pool_json,
+                pool_server, prices_source, quote_entry, requested_pools,
+                serving_weth_usdc_above_100_usd, usdc, weth, BATCH_TARGET, FIRST_POOL, SECOND_POOL,
+            },
         },
-        snapshot_feed::http::test_support::{spawn_http_server, MockRequest, MockResponse},
+        snapshot_feed::http::test_support::{spawn_http_server, MockResponse},
     };
-
-    const FIRST_POOL: &str = "0x1111111111111111111111111111111111111111";
-    const SECOND_POOL: &str = "0x2222222222222222222222222222222222222222";
 
     /// How the venue answers a key it has stopped accepting. It is about this request, so a
     /// later poll may be served.
@@ -66,111 +68,13 @@ mod tests {
     /// How the venue answers for a chain it does not serve, which no later poll reaches either.
     const UNSERVED_CHAIN: (&str, &str) = ("404 Not Found", r#"{"error": "Unknown chainId: 1"}"#);
 
-    fn pool_json(pool: &str, tvl_fiat: Option<f64>) -> serde_json::Value {
-        serde_json::json!({
-            "poolAddress": pool,
-            "token0": weth().address.to_string(),
-            "token1": usdc().address.to_string(),
-            "tvlFiat": tvl_fiat,
-        })
-    }
-
-    fn metadata_page(pools: &[serde_json::Value], next_offset: Option<u64>) -> String {
-        serde_json::json!({ "data": pools, "nextOffset": next_offset }).to_string()
-    }
-
-    /// The bid/ask body of a healthy, quotable pool; `unhealthy` flips the provider status.
-    fn bid_ask_json(server_ts: u64, unhealthy: bool) -> String {
-        let mut body = serde_json::json!({
-            "bidAdj": q64(3000).to_string(),
-            "askAdj": q64(3010).to_string(),
-            "totalToken0Available": "1000000000000000000",
-            "totalToken1Available": "3000000000",
-            "serverTs": server_ts,
-            "depth": {
-                "asks": [{
-                    "binIdx": 0,
-                    "price": q64(3010).to_string(),
-                    "cumulativeVolume": "3000000000",
-                    "cumulativeInputVolume": "1000000000000000000"
-                }],
-                "bids": []
-            }
-        });
-        if unhealthy {
-            body["priceProviderStatus"] = serde_json::json!("degraded");
-        }
-        body.to_string()
-    }
-
-    /// The batch bid/ask target on Ethereum as the client requests it.
-    const BATCH_TARGET: &str = "/public/v1/evm/1/bid_ask/batch";
-
-    /// The pools a batch bid/ask request names, as the lowercase hex its tests address them by.
-    fn requested_pools(request: &MockRequest) -> Vec<String> {
-        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
-        body["pools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|pool| {
-                let pool = pool.as_str().unwrap();
-                // The client sends checksummed addresses.
-                let checksummed = bytes_to_address(&Bytes::from_str(pool).unwrap())
-                    .unwrap()
-                    .to_checksum(None);
-                assert_eq!(pool, checksummed);
-                pool.to_lowercase()
-            })
-            .collect()
-    }
-
-    /// A batch answer holding `pool`'s quote.
-    fn quote_entry(pool: &str, bid_ask: &str) -> serde_json::Value {
-        let quote: serde_json::Value = serde_json::from_str(bid_ask).unwrap();
-        serde_json::json!({ "poolAddress": pool, "quote": quote })
-    }
-
-    /// A batch answer holding the error Metric gave for `pool`.
-    fn error_entry(pool: &str, status: u16, error: &str) -> serde_json::Value {
-        serde_json::json!({ "poolAddress": pool, "error": { "status": status, "error": error } })
-    }
-
-    fn batch_body(entries: Vec<serde_json::Value>) -> String {
-        serde_json::json!({ "results": entries }).to_string()
-    }
-
     /// A source against the Metric deployment at `base_url`, with an empty token universe and no
     /// TVL floor.
     fn source(chain: Chain, base_url: &str, api_key: &str) -> MetricBookSource {
         MetricBookSource {
-            protocol_system: PROTOCOL_SYSTEM,
-            book_config: BookFeedConfig {
-                chain,
-                tokens: Arc::new(HashMap::new()),
-                min_tvl_usd: 0.0,
-            },
-            client: MetricClient::new(
-                Some(base_url),
-                chain.try_id().unwrap(),
-                api_key.to_string(),
-                DEFAULT_BID_ASK_CONCURRENCY,
-            ),
+            prices: prices_source(chain, base_url, api_key),
+            assembler: assembler_for(chain),
         }
-    }
-
-    fn weth() -> Token {
-        let address = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
-        Token::new(&address, "WETH", 18, 0, &[], Chain::Ethereum, 100)
-    }
-
-    fn usdc() -> Token {
-        let address = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
-        Token::new(&address, "USDC", 6, 0, &[], Chain::Ethereum, 100)
-    }
-
-    fn q64(price: u64) -> BigUint {
-        BigUint::from(price) << 64usize
     }
 
     #[tokio::test]
@@ -188,11 +92,9 @@ mod tests {
             Some(("200 OK", batch_body(vec![quote_entry(POOL, &bid_ask_json(SERVER_TS, false))])))
         })
         .await;
-        let mut source = MetricBookSource {
-            protocol_system: FALLBACK_PROTOCOL_SYSTEM,
-            ..source(Chain::Ethereum, &server.url(), "test_key")
-        };
-        source.book_config.tokens = Arc::new(test_token_map(&[
+        let mut source = source(Chain::Ethereum, &server.url(), "test_key");
+        source.assembler = source.assembler.with_fallback_router();
+        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ]));
@@ -253,11 +155,11 @@ mod tests {
         .await;
         let endpoint = server.url();
         let mut source = source(Chain::Ethereum, &endpoint, "key");
-        source.book_config.tokens = Arc::new(test_token_map(&[
+        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ]));
-        source.book_config.min_tvl_usd = 100.0;
+        source.assembler.book_config.min_tvl_usd = 100.0;
 
         let books = source.fetch().await.unwrap().books;
 
@@ -330,7 +232,7 @@ mod tests {
         .await;
         let endpoint = server.url();
         let mut source = source(Chain::Ethereum, &endpoint, "revoked");
-        source.book_config.tokens = Arc::new(test_token_map(&[
+        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ]));
@@ -384,7 +286,7 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "key");
-        source.book_config.tokens = Arc::new(test_token_map(&[
+        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ]));
@@ -418,7 +320,7 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "key");
-        source.book_config.tokens = Arc::new(test_token_map(&[
+        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ]));
@@ -447,12 +349,13 @@ mod tests {
     #[ignore = "hits Metric's public API; requires METRIC_API_KEY"]
     async fn live_metric_poll_fits_the_request_timeout_at_the_default_concurrency() {
         let api_key = std::env::var("METRIC_API_KEY").expect("METRIC_API_KEY not set");
-        let mut source = source(Chain::Base, "https://api.metric.xyz", &api_key);
-        let metadata = source
-            .client
-            .fetch_metadata()
-            .await
-            .unwrap();
+        let client = MetricClient::new(
+            Some("https://api.metric.xyz"),
+            Chain::Base.try_id().unwrap(),
+            api_key,
+            DEFAULT_BID_ASK_CONCURRENCY,
+        );
+        let metadata = client.fetch_metadata().await.unwrap();
         assert!(!metadata.is_empty(), "Metric serves no Base pools");
 
         let tokens = metadata
@@ -463,8 +366,14 @@ mod tests {
                 (address, token)
             })
             .collect();
-        source.book_config =
-            BookFeedConfig { chain: Chain::Base, tokens: Arc::new(tokens), min_tvl_usd: 0.0 };
+        let source = MetricBookSource {
+            prices: MetricPricesSource::new(client),
+            assembler: MetricBookAssembler::new(BookFeedConfig {
+                chain: Chain::Base,
+                tokens: Arc::new(tokens),
+                min_tvl_usd: 0.0,
+            }),
+        };
 
         let budget = MetricFeedBuilder::default_feed_config().request_timeout;
         let started = std::time::Instant::now();
@@ -478,5 +387,25 @@ mod tests {
             books.len()
         );
         assert!(elapsed < budget, "a poll of {} pools took {elapsed:?}", metadata.len());
+    }
+
+    /// Books rebuilt from serialized prices match the source's published books for the same
+    /// poll.
+    #[tokio::test]
+    async fn prices_round_trip_builds_the_published_books() {
+        let server = pool_server().await;
+        let source = MetricBookSource {
+            prices: prices_source(Chain::Ethereum, &server.url(), "key"),
+            assembler: serving_weth_usdc_above_100_usd(),
+        };
+        let published = source.fetch().await.unwrap().books;
+        let prices = source.prices.fetch().await.unwrap();
+
+        let sent = serde_json::to_string(&prices).unwrap();
+        let received: MetricPrices = serde_json::from_str(&sent).unwrap();
+
+        assert_eq!(received, prices);
+        assert_same_books(&source.assembler.books(received), &published);
+        assert_eq!(published.len(), 1, "only the healthy pool is servable");
     }
 }

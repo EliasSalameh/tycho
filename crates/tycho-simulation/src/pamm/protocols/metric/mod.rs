@@ -4,6 +4,8 @@ mod models;
 pub mod prices;
 mod source;
 pub mod state;
+#[cfg(test)]
+mod test_support;
 
 /// Protocol system stamped on every component this integration emits.
 ///

@@ -319,3 +319,150 @@ impl MetricBookAssembler {
         books
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{str::FromStr, time::Duration};
+
+    use futures::StreamExt;
+    use tokio::time::timeout;
+    use tycho_common::Bytes;
+
+    use super::*;
+    use crate::{
+        pamm::protocols::metric::test_support::{
+            batch_body, bid_ask_json, error_entry, metadata_page, pool_json, pool_server,
+            prices_source, serving_weth_usdc_above_100_usd, BELOW_FLOOR, FIRST_POOL, PAUSED,
+            SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
+        },
+        snapshot_feed::{
+            http::test_support::spawn_http_server, SnapshotFeedEvent, SnapshotFeedStream,
+        },
+    };
+
+    fn pools_of(prices: &MetricPrices) -> Vec<String> {
+        let mut pools: Vec<_> = prices
+            .pools
+            .iter()
+            .map(|price| price.metadata.pool_address.to_string())
+            .collect();
+        pools.sort();
+        pools
+    }
+
+    /// A prices poll includes every unpaused pool whose quote request succeeded. The book
+    /// assembler applies the token list, TVL floor and quote-usability checks.
+    #[tokio::test]
+    async fn a_prices_poll_returns_every_unpaused_pool_that_answered() {
+        let server = pool_server().await;
+
+        let prices = prices_source(Chain::Ethereum, &server.url(), "key")
+            .fetch()
+            .await
+            .unwrap();
+
+        assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
+    }
+
+    #[tokio::test]
+    async fn a_prices_poll_fails_when_every_pool_does() {
+        let page = metadata_page(&[pool_json(FIRST_POOL, Some(1_000.0))], None);
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
+                return Some(("200 OK", page.clone()));
+            }
+            Some(("200 OK", batch_body(vec![error_entry(FIRST_POOL, 500, "boom")])))
+        })
+        .await;
+
+        let result = prices_source(Chain::Ethereum, &server.url(), "key")
+            .fetch()
+            .await;
+
+        assert!(matches!(result, Err(FeedError::Connection(_))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn the_prices_feed_publishes_each_poll() {
+        let server = pool_server().await;
+        let feed = MetricPricesFeed::new(Chain::Ethereum, "key".to_string())
+            .unwrap()
+            .base_url(server.url())
+            .unwrap();
+        let mut stream = SnapshotFeedStream::spawn("test", feed);
+
+        let event = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the feed publishes within the timeout")
+            .expect("the stream is not over");
+
+        let SnapshotFeedEvent::Published(prices) = event else {
+            panic!("expected the first poll to be published");
+        };
+        assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
+    }
+
+    /// The assembler keeps a pool only between served tokens, above the floor, unpaused and with
+    /// a quote it can serve.
+    #[test]
+    fn the_assembler_drops_pools_it_cannot_serve() {
+        const UNKNOWN_TOKEN: &str = "0x9999999999999999999999999999999999999999";
+        let assembler = serving_weth_usdc_above_100_usd();
+        let mut paused = pool_json(PAUSED, Some(1_000.0));
+        paused["pauseLevel"] = serde_json::json!(1);
+        let mut unknown = pool_json(UNKNOWN_POOL, Some(1_000.0));
+        unknown["token0"] = serde_json::json!(UNKNOWN_TOKEN);
+        let price = |metadata: serde_json::Value, unhealthy: bool| MetricPoolPrice {
+            metadata: serde_json::from_value(metadata).unwrap(),
+            bid_ask: serde_json::from_str(&bid_ask_json(SERVER_TS, unhealthy)).unwrap(),
+        };
+        let prices = MetricPrices {
+            pools: vec![
+                price(pool_json(FIRST_POOL, Some(1_000.0)), false),
+                price(pool_json(UNQUOTABLE, Some(1_000.0)), true),
+                price(pool_json(BELOW_FLOOR, Some(99.0)), false),
+                price(paused, false),
+                price(unknown, false),
+            ],
+        };
+
+        let books = assembler.books(prices);
+
+        let healthy_id = Bytes::from_str(FIRST_POOL)
+            .unwrap()
+            .to_string();
+        assert_eq!(books.keys().collect::<Vec<_>>(), vec![&healthy_id]);
+    }
+
+    #[test]
+    fn the_prices_feed_rejects_an_empty_key() {
+        let error = MetricPricesFeed::new(Chain::Ethereum, String::new()).unwrap_err();
+
+        assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_rejects_an_invalid_base_url() {
+        let error = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
+            .unwrap()
+            .base_url("api.metric.xyz".to_string())
+            .unwrap_err();
+
+        assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_debug_output_omits_the_api_key() {
+        let feed = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
+            .unwrap()
+            .base_url("https://metric.example".to_string())
+            .unwrap();
+        let rendered = format!("{feed:?}");
+
+        assert!(!rendered.contains("secret_key"));
+        assert!(rendered.contains("metric.example"));
+    }
+}
