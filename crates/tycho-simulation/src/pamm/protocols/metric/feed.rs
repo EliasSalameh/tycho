@@ -4,14 +4,12 @@
 
 use std::{future::Future, num::NonZeroUsize, time::Duration};
 
-use reqwest::Url;
-
 use crate::{
     book::{BookFeedConfig, BookSnapshot, ReceivedAt},
     pamm::protocols::metric::{
         client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
+        prices::{check_api_key, check_base_url, MetricBookAssembler, MetricPricesSource},
         source::MetricBookSource,
-        FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
     },
     snapshot_feed::{
         errors::FeedError,
@@ -32,8 +30,7 @@ pub struct MetricFeed {
 /// Builds a [`MetricFeed`] from the shared [`BookFeedConfig`] and the Bearer trading key. The feed
 /// talks to Metric's public API unless [`base_url`](Self::base_url) says otherwise.
 pub struct MetricFeedBuilder {
-    protocol_system: &'static str,
-    book_config: BookFeedConfig,
+    assembler: MetricBookAssembler,
     base_url: Option<String>,
     api_key: String,
     bid_ask_concurrency: NonZeroUsize,
@@ -45,12 +42,11 @@ impl MetricFeedBuilder {
     /// valid one no pool is quotable and the feed publishes empty books.
     pub fn new(book_config: BookFeedConfig, api_key: String) -> Self {
         Self {
-            book_config,
+            assembler: MetricBookAssembler::new(book_config),
             base_url: None,
             api_key,
             bid_ask_concurrency: DEFAULT_BID_ASK_CONCURRENCY,
             feed_config: Self::default_feed_config(),
-            protocol_system: PROTOCOL_SYSTEM,
         }
     }
 
@@ -102,10 +98,11 @@ impl MetricFeedBuilder {
 
     /// Settles this venue's swaps through Tycho's `MetricFallbackRouter`, which retries
     /// against a solver-named fallback pool when the venue reverts. Components then carry
-    /// [`FALLBACK_PROTOCOL_SYSTEM`] rather than [`PROTOCOL_SYSTEM`], which is what selects
-    /// the fallback encoder. Off by default.
+    /// [`FALLBACK_PROTOCOL_SYSTEM`](super::FALLBACK_PROTOCOL_SYSTEM) rather than
+    /// [`PROTOCOL_SYSTEM`](super::PROTOCOL_SYSTEM), which is what selects the fallback encoder.
+    /// Off by default.
     pub fn with_fallback_router(mut self) -> Self {
-        self.protocol_system = FALLBACK_PROTOCOL_SYSTEM;
+        self.assembler = self.assembler.with_fallback_router();
         self
     }
 
@@ -119,32 +116,25 @@ impl MetricFeedBuilder {
     /// numeric chain id, which is all Metric's API is addressed by. Whether the venue serves
     /// that chain is Metric's own answer, and the first poll carries it.
     pub fn build(self) -> Result<MetricFeed, FeedError> {
-        // Metric answers an empty bearer token with the same `Unknown chainId` it refuses an
-        // unserved chain with, where a key it rejects is a plain 401. A key that authenticates
-        // nothing would therefore read as a refusal and end the feed, so it stops here.
-        if self.api_key.is_empty() {
-            return Err(FeedError::InvalidInput("Metric trading key is empty".to_string()));
-        }
-        let chain_id = self.book_config.chain_id()?;
-        // A base URL that is not one fails every poll the same way, so the feed does not start.
+        check_api_key(&self.api_key)?;
+        let chain_id = self.assembler.book_config.chain_id()?;
         if let Some(base_url) = &self.base_url {
-            Url::parse(base_url).map_err(|error| {
-                FeedError::InvalidInput(format!("Metric base URL {base_url}: {error}"))
-            })?;
+            check_base_url(base_url)?;
         }
-        Ok(MetricFeed {
-            feed_config: self.feed_config,
-            source: MetricBookSource {
-                protocol_system: self.protocol_system,
-                book_config: self.book_config,
-                client: MetricClient::new(
-                    self.base_url.as_deref(),
-                    chain_id,
-                    self.api_key,
-                    self.bid_ask_concurrency,
-                ),
-            },
-        })
+        let MetricFeedBuilder { assembler, base_url, api_key, bid_ask_concurrency, feed_config } =
+            self;
+        let client = MetricClient::new(base_url.as_deref(), chain_id, api_key, bid_ask_concurrency);
+        let prices = MetricPricesSource::new(client);
+        Ok(MetricFeed { feed_config, source: MetricBookSource { prices, assembler } })
+    }
+
+    /// Builds a [`MetricBookAssembler`] that produces the same books as [`build`](Self::build)
+    /// from externally supplied [`MetricPrices`](super::prices::MetricPrices), such as those
+    /// published by [`MetricPricesFeed`](super::prices::MetricPricesFeed). It does not poll or
+    /// call the API. It ignores the trading key, base URL, feed tuning and bid/ask concurrency,
+    /// and does not validate the key or URL.
+    pub fn build_book_assembler(self) -> MetricBookAssembler {
+        self.assembler
     }
 }
 

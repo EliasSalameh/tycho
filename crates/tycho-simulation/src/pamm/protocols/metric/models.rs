@@ -32,6 +32,7 @@ pub struct PaginatedMetadataResponse {
     pub next_offset: Option<u64>,
 }
 
+/// One Metric pool's address, tokens, USD TVL and pause level.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricMetadata {
@@ -119,6 +120,8 @@ impl From<MetricBatchBidAskError> for FeedError {
     }
 }
 
+/// One pool's quote from Metric's bid/ask endpoints.
+///
 /// Metric returns its numeric fields as decimal strings; they are parsed once at deserialization
 /// (`DisplayFromStr`) so the pricing paths never re-parse, and serialize back to the same form.
 #[serde_as]

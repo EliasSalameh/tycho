@@ -1,34 +1,16 @@
-//! The provider half of the Metric book feed: fetches one complete book per poll from the
-//! `api.metric.xyz` v1 API.
-//!
-//! Endpoint reference: <https://docs.metric.xyz/RSm94m71kqtGICv4iKRj/developers/api>
-
-use chrono::DateTime;
-use tracing::{debug, warn};
-
 use crate::{
-    book::{component::pair_book, BookFeedConfig, BookSnapshot, Books, ReceivedAt},
-    pamm::protocols::metric::{
-        client::MetricClient,
-        models::MetricMetadata,
-        prices::{every_pool_failed, is_unpaused},
-        state::MetricState,
-        PROTOCOL_TYPE,
-    },
+    book::{BookSnapshot, ReceivedAt},
+    pamm::protocols::metric::prices::{MetricBookAssembler, MetricPricesSource},
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
 /// Fetches one complete Metric book per poll: every unpaused, quotable pool between the
-/// configured tokens whose USD TVL clears the threshold, as simulate-ready books. `Debug` output
-/// omits the API key.
-#[derive(derive_more::Debug, Clone)]
+/// configured tokens whose USD TVL clears the threshold, as simulate-ready books built by its
+/// [`MetricBookAssembler`]. `Debug` output omits the API key.
+#[derive(Debug, Clone)]
 pub struct MetricBookSource {
-    /// The protocol system stamped on this source's components: the venue's own, or its
-    /// fallback-router one for a feed built with `with_fallback_router()`.
-    pub protocol_system: &'static str,
-    pub book_config: BookFeedConfig,
-    /// Reads the venue's pool metadata and quotes.
-    pub client: MetricClient,
+    pub(super) prices: MetricPricesSource,
+    pub(super) assembler: MetricBookAssembler,
 }
 
 impl HttpSource for MetricBookSource {
@@ -37,71 +19,18 @@ impl HttpSource for MetricBookSource {
     /// A metadata failure fails the poll, and so does losing every pool: a book that reads as
     /// nothing withdraws every pair the venue was serving, which is an outage rather than a
     /// poll that worked. Losing some of the pools only drops those from this book.
+    ///
+    /// Pools outside the token list, under the TVL floor or paused are not quoted.
     async fn fetch(&self) -> Result<BookSnapshot<ReceivedAt>, FeedError> {
-        let metadata = self.client.fetch_metadata().await?;
-
-        let quotable: Vec<MetricMetadata> = metadata
-            .into_iter()
-            .filter(|pool| {
-                self.book_config
-                    .pair_tokens(&pool.token0, &pool.token1)
-                    .is_some() &&
-                    // v1 metadata carries the USD TVL directly, so no cross-pool price
-                    // normalization is needed.
-                    self.book_config
-                        .clears_min_tvl(pool.tvl_fiat.unwrap_or(0.0), &pool.pool_address) &&
-                    is_unpaused(pool)
+        let prices = self
+            .prices
+            .poll(|pool| {
+                self.assembler
+                    .pool_tokens(pool)
+                    .is_some()
             })
-            .collect();
-
-        let polled = self
-            .client
-            .fetch_bid_ask_each(quotable)
-            .await;
-        let requested = polled.len();
-        let mut failures: Vec<FeedError> = Vec::new();
-        let mut books = Books::new();
-        for (pool, bid_ask) in polled {
-            let bid_ask = match bid_ask {
-                Ok(bid_ask) => bid_ask,
-                Err(e) => {
-                    warn!(pool = %pool.pool_address, error = %e, "skipping pool, bid/ask fetch failed");
-                    failures.push(e);
-                    continue;
-                }
-            };
-            let Some((token0, token1)) = self
-                .book_config
-                .pair_tokens(&pool.token0, &pool.token1)
-            else {
-                continue;
-            };
-            if !bid_ask.is_quotable() {
-                debug!(pool = %pool.pool_address, "skipping pool, not quotable");
-                continue;
-            }
-
-            let component_id = pool.pool_address.clone();
-            let updated_at = DateTime::from_timestamp(bid_ask.server_ts as i64, 0);
-            let state = MetricState {
-                base_token: token0.clone(),
-                quote_token: token1.clone(),
-                metadata: pool,
-                bid_ask,
-            };
-            books.insert(pair_book(
-                self.protocol_system,
-                PROTOCOL_TYPE,
-                self.book_config.chain,
-                component_id,
-                state,
-                updated_at,
-            ));
-        }
-        if requested > 0 && failures.len() == requested {
-            return Err(every_pool_failed(failures));
-        }
-        Ok(BookSnapshot::received_now(books))
+            .await?;
+        Ok(BookSnapshot::received_now(self.assembler.collect(prices)))
     }
 }
 
