@@ -189,7 +189,10 @@ mod tests {
     use tycho_common::models::{protocol::GetAmountOutParams, Chain};
 
     use super::*;
-    use crate::{book::test_token_map, snapshot_feed::SnapshotFeed};
+    use crate::{
+        book::test_token_map,
+        snapshot_feed::{http::HttpSource, SnapshotFeed},
+    };
 
     #[tokio::test]
     #[ignore = "hits Hashflow's live API; requires HASHFLOW_USER and HASHFLOW_KEY"]
@@ -285,18 +288,17 @@ mod tests {
             receiver: router.clone(),
             origin: None,
         };
-        let client = &feed.source.client;
-        let market_makers = client
-            .fetch_market_makers()
-            .await
-            .unwrap();
+        let client = &feed.source.assembler.client;
         // The request goes to one maker and the API substitutes no other, so it has to be a
         // maker whose own ladder covers the amount; the deepest one leaves the most room for the
         // book to move between the two calls.
-        let market_maker = client
-            .fetch_price_levels(&market_makers)
+        let market_maker = feed
+            .source
+            .prices
+            .fetch()
             .await
             .unwrap()
+            .levels_by_maker
             .into_iter()
             .filter_map(|(name, levels)| {
                 let (depth, _) = levels

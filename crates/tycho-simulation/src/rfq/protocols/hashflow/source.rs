@@ -24,89 +24,46 @@ impl HttpSource for HashflowBookSource {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, time::Duration};
+    use std::{
+        collections::{HashMap, HashSet},
+        str::FromStr,
+    };
 
     use rstest::rstest;
-    use tycho_common::{models::Chain, simulation::errors::SimulationError};
+    use tycho_common::{simulation::errors::SimulationError, Bytes};
 
     use super::*;
     use crate::{
         book::{
-            all_pairs::QuoteRule,
-            component::PairState,
+            all_pairs::{ComponentLayout, QuoteRule},
+            assert_same_books,
+            component::{maker_component_id, PairState},
             decode_swap_directions,
             levels::{Levels, PriceLevel},
-            test_token_map,
         },
         rfq::protocols::hashflow::{
-            models::HashflowPair, FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
+            client::HashflowLevelsClient,
+            prices::HashflowPrices,
+            state::HashflowState,
+            test_support::{assembler_for, two_maker_server, USDC, WETH},
+            FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
         snapshot_feed::http::test_support::spawn_http_server,
     };
 
-    /// A source over an empty token universe with USDC and USDT as the USD quote tokens.
-    fn test_source() -> HashflowBookSource {
-        source_for("https://hashflow.example", &[], 1.0)
-    }
-
     /// A source whose endpoints live under `endpoint`, serving `tokens` (18 decimals each) above
     /// `min_tvl_usd`, with USDC and USDT as the USD quote tokens.
     fn source_for(endpoint: &str, tokens: &[&Bytes], min_tvl_usd: f64) -> HashflowBookSource {
-        let quote_tokens = HashSet::from([
-            Bytes::from_str(USDC).unwrap(),
-            Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(), // USDT
-        ]);
-        let entries: Vec<_> = tokens
-            .iter()
-            .map(|address| (*address, "T", 18))
-            .collect();
+        let client = HashflowLevelsClient::new(
+            Some(endpoint),
+            1,
+            "test_user".to_string(),
+            "test_key".to_string(),
+        );
         HashflowBookSource {
-            component_layout: ComponentLayout::PerPair,
-            protocol_system: PROTOCOL_SYSTEM,
-            book_config: BookFeedConfig {
-                chain: Chain::Ethereum,
-                tokens: Arc::new(test_token_map(&entries)),
-                min_tvl_usd,
-            },
-            usd_quote_tokens: Arc::new(quote_tokens),
-            client: Arc::new(HashflowClient::new(
-                Some(endpoint),
-                1,
-                "test_user".to_string(),
-                "test_key".to_string(),
-                Duration::from_secs(5),
-            )),
+            prices: HashflowPricesSource::new(client),
+            assembler: assembler_for(endpoint, tokens, min_tvl_usd),
         }
-    }
-
-    const USDC: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-    const WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-    const UNPRICED: &str = "0x1234567890123456789012345678901234567890";
-
-    /// The response carries one market maker's WETH/USDC level at 3000.
-    #[rstest]
-    #[case::usd_quote_token_is_taken_as_is(USDC, 1000.0, Some(1000.0))]
-    #[case::other_quote_token_is_converted_through_its_usd_level(WETH, 2.0, Some(6000.0))]
-    #[case::quote_token_without_usd_level_has_no_tvl(UNPRICED, 1000.0, None)]
-    fn normalized_tvl_converts_into_usd_quote_tokens(
-        #[case] quote_token: &str,
-        #[case] raw_tvl: f64,
-        #[case] expected: Option<f64>,
-    ) {
-        let source = test_source();
-        let weth_usdc = HashflowMarketMakerLevels {
-            pair: HashflowPair {
-                base_token: Bytes::from_str(WETH).unwrap(),
-                quote_token: Bytes::from_str(USDC).unwrap(),
-            },
-            levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 3000.0 }]).unwrap(),
-        };
-        let levels = HashMap::from([("test_mm".to_string(), vec![weth_usdc])]);
-
-        let result =
-            source.normalized_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
-
-        assert_eq!(result, expected);
     }
 
     #[rstest]
@@ -147,11 +104,9 @@ mod tests {
             }
         })
         .await;
-        let source = HashflowBookSource {
-            protocol_system: FALLBACK_PROTOCOL_SYSTEM,
-            component_layout,
-            ..source_for(&server.url(), &[&weth, &usdc], 0.0)
-        };
+        let mut source = source_for(&server.url(), &[&weth, &usdc], 0.0);
+        source.assembler.protocol_system = FALLBACK_PROTOCOL_SYSTEM;
+        source.assembler.component_layout = component_layout;
 
         let books = source.fetch().await.unwrap().books;
 
@@ -296,10 +251,14 @@ mod tests {
         #[case] expected: FeedError,
     ) {
         let server = spawn_http_server(move |_| Some(("200 OK", body.to_string()))).await;
-        let source = source_for(&server.url(), &[], 1.0);
+        let client = HashflowLevelsClient::new(
+            Some(&server.url()),
+            1,
+            "test_user".to_string(),
+            "test_key".to_string(),
+        );
 
-        let error = source
-            .client
+        let error = client
             .fetch_price_levels(&["mm1".to_string()])
             .await
             .unwrap_err();
@@ -346,10 +305,8 @@ mod tests {
             }
         })
         .await;
-        let source = HashflowBookSource {
-            component_layout: ComponentLayout::AllPairs(rule),
-            ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
-        };
+        let mut source = source_for(&server.url(), &[&weth, &usdc], 1000.0);
+        source.assembler.component_layout = ComponentLayout::AllPairs(rule);
 
         let books = source.fetch().await.unwrap().books;
 
@@ -367,7 +324,7 @@ mod tests {
             Bytes::from(attribute.as_bytes())
         );
 
-        let tokens = &source.book_config.tokens;
+        let tokens = &source.assembler.book_config.tokens;
         // Hashflow's first level is the minimum tradable size, so the swap is one whole WETH.
         let swap = |state: &dyn tycho_common::simulation::protocol_sim::ProtocolSim| {
             state.get_amount_out(
@@ -413,14 +370,12 @@ mod tests {
             }
         })
         .await;
-        let source = HashflowBookSource {
-            component_layout: ComponentLayout::AllPairs(QuoteRule::OncePerMaker),
-            ..source_for(&server.url(), &[&weth, &usdc], 1000.0)
-        };
+        let mut source = source_for(&server.url(), &[&weth, &usdc], 1000.0);
+        source.assembler.component_layout = ComponentLayout::AllPairs(QuoteRule::OncePerMaker);
 
         let books = source.fetch().await.unwrap().books;
         let state = &books.values().next().unwrap().state;
-        let tokens = &source.book_config.tokens;
+        let tokens = &source.assembler.book_config.tokens;
         let swap = |whole_weth: u64| {
             state.get_amount_out(
                 num_bigint::BigUint::from(whole_weth) * num_bigint::BigUint::from(10u64).pow(17),
@@ -439,5 +394,24 @@ mod tests {
             other => panic!("expected the venue's floor, got {other:?}"),
         }
         assert!(swap(10).is_ok(), "one WETH is small_mm's minimum");
+    }
+
+    /// Books rebuilt from serialized prices match the source's published books for the same
+    /// poll.
+    #[tokio::test]
+    async fn prices_round_trip_builds_the_published_books() {
+        let weth = Bytes::from_str(WETH).unwrap();
+        let usdc = Bytes::from_str(USDC).unwrap();
+        let server = two_maker_server().await;
+        let source = source_for(&server.url(), &[&weth, &usdc], 1.0);
+        let published = source.fetch().await.unwrap().books;
+        let prices = source.prices.fetch().await.unwrap();
+
+        let sent = serde_json::to_string(&prices).unwrap();
+        let received: HashflowPrices = serde_json::from_str(&sent).unwrap();
+
+        assert_eq!(received, prices);
+        assert_same_books(&source.assembler.books(received), &published);
+        assert_eq!(published.len(), 1, "only mm1's pair is between the served tokens");
     }
 }

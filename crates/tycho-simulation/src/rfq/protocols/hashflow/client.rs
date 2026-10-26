@@ -782,12 +782,11 @@ mod tests {
         .await;
         let url = server.url();
         let chain_id = Chain::Arbitrum.id();
-        let client = HashflowClient::new(
+        let client = HashflowLevelsClient::new(
             Some(&url),
             chain_id,
             "test_user".to_string(),
             "test_key".to_string(),
-            Duration::from_secs(5),
         );
 
         let makers = client
@@ -817,13 +816,7 @@ mod tests {
         dotenv().ok();
         let source = std::env::var("HASHFLOW_USER").expect("HASHFLOW_USER not set");
         let auth_key = std::env::var("HASHFLOW_KEY").expect("HASHFLOW_KEY not set");
-        let client = HashflowClient::new(
-            None,
-            Chain::Unichain.id(),
-            source,
-            auth_key,
-            Duration::from_secs(10),
-        );
+        let client = HashflowLevelsClient::new(None, Chain::Unichain.id(), source, auth_key);
 
         let error = client
             .fetch_market_makers()
@@ -851,12 +844,11 @@ mod tests {
     ) {
         let server = spawn_http_server(move |_| Some(("400 Bad Request", body.to_string()))).await;
         let url = server.url();
-        let client = HashflowClient::new(
+        let client = HashflowLevelsClient::new(
             Some(&url),
             Chain::Unichain.id(),
             "test_user".to_string(),
             "test_key".to_string(),
-            Duration::from_secs(5),
         );
 
         let error = client
@@ -885,12 +877,11 @@ mod tests {
     ) {
         let server = spawn_http_server(move |_| Some(("200 OK", body.to_string()))).await;
         let url = server.url();
-        let client = HashflowClient::new(
+        let client = HashflowLevelsClient::new(
             Some(&url),
             Chain::Unichain.id(),
             "test_user".to_string(),
             "test_key".to_string(),
-            Duration::from_secs(5),
         );
 
         let error = client

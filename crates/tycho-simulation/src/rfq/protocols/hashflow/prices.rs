@@ -224,3 +224,123 @@ impl HashflowBookAssembler {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, str::FromStr, time::Duration};
+
+    use futures::StreamExt;
+    use rstest::rstest;
+    use tokio::time::timeout;
+
+    use super::*;
+    use crate::{
+        book::levels::{Levels, PriceLevel},
+        rfq::protocols::hashflow::test_support::{
+            assembler_for, two_maker_server, UNPRICED, USDC, WBTC, WETH,
+        },
+        snapshot_feed::{SnapshotFeedEvent, SnapshotFeedStream},
+    };
+
+    fn weth_usdc_levels() -> HashflowMarketMakerLevels {
+        HashflowMarketMakerLevels {
+            pair: HashflowPair {
+                base_token: Bytes::from_str(WETH).unwrap(),
+                quote_token: Bytes::from_str(USDC).unwrap(),
+            },
+            levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 3000.0 }]).unwrap(),
+        }
+    }
+
+    /// What `two_maker_server` answers a poll with.
+    fn two_maker_prices() -> HashflowPrices {
+        let wbtc_weth = HashflowMarketMakerLevels {
+            pair: HashflowPair {
+                base_token: Bytes::from_str(WBTC).unwrap(),
+                quote_token: Bytes::from_str(WETH).unwrap(),
+            },
+            levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 10.0 }]).unwrap(),
+        };
+        HashflowPrices {
+            levels_by_maker: HashMap::from([
+                ("mm1".to_string(), vec![weth_usdc_levels()]),
+                ("mm2".to_string(), vec![wbtc_weth]),
+            ]),
+        }
+    }
+
+    fn prices_source(endpoint: &str) -> HashflowPricesSource {
+        HashflowPricesSource::new(HashflowLevelsClient::new(
+            Some(endpoint),
+            1,
+            "test_user".to_string(),
+            "test_key".to_string(),
+        ))
+    }
+
+    /// The response carries one market maker's WETH/USDC level at 3000.
+    #[rstest]
+    #[case::usd_quote_token_is_taken_as_is(USDC, 1000.0, Some(1000.0))]
+    #[case::other_quote_token_is_converted_through_its_usd_level(WETH, 2.0, Some(6000.0))]
+    #[case::quote_token_without_usd_level_has_no_tvl(UNPRICED, 1000.0, None)]
+    fn normalized_tvl_converts_into_usd_quote_tokens(
+        #[case] quote_token: &str,
+        #[case] raw_tvl: f64,
+        #[case] expected: Option<f64>,
+    ) {
+        let assembler = assembler_for("https://hashflow.example", &[], 1.0);
+        let levels = HashMap::from([("test_mm".to_string(), vec![weth_usdc_levels()])]);
+
+        let result =
+            assembler.normalized_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
+
+        assert_eq!(result, expected);
+    }
+
+    /// A prices poll includes every market maker's levels.
+    #[tokio::test]
+    async fn a_prices_poll_returns_every_makers_levels() {
+        let server = two_maker_server().await;
+
+        let prices = prices_source(&server.url())
+            .fetch()
+            .await
+            .unwrap();
+
+        assert_eq!(prices, two_maker_prices());
+    }
+
+    #[tokio::test]
+    async fn the_prices_feed_publishes_each_poll() {
+        let server = two_maker_server().await;
+        let feed = HashflowPricesFeed {
+            feed_config: HashflowFeedBuilder::default_feed_config(),
+            source: prices_source(&server.url()),
+        };
+        let mut stream = SnapshotFeedStream::spawn("test", feed);
+
+        let event = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the feed publishes within the timeout")
+            .expect("the stream is not over");
+
+        let SnapshotFeedEvent::Published(prices) = event else {
+            panic!("expected the first poll to be published");
+        };
+        assert_eq!(prices, two_maker_prices());
+    }
+
+    #[test]
+    fn the_prices_feed_debug_output_omits_the_credentials() {
+        let feed = HashflowPricesFeed::new(
+            Chain::Ethereum,
+            "secret_user".to_string(),
+            "secret_key".to_string(),
+        )
+        .unwrap();
+        let rendered = format!("{feed:?}");
+
+        assert!(!rendered.contains("secret_user"));
+        assert!(!rendered.contains("secret_key"));
+    }
+}
