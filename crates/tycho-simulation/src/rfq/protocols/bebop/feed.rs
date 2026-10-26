@@ -8,9 +8,9 @@ use crate::{
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::bebop::{
-            client::{BebopClient, QuoteOrigin},
+            client::{BebopClient, BebopPricingClient, QuoteOrigin},
             models::BebopSupportedChain,
-            prices::BebopBookAssembler,
+            prices::{BebopBookAssembler, BebopPricesSource},
             source::BebopBookSource,
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
@@ -139,23 +139,36 @@ impl BebopFeedBuilder {
     pub fn build(self) -> Result<BebopFeed, FeedError> {
         let chain =
             BebopSupportedChain::try_from(self.book_config.chain).map_err(FeedError::Fatal)?;
-        Ok(BebopFeed {
-            feed_config: self.feed_config,
-            source: BebopBookSource {
-                assembler: BebopBookAssembler {
-                    protocol_system: self.protocol_system,
-                    book_config: self.book_config,
-                    usd_quote_tokens: self.usd_quote_tokens,
-                    client: Arc::new(BebopClient::new(
-                        chain,
-                        self.ws_key,
-                        self.quote_timeout,
-                        self.origin,
-                    )),
-                    all_pairs: self.all_pairs,
-                },
-            },
-        })
+        let prices = BebopPricesSource::new(BebopPricingClient::new(chain, self.ws_key.clone()));
+        let BebopFeedBuilder {
+            protocol_system,
+            book_config,
+            usd_quote_tokens,
+            ws_key,
+            quote_timeout,
+            origin,
+            feed_config,
+            all_pairs,
+        } = self;
+        let assembler = BebopBookAssembler {
+            protocol_system,
+            book_config,
+            usd_quote_tokens,
+            client: Arc::new(BebopClient::new(chain, ws_key, quote_timeout, origin)),
+            all_pairs,
+        };
+        Ok(BebopFeed { feed_config, source: BebopBookSource { prices, assembler } })
+    }
+
+    /// Builds a [`BebopBookAssembler`] that produces the same books as [`build`](Self::build)
+    /// from externally supplied [`BebopPrices`](super::prices::BebopPrices), such as those
+    /// published by [`BebopPricesFeed`](super::prices::BebopPricesFeed). Does not open the
+    /// pricing connection and ignores feed tuning.
+    ///
+    /// Fails for chains Bebop does not serve.
+    pub fn build_book_assembler(self) -> Result<BebopBookAssembler, FeedError> {
+        self.build()
+            .map(|feed| feed.source.assembler)
     }
 }
 

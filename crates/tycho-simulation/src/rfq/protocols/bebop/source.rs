@@ -1,57 +1,39 @@
 use http::Request;
-use prost::Message as ProstMessage;
-use tracing::warn;
 
 use crate::{
     book::{BookSnapshot, ReceivedAt},
-    rfq::protocols::bebop::{models::BebopPricingUpdate, prices::BebopBookAssembler},
+    rfq::protocols::bebop::prices::{BebopBookAssembler, BebopPricesSource},
     snapshot_feed::{
         errors::FeedError,
         ws::{WsPayload, WsSource},
     },
 };
 
-/// Opens Bebop's authenticated pricing WebSocket and decodes every pricing frame into the
-/// complete book its [`BebopBookAssembler`] makes of it.
+/// Streams Bebop's pricing WebSocket and decodes every pricing frame into the complete book its
+/// [`BebopBookAssembler`] makes of it.
 #[derive(Clone, Debug)]
 pub struct BebopBookSource {
-    pub assembler: BebopBookAssembler,
+    pub(super) prices: BebopPricesSource,
+    pub(super) assembler: BebopBookAssembler,
 }
 
 impl WsSource for BebopBookSource {
     type Snapshot = BookSnapshot<ReceivedAt>;
 
     fn request(&self) -> Result<Request<()>, FeedError> {
-        self.assembler
-            .client
-            .pricing_handshake()
-            // No retry builds a different request, so the feed ends rather than reconnecting.
-            .map_err(|e| FeedError::Fatal(format!("Failed to build the pricing handshake: {e}")))
+        self.prices.request()
     }
 
     fn decode(
         &mut self,
         payload: WsPayload,
     ) -> Result<Option<BookSnapshot<ReceivedAt>>, FeedError> {
-        let data = match payload {
-            WsPayload::Binary(data) => data,
-            // The protobuf stream carries pricing only in binary frames; a text frame is most
-            // likely a server-side notice worth seeing in the logs.
-            WsPayload::Text(text) => {
-                warn!(%text, "unexpected text frame on the pricing stream");
-                return Ok(None);
-            }
-        };
-        match BebopPricingUpdate::decode(&data[..]) {
-            Ok(update) => self
-                .assembler
-                .build_books(update)
-                .map(|books| Some(BookSnapshot::received_now(books))),
-            Err(e) => Err(FeedError::Parsing(format!("Failed to parse protobuf message: {e}"))),
-        }
+        Ok(self
+            .prices
+            .decode(payload)?
+            .map(|prices| BookSnapshot::received_now(self.assembler.collect(prices))))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
