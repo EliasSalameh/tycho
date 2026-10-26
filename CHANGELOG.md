@@ -1,3 +1,11 @@
+## [0.482.4](https://github.com/propeller-heads/tycho/compare/0.482.3...0.482.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([4627fcf](https://github.com/propeller-heads/tycho/commit/4627fcf42f952a15d6965cd4d14b7b2865c2dbec))
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([#1681](https://github.com/propeller-heads/tycho/issues/1681)) ([81a3dd9](https://github.com/propeller-heads/tycho/commit/81a3dd92535ec5fcd80aed720061b6af7cd4b47d))
+
 ## [0.482.3](https://github.com/propeller-heads/tycho/compare/0.482.2...0.482.3) (2026-10-26)
 
 
