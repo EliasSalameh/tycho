@@ -7,29 +7,31 @@ skip_balance_check: false
 initialized_accounts:
 tests:
   # Starts at the factory deployments: their constructors emit the default fee and fee module that
-  # pool creation copies into each pool.
-  - name: test_first_volatile_and_stable_pools
+  # pool creation copies into each pool. Both pools hold liquidity by the stop block, and the
+  # stable pool trades at a 30 bps custom fee.
+  - name: test_volatile_and_stable_pools
     start_block: 52880042
-    stop_block: 52886974
+    stop_block: 52925000
     expected_components:
-      - id: "0xf634058dc94e6bf8e828e27621320c423bc8b18e"
-        tokens:
-          - "0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee"
-          - "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" # USDC
-        static_attributes:
-          pool_address: "0xf634058dc94e6bf8e828e27621320c423bc8b18e"
-          is_stable: "0x00"
-        creation_tx: "0x8ef2879877eb6829fa5df4d5e6fcf56dffb3becf127ffb28127284d5ae55edde"
-        # The aero_basic simulation and executor land in follow-up PRs.
-        skip_simulation: true
-        skip_execution: true
-      - id: "0x45adce4be5f602273c6e883a4c94133309af1d09"
+      - id: "0x800eb395b577b234c5065c8e0ccb0f3a1401b2c2"
         tokens:
           - "0x4200000000000000000000000000000000000006" # WETH
-          - "0x7ba6f01772924a82d9626c126347a28299e98c98"
+          - "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" # USDC
         static_attributes:
-          pool_address: "0x45adce4be5f602273c6e883a4c94133309af1d09"
+          pool_address: "0x800eb395b577b234c5065c8e0ccb0f3a1401b2c2"
+          is_stable: "0x00"
+        creation_tx: "0x713edae4bcb3a4ddffd16889baae9f9dd2cd1108fc2c19a714e1ee0cedf76e27"
+        # The aero_basic simulation (#1677) and executor (#1678) are not on main yet.
+        skip_simulation: true
+        skip_execution: true
+      - id: "0x67c8cb3e74dda2c58c9501e49ac9523e258c24fe"
+        tokens:
+          - "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" # USDC
+          - "0xbf1aea8670d2528e08334083616dd9c5f3b087ae"
+        static_attributes:
+          pool_address: "0x67c8cb3e74dda2c58c9501e49ac9523e258c24fe"
           is_stable: "0x01"
-        creation_tx: "0x7284f882b1d93e0d44929aa820ddf799033763df234bb677d35027989be4449a"
+        creation_tx: "0x5414262568429adb9d53f0aeb774d0f07f3c8a47b803c56309e1fafc429eed1c"
+        # The aero_basic simulation (#1677) and executor (#1678) are not on main yet.
         skip_simulation: true
         skip_execution: true
