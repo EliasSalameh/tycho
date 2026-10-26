@@ -929,6 +929,17 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn test_cpu_profiler_rejects_invalid_sample_rate() {
+        std::env::set_var("PYROSCOPE_SERVER_URL", "http://localhost:4040");
+        for rate in ["0", "1000001", "-1", "abc"] {
+            std::env::set_var("PYROSCOPE_SAMPLE_RATE", rate);
+            assert!(super::start_cpu_profiler(&[]).is_err(), "rate {rate:?}");
+        }
+        std::env::remove_var("PYROSCOPE_SAMPLE_RATE");
+        std::env::remove_var("PYROSCOPE_SERVER_URL");
+    }
 }
 
 #[cfg(test)]
