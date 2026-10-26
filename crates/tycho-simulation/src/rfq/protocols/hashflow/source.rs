@@ -1,14 +1,14 @@
-use tracing::debug;
-
 use crate::{
     book::{BookSnapshot, ReceivedAt},
-    rfq::protocols::hashflow::prices::HashflowBookAssembler,
+    rfq::protocols::hashflow::prices::{HashflowBookAssembler, HashflowPricesSource},
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
-/// Fetches one complete Hashflow book per poll, built by its [`HashflowBookAssembler`].
+/// Fetches one complete Hashflow book per poll: the prices of every market maker, built into
+/// books by its [`HashflowBookAssembler`].
 #[derive(Clone, Debug)]
 pub struct HashflowBookSource {
+    pub(super) prices: HashflowPricesSource,
     pub(super) assembler: HashflowBookAssembler,
 }
 
@@ -17,19 +17,8 @@ impl HttpSource for HashflowBookSource {
 
     /// Both requests (market makers, then their levels) count as one poll.
     async fn fetch(&self) -> Result<BookSnapshot<ReceivedAt>, FeedError> {
-        let market_makers = self
-            .assembler
-            .client
-            .fetch_market_makers()
-            .await?;
-        let levels_by_mm = self
-            .assembler
-            .client
-            .fetch_price_levels(&market_makers)
-            .await?;
-        debug!(market_makers = levels_by_mm.len(), "fetched price levels");
-
-        Ok(BookSnapshot::received_now(self.assembler.build_books(levels_by_mm)))
+        let prices = self.prices.fetch().await?;
+        Ok(BookSnapshot::received_now(self.assembler.collect(prices)))
     }
 }
 

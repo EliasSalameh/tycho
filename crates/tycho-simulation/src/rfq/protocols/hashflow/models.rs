@@ -77,6 +77,8 @@ pub struct HashflowPriceLevelsResponse {
     pub error: Option<HashflowError>,
 }
 
+/// One market maker's price levels for a [`HashflowPair`]: the quantities of the base token it
+/// sells, each at a price in the quote token.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HashflowMarketMakerLevels {
     pub pair: HashflowPair,
@@ -118,6 +120,7 @@ mod hashflow_levels {
     }
 }
 
+/// The token a market maker sells and the token it prices it in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HashflowPair {

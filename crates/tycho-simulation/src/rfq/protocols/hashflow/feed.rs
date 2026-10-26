@@ -11,7 +11,9 @@ use crate::{
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::hashflow::{
-            client::HashflowClient, prices::HashflowBookAssembler, source::HashflowBookSource,
+            client::{HashflowClient, HashflowLevelsClient},
+            prices::{HashflowBookAssembler, HashflowPricesSource},
+            source::HashflowBookSource,
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     },
@@ -115,24 +117,53 @@ impl HashflowFeedBuilder {
     /// it.
     pub fn build(self) -> Result<HashflowFeed, FeedError> {
         let chain_id = self.book_config.chain_id()?;
+        let levels_client = HashflowLevelsClient::new(
+            None,
+            chain_id,
+            self.auth_user.clone(),
+            self.auth_key.clone(),
+        );
+        let HashflowFeedBuilder {
+            protocol_system,
+            component_layout,
+            book_config,
+            usd_quote_tokens,
+            auth_user,
+            auth_key,
+            feed_config,
+            quote_timeout,
+        } = self;
+        let assembler = HashflowBookAssembler {
+            component_layout,
+            protocol_system,
+            client: Arc::new(HashflowClient::new(
+                None,
+                chain_id,
+                auth_user,
+                auth_key,
+                quote_timeout,
+            )),
+            book_config,
+            usd_quote_tokens,
+        };
         Ok(HashflowFeed {
-            feed_config: self.feed_config,
+            feed_config,
             source: HashflowBookSource {
-                assembler: HashflowBookAssembler {
-                    component_layout: self.component_layout,
-                    protocol_system: self.protocol_system,
-                    client: Arc::new(HashflowClient::new(
-                        None,
-                        chain_id,
-                        self.auth_user,
-                        self.auth_key,
-                        self.quote_timeout,
-                    )),
-                    book_config: self.book_config,
-                    usd_quote_tokens: self.usd_quote_tokens,
-                },
+                prices: HashflowPricesSource::new(levels_client),
+                assembler,
             },
         })
+    }
+
+    /// Builds a [`HashflowBookAssembler`] that produces the same books as [`build`](Self::build)
+    /// from externally supplied [`HashflowPrices`](super::prices::HashflowPrices), such as those
+    /// published by [`HashflowPricesFeed`](super::prices::HashflowPricesFeed). Does not poll and
+    /// ignores feed tuning.
+    ///
+    /// Fails for a chain with no numeric chain id.
+    pub fn build_book_assembler(self) -> Result<HashflowBookAssembler, FeedError> {
+        self.build()
+            .map(|feed| feed.source.assembler)
     }
 }
 
