@@ -116,43 +116,9 @@ interface IAllowListAuthentication {
     function isSolver(address _addr) external view returns (bool);
 }
 
-contract LiquoriceExecutorExposed is LiquoriceExecutor {
-    constructor(address _liquoriceSettlement, address _liquoriceBalanceManager)
-        LiquoriceExecutor(_liquoriceSettlement, _liquoriceBalanceManager)
-    {}
-
-    function decodeData(bytes calldata data)
-        external
-        pure
-        returns (
-            address tokenIn,
-            uint32 partialFillOffset,
-            uint256 originalBaseTokenAmount,
-            uint256 minBaseTokenAmount,
-            bytes memory liquoriceCalldata
-        )
-    {
-        return _decodeData(data);
-    }
-
-    function clampAmount(
-        uint256 givenAmount,
-        uint256 originalBaseTokenAmount,
-        uint256 minBaseTokenAmount
-    ) external pure returns (uint256) {
-        return _clampAmount(
-            givenAmount, originalBaseTokenAmount, minBaseTokenAmount
-        );
-    }
-}
-
-contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
-    using SafeERC20 for IERC20;
-
-    ILiquoriceSettlement liquoriceSettlement;
-    IAllowListAuthentication authenticator;
-    LiquoriceExecutorExposed liquoriceExecutor;
-
+/// @dev Builds and signs Liquorice orders against the deployed settlement. The maker is a test
+///      key, so the orders are this suite's own rather than a captured quote.
+abstract contract LiquoriceOrders is Constants {
     uint256 constant MAKER_PK = 0xA11CE;
     address maker;
 
@@ -163,29 +129,23 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
     uint8 constant MAKER_FLAGS_NONE = 0;
 
     uint256 constant FORK_BLOCK = 25_900_000;
+    /// @dev How long after signing the built orders stay valid.
+    uint256 constant QUOTE_VALIDITY = 1 hours;
 
-    function setUp() public {
+    ILiquoriceSettlement liquoriceSettlement;
+    IAllowListAuthentication authenticator;
+
+    /// @dev Forks, names the maker and funds its side of the trade.
+    function _setUpLiquorice(uint256 makerQuoteBalance) internal {
         vm.createSelectFork(vm.rpcUrl("mainnet"), FORK_BLOCK);
 
         liquoriceSettlement = ILiquoriceSettlement(LIQUORICE_SETTLEMENT);
-        maker = vm.addr(MAKER_PK);
-
-        liquoriceExecutor = new LiquoriceExecutorExposed(
-            LIQUORICE_SETTLEMENT, LIQUORICE_BALANCE_MANAGER
-        );
         authenticator =
             IAllowListAuthentication(liquoriceSettlement.AUTHENTICATOR());
+        maker = vm.addr(MAKER_PK);
 
-        // The settlement gates callers and makers behind its own allowlist, which is governed by
-        // Liquorice. Neither this executor nor the test maker is on it.
-        vm.mockCall(
-            address(authenticator),
-            abi.encodeWithSelector(
-                IAllowListAuthentication.isSolver.selector,
-                address(liquoriceExecutor)
-            ),
-            abi.encode(true)
-        );
+        // The settlement gates makers behind its own allowlist, which Liquorice governs. The
+        // test maker is not on it.
         vm.mockCall(
             address(authenticator),
             abi.encodeWithSelector(
@@ -194,20 +154,23 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
             abi.encode(true)
         );
 
+        deal(WETH_ADDR, maker, makerQuoteBalance);
         vm.prank(maker);
         IERC20(WETH_ADDR).approve(LIQUORICE_BALANCE_MANAGER, type(uint256).max);
     }
 
-    /// @dev The balance manager the router approves must be the one this settlement pulls through.
-    function testBalanceManagerBelongsToSettlement() public view {
-        assertEq(
-            liquoriceSettlement.BALANCE_MANAGER(),
-            LIQUORICE_BALANCE_MANAGER,
-            "balance manager is not this settlement's"
+    /// @dev The settlement only lets allowlisted solvers call it.
+    function _allowSolver(address solver) internal {
+        vm.mockCall(
+            address(authenticator),
+            abi.encodeWithSelector(
+                IAllowListAuthentication.isSolver.selector, solver
+            ),
+            abi.encode(true)
         );
     }
 
-    function _singleOrder(uint256 amountIn, uint256 amountOut)
+    function _singleOrder(address trader, uint256 amountIn, uint256 amountOut)
         internal
         view
         returns (ILiquoriceSettlement.Single memory order)
@@ -215,19 +178,19 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         order = ILiquoriceSettlement.Single({
             rfqId: "tycho-test",
             nonce: uint256(keccak256("tycho-test-single")),
-            trader: address(liquoriceExecutor),
-            effectiveTrader: address(liquoriceExecutor),
+            trader: trader,
+            effectiveTrader: trader,
             baseToken: USDC_ADDR,
             quoteToken: WETH_ADDR,
             baseTokenAmount: amountIn,
             quoteTokenAmount: amountOut,
             minFillAmount: 0,
-            quoteExpiry: block.timestamp + 1 hours,
+            quoteExpiry: block.timestamp + QUOTE_VALIDITY,
             recipient: maker
         });
     }
 
-    function _order(uint256 amountIn, uint256 amountOut)
+    function _order(address trader, uint256 amountIn, uint256 amountOut)
         internal
         view
         returns (ILiquoriceSettlement.Order memory order)
@@ -235,9 +198,9 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         order = ILiquoriceSettlement.Order({
             rfqId: "tycho-test",
             nonce: uint256(keccak256("tycho-test-order")),
-            trader: address(liquoriceExecutor),
-            effectiveTrader: address(liquoriceExecutor),
-            quoteExpiry: block.timestamp + 1 hours,
+            trader: trader,
+            effectiveTrader: trader,
+            quoteExpiry: block.timestamp + QUOTE_VALIDITY,
             recipient: maker,
             minFillAmount: 0,
             makerFlags: MAKER_FLAGS_NONE,
@@ -287,13 +250,13 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         });
     }
 
-    function _encodeSettleSingle(uint256 amountIn, uint256 amountOut)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _encodeSettleSingle(
+        address trader,
+        uint256 amountIn,
+        uint256 amountOut
+    ) internal view returns (bytes memory) {
         ILiquoriceSettlement.Single memory order =
-            _singleOrder(amountIn, amountOut);
+            _singleOrder(trader, amountIn, amountOut);
         return abi.encodeCall(
             ILiquoriceSettlement.settleSingle,
             (
@@ -306,12 +269,13 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         );
     }
 
-    function _encodeSettle(uint256 amountIn, uint256 amountOut)
+    function _encodeSettle(address trader, uint256 amountIn, uint256 amountOut)
         internal
         view
         returns (bytes memory)
     {
-        ILiquoriceSettlement.Order memory order = _order(amountIn, amountOut);
+        ILiquoriceSettlement.Order memory order =
+            _order(trader, amountIn, amountOut);
         return abi.encodeCall(
             ILiquoriceSettlement.settle,
             (
@@ -326,6 +290,64 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
                 _sign(liquoriceSettlement.hashOrder(order)),
                 _emptyTakerSignature()
             )
+        );
+    }
+}
+
+contract LiquoriceExecutorExposed is LiquoriceExecutor {
+    constructor(address _liquoriceSettlement, address _liquoriceBalanceManager)
+        LiquoriceExecutor(_liquoriceSettlement, _liquoriceBalanceManager)
+    {}
+
+    function decodeData(bytes calldata data)
+        external
+        pure
+        returns (
+            address tokenIn,
+            uint32 partialFillOffset,
+            uint256 originalBaseTokenAmount,
+            uint256 minBaseTokenAmount,
+            bytes memory liquoriceCalldata
+        )
+    {
+        return _decodeData(data);
+    }
+
+    function clampAmount(
+        uint256 givenAmount,
+        uint256 originalBaseTokenAmount,
+        uint256 minBaseTokenAmount
+    ) external pure returns (uint256) {
+        return _clampAmount(
+            givenAmount, originalBaseTokenAmount, minBaseTokenAmount
+        );
+    }
+}
+
+contract LiquoriceExecutorTest is
+    LiquoriceOrders,
+    Permit2TestHelper,
+    TestUtils
+{
+    using SafeERC20 for IERC20;
+
+    LiquoriceExecutorExposed liquoriceExecutor;
+
+    function setUp() public {
+        _setUpLiquorice(1 ether);
+
+        liquoriceExecutor = new LiquoriceExecutorExposed(
+            LIQUORICE_SETTLEMENT, LIQUORICE_BALANCE_MANAGER
+        );
+        _allowSolver(address(liquoriceExecutor));
+    }
+
+    /// @dev The balance manager the router approves must be the one this settlement pulls through.
+    function testBalanceManagerBelongsToSettlement() public view {
+        assertEq(
+            liquoriceSettlement.BALANCE_MANAGER(),
+            LIQUORICE_BALANCE_MANAGER,
+            "balance manager is not this settlement's"
         );
     }
 
@@ -387,13 +409,23 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
     function testSettleSingle() public {
         uint256 amountIn = 3000e6;
         uint256 amountOut = 1 ether;
-        _runSwap(_encodeSettleSingle(amountIn, amountOut), amountIn, amountOut);
+        _runSwap(
+            _encodeSettleSingle(
+                address(liquoriceExecutor), amountIn, amountOut
+            ),
+            amountIn,
+            amountOut
+        );
     }
 
     function testSettle() public {
         uint256 amountIn = 3000e6;
         uint256 amountOut = 1 ether;
-        _runSwap(_encodeSettle(amountIn, amountOut), amountIn, amountOut);
+        _runSwap(
+            _encodeSettle(address(liquoriceExecutor), amountIn, amountOut),
+            amountIn,
+            amountOut
+        );
     }
 
     function testDecodeData() public view {
@@ -474,7 +506,9 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         uint256 originalAmountIn = 3000e6;
         uint256 amountIn = 1500e6;
         _runSwap(
-            _encodeSettleSingle(originalAmountIn, 1 ether),
+            _encodeSettleSingle(
+                address(liquoriceExecutor), originalAmountIn, 1 ether
+            ),
             96,
             originalAmountIn,
             amountIn,
@@ -487,7 +521,9 @@ contract LiquoriceExecutorTest is Constants, Permit2TestHelper, TestUtils {
         uint256 originalAmountIn = 3000e6;
         uint256 amountIn = 1500e6;
         _runSwap(
-            _encodeSettle(originalAmountIn, 1 ether),
+            _encodeSettle(
+                address(liquoriceExecutor), originalAmountIn, 1 ether
+            ),
             32,
             originalAmountIn,
             amountIn,
