@@ -1,3 +1,37 @@
+## [0.482.5](https://github.com/propeller-heads/tycho/compare/0.482.4...0.482.5) (2026-10-26)
+
+
+### Bug Fixes
+
+* **execution:** follow Liquorice to its current settlement contract ([2ccf50a](https://github.com/propeller-heads/tycho/commit/2ccf50ac810610e65c0634dfad1bcb7e1432a3ec))
+* **execution:** follow Liquorice to its current settlement contract ([#1487](https://github.com/propeller-heads/tycho/issues/1487)) ([ff895d8](https://github.com/propeller-heads/tycho/commit/ff895d841517fd4bfaf9e503eda556870bb4271b))
+* **execution:** give the Liquorice fallback encoder its venue config ([2f06f3d](https://github.com/propeller-heads/tycho/commit/2f06f3d0f3b4e512667e2cd95fd3ec85efa6b82b))
+* **execution:** read the Liquorice settle selectors from one place ([39dd0ca](https://github.com/propeller-heads/tycho/commit/39dd0cac133e5efa8c371104eda2ffe7bec3a676))
+
+## [0.482.4](https://github.com/propeller-heads/tycho/compare/0.482.3...0.482.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([4627fcf](https://github.com/propeller-heads/tycho/commit/4627fcf42f952a15d6965cd4d14b7b2865c2dbec))
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([#1681](https://github.com/propeller-heads/tycho/issues/1681)) ([81a3dd9](https://github.com/propeller-heads/tycho/commit/81a3dd92535ec5fcd80aed720061b6af7cd4b47d))
+
+## [0.482.3](https://github.com/propeller-heads/tycho/compare/0.482.2...0.482.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([4bc674c](https://github.com/propeller-heads/tycho/commit/4bc674cad2c48db9ee4d7d6160d937034bdb51a9))
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([#1679](https://github.com/propeller-heads/tycho/issues/1679)) ([4b7eeb6](https://github.com/propeller-heads/tycho/commit/4b7eeb66e1e09c6b2e511fc999e61b5d46779e76))
+
+## [0.482.2](https://github.com/propeller-heads/tycho/compare/0.482.1...0.482.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([f7e4c79](https://github.com/propeller-heads/tycho/commit/f7e4c79eb301f4849b6e978891a2834eaf5c8def))
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([#1675](https://github.com/propeller-heads/tycho/issues/1675)) ([0257176](https://github.com/propeller-heads/tycho/commit/02571767e045b266e1e355797076a3c92142aa50))
+
 ## [0.482.1](https://github.com/propeller-heads/tycho/compare/0.482.0...0.482.1) (2026-10-23)
 
 

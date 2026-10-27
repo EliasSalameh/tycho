@@ -93,7 +93,7 @@ jemalloc_pprof = { version = "0.8", features = ["symbolize"], optional = true }
 # Continuous CPU profiling, started only when PYROSCOPE_SERVER_URL is set. Plain HTTP to an
 # in-cluster server, so no TLS backend.
 pyroscope = { version = "2.1.2", default-features = false, features = ["backend-pprof-rs"] }
-zstd = "0.13"
+zstd = "0.14.3"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
