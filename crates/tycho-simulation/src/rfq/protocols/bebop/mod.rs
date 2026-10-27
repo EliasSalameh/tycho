@@ -1,9 +1,11 @@
 mod client;
 pub mod feed;
 mod models;
-pub mod prices;
 mod source;
 pub mod state;
+
+pub use models::{BebopBook, BebopPrices};
+pub use source::BebopBookAssembler;
 
 /// Protocol system stamped on every component this integration emits.
 pub const PROTOCOL_SYSTEM: &str = "rfq:bebop";

@@ -107,11 +107,12 @@ for any protocol indexed by Tycho.
     from those two types, so the four differ only in them and in what a venue refuses before a
     book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
     the state, so its tokens and its directions agree
-  - **`prices` (Bebop, Hashflow, Metric)**: each of these venues also splits its feed in two public
-    halves, in the venue's `prices.rs`. `<Venue>PricesFeed` is transport and parse only, needs
-    just the chain and the credentials (no token list, no TVL floor) and publishes
-    `<Venue>Prices`, the parsed answer — `Serialize`/`Deserialize`, so it can cross a wire, in the
-    venue API models' form, so both ends run the same tycho-simulation version.
+  - **Prices feed and book assembler (Bebop, Hashflow, Metric)**: each of these venues also splits
+    its feed in two public halves, `<Venue>PricesFeed` in `feed.rs` and `<Venue>BookAssembler` in
+    `source.rs`. `<Venue>PricesFeed` is transport and parse only, needs just the chain and the
+    credentials (no token list, no TVL floor) and publishes `<Venue>Prices` (in `models.rs`), the
+    parsed answer — `Serialize`/`Deserialize`, so it can cross a wire, in the venue API models'
+    form, so both ends run the same tycho-simulation version.
     `<Venue>BookAssembler::books(prices)` turns prices into the `HashMap<String, Book>` the
     `*Feed` publishes; `<Venue>FeedBuilder::build_book_assembler()` makes it from the same
     builder, so it carries the tokens, quote tokens, layout, fallback router and, where the venue
@@ -127,8 +128,7 @@ for any protocol indexed by Tycho.
     the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the
     binding-quote request the states make), `source.rs` (what to make of the answers — decoding,
-    orientation, TVL normalization, building components and states; for the three venues with a
-    `prices` module, the book assembler builds components and states), `state.rs`, `models.rs` and
+    orientation, TVL normalization, building components and states), `state.rs`, `models.rs` and
     a module-level `PROTOCOL_SYSTEM` constant. No source holds a credential or builds a request:
     it asks its client. A venue that names the chain in its requests lists the ones it serves as a
     `<Venue>SupportedChain` in its `models.rs`, which `build()` resolves the configured `Chain`

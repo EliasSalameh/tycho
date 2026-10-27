@@ -1,19 +1,19 @@
 use std::{collections::HashSet, future::Future, sync::Arc};
 
 use tokio::time::Duration;
-use tycho_common::Bytes;
+use tycho_common::{models::Chain, Bytes};
 
 use crate::{
     book::{
         all_pairs::{ComponentLayout, QuoteRule},
-        BookFeedConfig, BookSnapshot, ReceivedAt,
+        chain_id, BookFeedConfig, BookSnapshot, ReceivedAt,
     },
     rfq::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::hashflow::{
             client::{HashflowClient, HashflowLevelsClient},
-            prices::{HashflowBookAssembler, HashflowPricesSource},
-            source::HashflowBookSource,
+            models::HashflowPrices,
+            source::{HashflowBookAssembler, HashflowBookSource, HashflowPricesSource},
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     },
@@ -156,8 +156,8 @@ impl HashflowFeedBuilder {
     }
 
     /// Builds a [`HashflowBookAssembler`] that produces the same books as [`build`](Self::build)
-    /// from externally supplied [`HashflowPrices`](super::prices::HashflowPrices), such as those
-    /// published by [`HashflowPricesFeed`](super::prices::HashflowPricesFeed). Does not poll and
+    /// from externally supplied [`HashflowPrices`](super::models::HashflowPrices), such as those
+    /// published by [`HashflowPricesFeed`](super::models::HashflowPricesFeed). Does not poll and
     /// ignores feed tuning.
     ///
     /// Fails for a chain with no numeric chain id.
@@ -179,11 +179,54 @@ impl SnapshotFeed for HashflowFeed {
     }
 }
 
+/// Polls Hashflow's taker API and publishes every poll as [`HashflowPrices`]. Requires only the
+/// chain and credentials. [`HashflowBookAssembler`] applies the token list and TVL floor. `Debug`
+/// output omits the credentials.
+#[derive(Clone, Debug)]
+pub struct HashflowPricesFeed {
+    feed_config: HttpFeedConfig,
+    source: HashflowPricesSource,
+}
+
+impl HashflowPricesFeed {
+    /// Creates a feed that polls Hashflow's taker API for `chain` with the given credentials.
+    ///
+    /// Fails with [`FeedError::Fatal`] for a chain with no numeric chain id, which is all
+    /// Hashflow's API is addressed by. Hashflow reports whether it prices the chain on the first
+    /// poll. The feed tuning starts from [`HashflowFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, auth_user: String, auth_key: String) -> Result<Self, FeedError> {
+        let client = HashflowLevelsClient::new(None, chain_id(chain)?, auth_user, auth_key);
+        Ok(Self {
+            feed_config: HashflowFeedBuilder::default_feed_config(),
+            source: HashflowPricesSource::new(client),
+        })
+    }
+
+    /// Tune the poll loop (poll cadence, request timeout, failure limit).
+    pub fn feed_config(mut self, feed_config: HttpFeedConfig) -> Self {
+        self.feed_config = feed_config;
+        self
+    }
+}
+
+impl SnapshotFeed for HashflowPricesFeed {
+    type Snapshot = HashflowPrices;
+    type Error = FeedError;
+
+    fn run(
+        self,
+        publisher: Publisher<Self::Snapshot>,
+    ) -> impl Future<Output = Result<(), FeedError>> + Send + 'static {
+        run_http_poll_feed(self.feed_config, publisher, self.source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{env, str::FromStr, time::Duration};
 
     use dotenv::dotenv;
+    use futures::StreamExt;
     use num_bigint::BigUint;
     use tokio::time::timeout;
     use tycho_common::models::{protocol::GetAmountOutParams, Chain};
@@ -191,7 +234,10 @@ mod tests {
     use super::*;
     use crate::{
         book::test_token_map,
-        snapshot_feed::{http::HttpSource, SnapshotFeed},
+        rfq::protocols::hashflow::test_support::{
+            prices_source, two_maker_prices, two_maker_server,
+        },
+        snapshot_feed::{http::HttpSource, SnapshotFeed, SnapshotFeedEvent, SnapshotFeedStream},
     };
 
     #[tokio::test]
@@ -353,5 +399,39 @@ mod tests {
                 .unwrap(),
             &router
         );
+    }
+
+    #[tokio::test]
+    async fn the_prices_feed_publishes_each_poll() {
+        let server = two_maker_server().await;
+        let feed = HashflowPricesFeed {
+            feed_config: HashflowFeedBuilder::default_feed_config(),
+            source: prices_source(&server.url()),
+        };
+        let mut stream = SnapshotFeedStream::spawn("test", feed);
+
+        let event = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the feed publishes within the timeout")
+            .expect("the stream is not over");
+
+        let SnapshotFeedEvent::Published(prices) = event else {
+            panic!("expected the first poll to be published");
+        };
+        assert_eq!(prices, two_maker_prices());
+    }
+
+    #[test]
+    fn the_prices_feed_debug_output_omits_the_credentials() {
+        let feed = HashflowPricesFeed::new(
+            Chain::Ethereum,
+            "secret_user".to_string(),
+            "secret_key".to_string(),
+        )
+        .unwrap();
+        let rendered = format!("{feed:?}");
+
+        assert!(!rendered.contains("secret_user"));
+        assert!(!rendered.contains("secret_key"));
     }
 }

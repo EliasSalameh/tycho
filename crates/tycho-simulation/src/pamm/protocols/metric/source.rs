@@ -1,6 +1,17 @@
+use std::{collections::HashMap, mem};
+
+use chrono::DateTime;
+use tracing::{debug, warn};
+use tycho_common::models::token::Token;
+
 use crate::{
-    book::{BookSnapshot, ReceivedAt},
-    pamm::protocols::metric::prices::{MetricBookAssembler, MetricPricesSource},
+    book::{component::pair_book, Book, BookFeedConfig, BookSnapshot, Books, ReceivedAt},
+    pamm::protocols::metric::{
+        client::MetricClient,
+        models::{MetricMetadata, MetricPoolPrice, MetricPrices},
+        state::MetricState,
+        FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM, PROTOCOL_TYPE,
+    },
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
 
@@ -34,6 +45,180 @@ impl HttpSource for MetricBookSource {
     }
 }
 
+/// Whether Metric routes to `pool`, which it does only at pause level `0`.
+fn is_unpaused(pool: &MetricMetadata) -> bool {
+    if !pool.is_unpaused() {
+        debug!(pool = %pool.pool_address, pause_level = ?pool.pause_level, "skipping paused pool");
+    }
+    pool.is_unpaused()
+}
+
+/// Returns quotes for the pools whose requests succeeded. Logs and omits failed requests. If every
+/// requested pool fails, returns an error: publishing an empty book would withdraw every pair the
+/// venue was serving and treat an outage as a successful poll.
+async fn quote_pools(
+    client: &MetricClient,
+    pools: Vec<MetricMetadata>,
+) -> Result<MetricPrices, FeedError> {
+    let polled = client.fetch_bid_ask_each(pools).await;
+    let requested = polled.len();
+    let mut failures: Vec<FeedError> = Vec::new();
+    let mut answered = Vec::with_capacity(requested);
+    for (metadata, bid_ask) in polled {
+        match bid_ask {
+            Ok(bid_ask) => answered.push(MetricPoolPrice { metadata, bid_ask }),
+            Err(e) => {
+                warn!(
+                    pool = %metadata.pool_address,
+                    error = %e,
+                    "skipping pool, bid/ask fetch failed"
+                );
+                failures.push(e);
+            }
+        }
+    }
+    if requested > 0 && failures.len() == requested {
+        return Err(every_pool_failed(failures));
+    }
+    Ok(MetricPrices { pools: answered })
+}
+
+/// What a poll reports when none of the pools it asked answered: the pools' own verdict where
+/// they agree on it, and an unreachable venue where they do not. One pool calling its failure
+/// fatal is about that pool; every pool calling it fatal is about the venue, and nothing is
+/// gained by polling on. The individual failures are logged as they arrive.
+fn every_pool_failed(failures: Vec<FeedError>) -> FeedError {
+    let summary =
+        format!("none of Metric's {} quotable pools answered its bid/ask request", failures.len());
+    let mut failures = failures.into_iter();
+    let Some(first) = failures.next() else {
+        return FeedError::Connection(summary);
+    };
+    if failures.all(|other| mem::discriminant(&other) == mem::discriminant(&first)) {
+        first.in_context(summary)
+    } else {
+        FeedError::Connection(summary)
+    }
+}
+
+/// Reads the pools' metadata and quotes through a [`MetricClient`].
+#[derive(Clone, Debug)]
+pub(super) struct MetricPricesSource {
+    client: MetricClient,
+}
+
+impl MetricPricesSource {
+    pub(super) fn new(client: MetricClient) -> Self {
+        Self { client }
+    }
+
+    /// Polls the metadata of every pool, then quotes the unpaused ones for which `keep` holds.
+    ///
+    /// A metadata failure fails the poll, and so does losing every pool; losing some only drops
+    /// those from the prices.
+    pub(super) async fn poll(
+        &self,
+        keep: impl Fn(&MetricMetadata) -> bool,
+    ) -> Result<MetricPrices, FeedError> {
+        let pools = self
+            .client
+            .fetch_metadata()
+            .await?
+            .into_iter()
+            .filter(|pool| keep(pool))
+            .collect();
+        quote_pools(&self.client, pools).await
+    }
+}
+
+impl HttpSource for MetricPricesSource {
+    type Snapshot = MetricPrices;
+
+    async fn fetch(&self) -> Result<MetricPrices, FeedError> {
+        self.poll(is_unpaused).await
+    }
+}
+
+/// Turns [`MetricPrices`] into the books [`MetricFeed`](super::feed::MetricFeed) would publish
+/// for the same poll: every unpaused, quotable pool between the configured tokens whose USD TVL
+/// clears the threshold, as simulate-ready books. Created by
+/// [`MetricFeedBuilder::build_book_assembler`] with the feed builder's protocol system, chain,
+/// tokens and TVL floor, or by [`new`](Self::new) where no trading key is at hand.
+#[derive(Clone, Debug)]
+pub struct MetricBookAssembler {
+    /// The protocol system stamped on the components: the venue's own, or its fallback-router
+    /// one for an assembler made with `with_fallback_router()`.
+    pub(super) protocol_system: &'static str,
+    pub(super) book_config: BookFeedConfig,
+}
+
+impl MetricBookAssembler {
+    /// Creates an assembler that serves the tokens and TVL floor of `book_config`. It needs no
+    /// trading key, since it makes no API call.
+    pub fn new(book_config: BookFeedConfig) -> Self {
+        Self { protocol_system: PROTOCOL_SYSTEM, book_config }
+    }
+
+    /// Settles this venue's swaps through Tycho's `MetricFallbackRouter`, which retries
+    /// against a solver-named fallback pool when the venue reverts. Components then carry
+    /// [`FALLBACK_PROTOCOL_SYSTEM`] rather than [`PROTOCOL_SYSTEM`], which is what selects
+    /// the fallback encoder. Off by default.
+    pub fn with_fallback_router(mut self) -> Self {
+        self.protocol_system = FALLBACK_PROTOCOL_SYSTEM;
+        self
+    }
+
+    /// Returns the books for `prices`, keyed by component id.
+    pub fn books(&self, prices: MetricPrices) -> HashMap<String, Book> {
+        self.collect(prices).into_map()
+    }
+
+    /// Returns the token pair of `pool` when this assembler serves it: both tokens are in the
+    /// token list, its TVL clears the floor and it is unpaused.
+    pub(super) fn pool_tokens(&self, pool: &MetricMetadata) -> Option<(&Token, &Token)> {
+        let tokens = self
+            .book_config
+            .pair_tokens(&pool.token0, &pool.token1)?;
+        // v1 metadata carries the USD TVL directly, so no cross-pool price normalization is
+        // needed.
+        let clears_floor = self
+            .book_config
+            .clears_min_tvl(pool.tvl_fiat.unwrap_or(0.0), &pool.pool_address);
+        (clears_floor && is_unpaused(pool)).then_some(tokens)
+    }
+
+    pub(super) fn collect(&self, prices: MetricPrices) -> Books {
+        let mut books = Books::new();
+        for MetricPoolPrice { metadata, bid_ask } in prices.pools {
+            let Some((token0, token1)) = self.pool_tokens(&metadata) else {
+                continue;
+            };
+            if !bid_ask.is_quotable() {
+                debug!(pool = %metadata.pool_address, "skipping pool, not quotable");
+                continue;
+            }
+
+            let component_id = metadata.pool_address.clone();
+            let updated_at = DateTime::from_timestamp(bid_ask.server_ts as i64, 0);
+            let state = MetricState {
+                base_token: token0.clone(),
+                quote_token: token1.clone(),
+                metadata,
+                bid_ask,
+            };
+            books.insert(pair_book(
+                self.protocol_system,
+                PROTOCOL_TYPE,
+                self.book_config.chain,
+                component_id,
+                state,
+                updated_at,
+            ));
+        }
+        books
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{str::FromStr, sync::Arc, time::Duration};
@@ -51,11 +236,11 @@ mod tests {
         pamm::protocols::metric::{
             client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
             feed::MetricFeedBuilder,
-            prices::{MetricBookAssembler, MetricPrices, MetricPricesSource},
             test_support::{
                 assembler_for, batch_body, bid_ask_json, error_entry, metadata_page, pool_json,
-                pool_server, prices_source, quote_entry, requested_pools,
-                serving_weth_usdc_above_100_usd, usdc, weth, BATCH_TARGET, FIRST_POOL, SECOND_POOL,
+                pool_server, pools_of, prices_source, quote_entry, requested_pools,
+                serving_weth_usdc_above_100_usd, usdc, weth, BATCH_TARGET, BELOW_FLOOR, FIRST_POOL,
+                PAUSED, SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
             },
         },
         snapshot_feed::http::test_support::{spawn_http_server, MockResponse},
@@ -407,5 +592,72 @@ mod tests {
         assert_eq!(received, prices);
         assert_same_books(&source.assembler.books(received), &published);
         assert_eq!(published.len(), 1, "only the healthy pool is servable");
+    }
+
+    /// A prices poll includes every unpaused pool whose quote request succeeded. The book
+    /// assembler applies the token list, TVL floor and quote-usability checks.
+    #[tokio::test]
+    async fn a_prices_poll_returns_every_unpaused_pool_that_answered() {
+        let server = pool_server().await;
+
+        let prices = prices_source(Chain::Ethereum, &server.url(), "key")
+            .fetch()
+            .await
+            .unwrap();
+
+        assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
+    }
+
+    #[tokio::test]
+    async fn a_prices_poll_fails_when_every_pool_does() {
+        let page = metadata_page(&[pool_json(FIRST_POOL, Some(1_000.0))], None);
+        let server = spawn_http_server(move |request| {
+            if request
+                .target
+                .starts_with("/public/v1/evm/1/metadata?")
+            {
+                return Some(("200 OK", page.clone()));
+            }
+            Some(("200 OK", batch_body(vec![error_entry(FIRST_POOL, 500, "boom")])))
+        })
+        .await;
+
+        let result = prices_source(Chain::Ethereum, &server.url(), "key")
+            .fetch()
+            .await;
+
+        assert!(matches!(result, Err(FeedError::Connection(_))), "got {result:?}");
+    }
+
+    /// The assembler keeps a pool only between served tokens, above the floor, unpaused and with
+    /// a quote it can serve.
+    #[test]
+    fn the_assembler_drops_pools_it_cannot_serve() {
+        const UNKNOWN_TOKEN: &str = "0x9999999999999999999999999999999999999999";
+        let assembler = serving_weth_usdc_above_100_usd();
+        let mut paused = pool_json(PAUSED, Some(1_000.0));
+        paused["pauseLevel"] = serde_json::json!(1);
+        let mut unknown = pool_json(UNKNOWN_POOL, Some(1_000.0));
+        unknown["token0"] = serde_json::json!(UNKNOWN_TOKEN);
+        let price = |metadata: serde_json::Value, unhealthy: bool| MetricPoolPrice {
+            metadata: serde_json::from_value(metadata).unwrap(),
+            bid_ask: serde_json::from_str(&bid_ask_json(SERVER_TS, unhealthy)).unwrap(),
+        };
+        let prices = MetricPrices {
+            pools: vec![
+                price(pool_json(FIRST_POOL, Some(1_000.0)), false),
+                price(pool_json(UNQUOTABLE, Some(1_000.0)), true),
+                price(pool_json(BELOW_FLOOR, Some(99.0)), false),
+                price(paused, false),
+                price(unknown, false),
+            ],
+        };
+
+        let books = assembler.books(prices);
+
+        let healthy_id = Bytes::from_str(FIRST_POOL)
+            .unwrap()
+            .to_string();
+        assert_eq!(books.keys().collect::<Vec<_>>(), vec![&healthy_id]);
     }
 }

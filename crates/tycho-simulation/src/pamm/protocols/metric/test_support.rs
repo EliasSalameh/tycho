@@ -1,4 +1,4 @@
-//! Fixtures shared by the tests of the Metric prices and sources.
+//! Fixtures shared by the tests of the Metric feeds and sources.
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
@@ -13,7 +13,8 @@ use crate::{
     evm::protocol::utils::bytes_to_address,
     pamm::protocols::metric::{
         client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
-        prices::{MetricBookAssembler, MetricPricesSource},
+        models::MetricPrices,
+        source::{MetricBookAssembler, MetricPricesSource},
     },
     snapshot_feed::http::test_support::{spawn_http_server, MockHttpServer, MockRequest},
 };
@@ -173,4 +174,14 @@ pub(super) fn serving_weth_usdc_above_100_usd() -> MetricBookAssembler {
         ])),
         min_tvl_usd: 100.0,
     })
+}
+
+pub(super) fn pools_of(prices: &MetricPrices) -> Vec<String> {
+    let mut pools: Vec<_> = prices
+        .pools
+        .iter()
+        .map(|price| price.metadata.pool_address.to_string())
+        .collect();
+    pools.sort();
+    pools
 }

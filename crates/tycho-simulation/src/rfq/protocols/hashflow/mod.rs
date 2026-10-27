@@ -1,9 +1,11 @@
 mod client;
 pub mod feed;
 mod models;
-pub mod prices;
 mod source;
 pub mod state;
+
+pub use models::{HashflowMarketMakerLevels, HashflowPair, HashflowPrices};
+pub use source::HashflowBookAssembler;
 #[cfg(test)]
 mod test_support;
 

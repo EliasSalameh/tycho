@@ -1,7 +1,7 @@
 use std::{collections::HashSet, future::Future, sync::Arc};
 
 use tokio::time::Duration;
-use tycho_common::Bytes;
+use tycho_common::{models::Chain, Bytes};
 
 use crate::{
     book::{BookFeedConfig, BookSnapshot, ReceivedAt},
@@ -9,9 +9,8 @@ use crate::{
         constants::DEFAULT_QUOTE_TIMEOUT,
         protocols::bebop::{
             client::{BebopClient, BebopPricingClient, QuoteOrigin},
-            models::BebopSupportedChain,
-            prices::{BebopBookAssembler, BebopPricesSource},
-            source::BebopBookSource,
+            models::{BebopPrices, BebopSupportedChain},
+            source::{BebopBookAssembler, BebopBookSource, BebopPricesSource},
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
     },
@@ -161,8 +160,8 @@ impl BebopFeedBuilder {
     }
 
     /// Builds a [`BebopBookAssembler`] that produces the same books as [`build`](Self::build)
-    /// from externally supplied [`BebopPrices`](super::prices::BebopPrices), such as those
-    /// published by [`BebopPricesFeed`](super::prices::BebopPricesFeed). Does not open the
+    /// from externally supplied [`BebopPrices`](super::models::BebopPrices), such as those
+    /// published by [`BebopPricesFeed`](super::models::BebopPricesFeed). Does not open the
     /// pricing connection and ignores feed tuning.
     ///
     /// Fails for chains Bebop does not serve.
@@ -174,6 +173,47 @@ impl BebopFeedBuilder {
 
 impl SnapshotFeed for BebopFeed {
     type Snapshot = BookSnapshot<ReceivedAt>;
+    type Error = FeedError;
+
+    fn run(
+        self,
+        publisher: Publisher<Self::Snapshot>,
+    ) -> impl Future<Output = Result<(), FeedError>> + Send + 'static {
+        run_ws_feed(self.feed_config, publisher, self.source)
+    }
+}
+
+/// Streams Bebop's pricing WebSocket and publishes every frame as [`BebopPrices`]. Requires only
+/// the chain and API key. [`BebopBookAssembler`] applies the token list and TVL floor. `Debug`
+/// output omits the API key.
+#[derive(Clone, Debug)]
+pub struct BebopPricesFeed {
+    feed_config: WsFeedConfig,
+    source: BebopPricesSource,
+}
+
+impl BebopPricesFeed {
+    /// Creates a feed that streams Bebop's pricing WebSocket for `chain` with `ws_key`.
+    ///
+    /// Fails with [`FeedError::Fatal`] for a chain Bebop does not serve. The feed tuning starts
+    /// from [`BebopFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, ws_key: String) -> Result<Self, FeedError> {
+        let chain = BebopSupportedChain::try_from(chain).map_err(FeedError::Fatal)?;
+        Ok(Self {
+            feed_config: BebopFeedBuilder::default_feed_config(),
+            source: BebopPricesSource::new(BebopPricingClient::new(chain, ws_key)),
+        })
+    }
+
+    /// Tune the connection loop (timeouts, backoff, failure limit).
+    pub fn feed_config(mut self, feed_config: WsFeedConfig) -> Self {
+        self.feed_config = feed_config;
+        self
+    }
+}
+
+impl SnapshotFeed for BebopPricesFeed {
+    type Snapshot = BebopPrices;
     type Error = FeedError;
 
     fn run(
@@ -451,5 +491,19 @@ mod tests {
             .unwrap_err();
 
         assert!(error.is_fatal(), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_refuses_a_chain_bebop_does_not_serve() {
+        let error = BebopPricesFeed::new(Chain::ZkSync, "key".to_string()).unwrap_err();
+
+        assert!(error.is_fatal(), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_debug_output_omits_the_api_key() {
+        let feed = BebopPricesFeed::new(Chain::Ethereum, "secret_key".to_string()).unwrap();
+
+        assert!(!format!("{feed:?}").contains("secret_key"));
     }
 }

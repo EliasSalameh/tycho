@@ -1,13 +1,25 @@
-//! Fixtures shared by the tests of the Hashflow prices and sources.
+//! Fixtures shared by the tests of the Hashflow feeds and sources.
 
-use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use tycho_common::{models::Chain, Bytes};
 
 use crate::{
-    book::{all_pairs::ComponentLayout, test_token_map, BookFeedConfig},
+    book::{
+        all_pairs::ComponentLayout,
+        levels::{Levels, PriceLevel},
+        test_token_map, BookFeedConfig,
+    },
     rfq::protocols::hashflow::{
-        client::HashflowClient, prices::HashflowBookAssembler, PROTOCOL_SYSTEM,
+        client::{HashflowClient, HashflowLevelsClient},
+        models::{HashflowMarketMakerLevels, HashflowPair, HashflowPrices},
+        source::{HashflowBookAssembler, HashflowPricesSource},
+        PROTOCOL_SYSTEM,
     },
     snapshot_feed::http::test_support::{spawn_http_server, MockHttpServer},
 };
@@ -72,4 +84,40 @@ pub(super) async fn two_maker_server() -> MockHttpServer {
         }
     })
     .await
+}
+
+pub(super) fn weth_usdc_levels() -> HashflowMarketMakerLevels {
+    HashflowMarketMakerLevels {
+        pair: HashflowPair {
+            base_token: Bytes::from_str(WETH).unwrap(),
+            quote_token: Bytes::from_str(USDC).unwrap(),
+        },
+        levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 3000.0 }]).unwrap(),
+    }
+}
+
+/// What `two_maker_server` answers a poll with.
+pub(super) fn two_maker_prices() -> HashflowPrices {
+    let wbtc_weth = HashflowMarketMakerLevels {
+        pair: HashflowPair {
+            base_token: Bytes::from_str(WBTC).unwrap(),
+            quote_token: Bytes::from_str(WETH).unwrap(),
+        },
+        levels: Levels::new(vec![PriceLevel { quantity: 1.0, price: 10.0 }]).unwrap(),
+    };
+    HashflowPrices {
+        levels_by_maker: HashMap::from([
+            ("mm1".to_string(), vec![weth_usdc_levels()]),
+            ("mm2".to_string(), vec![wbtc_weth]),
+        ]),
+    }
+}
+
+pub(super) fn prices_source(endpoint: &str) -> HashflowPricesSource {
+    HashflowPricesSource::new(HashflowLevelsClient::new(
+        Some(endpoint),
+        1,
+        "test_user".to_string(),
+        "test_key".to_string(),
+    ))
 }

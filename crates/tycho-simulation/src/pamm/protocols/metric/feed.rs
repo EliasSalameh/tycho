@@ -4,12 +4,15 @@
 
 use std::{future::Future, num::NonZeroUsize, time::Duration};
 
+use reqwest::Url;
+use tycho_common::models::Chain;
+
 use crate::{
-    book::{BookFeedConfig, BookSnapshot, ReceivedAt},
+    book::{chain_id, BookFeedConfig, BookSnapshot, ReceivedAt},
     pamm::protocols::metric::{
         client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
-        prices::{check_api_key, check_base_url, MetricBookAssembler, MetricPricesSource},
-        source::MetricBookSource,
+        models::MetricPrices,
+        source::{MetricBookAssembler, MetricBookSource, MetricPricesSource},
     },
     snapshot_feed::{
         errors::FeedError,
@@ -129,8 +132,8 @@ impl MetricFeedBuilder {
     }
 
     /// Builds a [`MetricBookAssembler`] that produces the same books as [`build`](Self::build)
-    /// from externally supplied [`MetricPrices`](super::prices::MetricPrices), such as those
-    /// published by [`MetricPricesFeed`](super::prices::MetricPricesFeed). It does not poll or
+    /// from externally supplied [`MetricPrices`](super::models::MetricPrices), such as those
+    /// published by [`MetricPricesFeed`](super::models::MetricPricesFeed). It does not poll or
     /// call the API. It ignores the trading key, base URL, feed tuning and bid/ask concurrency,
     /// and does not validate the key or URL.
     pub fn build_book_assembler(self) -> MetricBookAssembler {
@@ -150,13 +153,123 @@ impl SnapshotFeed for MetricFeed {
     }
 }
 
+/// Rejects empty bearer tokens before starting the feed. Metric reports `Unknown chainId` for both
+/// an empty token and an unsupported chain, but returns 401 for a rejected nonempty key. Without
+/// this check, an empty token would be mistaken for an unsupported chain and end the feed.
+pub(super) fn check_api_key(api_key: &str) -> Result<(), FeedError> {
+    if api_key.is_empty() {
+        return Err(FeedError::InvalidInput("Metric trading key is empty".to_string()));
+    }
+    Ok(())
+}
+
+/// Rejects a base URL that does not parse. Every poll would fail the same way, so the feed does
+/// not start.
+pub(super) fn check_base_url(base_url: &str) -> Result<(), FeedError> {
+    Url::parse(base_url)
+        .map(drop)
+        .map_err(|error| FeedError::InvalidInput(format!("Metric base URL {base_url}: {error}")))
+}
+
+/// Polls Metric's metadata and batch bid/ask endpoints and publishes every poll as
+/// [`MetricPrices`]: each unpaused pool that answered its quote request. Requires only the chain
+/// and trading key. [`MetricBookAssembler`] applies the token list, TVL floor and quote-usability
+/// checks.
+///
+/// A poll succeeds while any pool answers; a pool that fails is left out, so a reader loses only
+/// that pool's pairs. `Debug` output omits the API key.
+#[derive(derive_more::Debug, Clone)]
+pub struct MetricPricesFeed {
+    feed_config: HttpFeedConfig,
+    chain_id: u64,
+    #[debug(skip)]
+    api_key: String,
+    base_url: Option<String>,
+    bid_ask_concurrency: NonZeroUsize,
+    source: MetricPricesSource,
+}
+
+impl MetricPricesFeed {
+    /// Creates a feed that polls Metric for `chain` with `api_key`.
+    ///
+    /// Fails with [`FeedError::InvalidInput`] for an empty trading key and with
+    /// [`FeedError::Fatal`] for a chain with no numeric chain id, which is all Metric's API is
+    /// addressed by. Metric reports whether it serves the chain on the first poll. The feed
+    /// tuning starts from [`MetricFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, api_key: String) -> Result<Self, FeedError> {
+        check_api_key(&api_key)?;
+        let chain_id = chain_id(chain)?;
+        let bid_ask_concurrency = DEFAULT_BID_ASK_CONCURRENCY;
+        let client = MetricClient::new(None, chain_id, api_key.clone(), bid_ask_concurrency);
+        Ok(Self {
+            feed_config: MetricFeedBuilder::default_feed_config(),
+            chain_id,
+            api_key,
+            base_url: None,
+            bid_ask_concurrency,
+            source: MetricPricesSource::new(client),
+        })
+    }
+
+    /// Points the feed at another Metric deployment; fails with [`FeedError::InvalidInput`] for
+    /// a value that is not a URL.
+    pub fn base_url(mut self, base_url: String) -> Result<Self, FeedError> {
+        check_base_url(&base_url)?;
+        self.base_url = Some(base_url);
+        Ok(self.with_rebuilt_client())
+    }
+
+    /// How many of a poll's batch bid/ask requests run at once. See
+    /// [`MetricFeedBuilder::bid_ask_concurrency`].
+    pub fn bid_ask_concurrency(mut self, requests_in_flight: NonZeroUsize) -> Self {
+        self.bid_ask_concurrency = requests_in_flight;
+        self.with_rebuilt_client()
+    }
+
+    /// Tune the poll loop (poll cadence, request timeout, failure limit).
+    pub fn feed_config(mut self, feed_config: HttpFeedConfig) -> Self {
+        self.feed_config = feed_config;
+        self
+    }
+
+    fn with_rebuilt_client(mut self) -> Self {
+        let client = MetricClient::new(
+            self.base_url.as_deref(),
+            self.chain_id,
+            self.api_key.clone(),
+            self.bid_ask_concurrency,
+        );
+        self.source = MetricPricesSource::new(client);
+        self
+    }
+}
+
+impl SnapshotFeed for MetricPricesFeed {
+    type Snapshot = MetricPrices;
+    type Error = FeedError;
+
+    fn run(
+        self,
+        publisher: Publisher<Self::Snapshot>,
+    ) -> impl Future<Output = Result<(), FeedError>> + Send + 'static {
+        run_http_poll_feed(self.feed_config, publisher, self.source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use tycho_common::models::Chain;
+    use futures::StreamExt;
+    use tokio::time::timeout;
 
     use super::*;
+    use crate::{
+        pamm::protocols::metric::test_support::{
+            pool_server, pools_of, BELOW_FLOOR, FIRST_POOL, UNQUOTABLE,
+        },
+        snapshot_feed::{SnapshotFeedEvent, SnapshotFeedStream},
+    };
 
     fn builder(chain: Chain) -> MetricFeedBuilder {
         MetricFeedBuilder::new(
@@ -204,5 +317,54 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[tokio::test]
+    async fn the_prices_feed_publishes_each_poll() {
+        let server = pool_server().await;
+        let feed = MetricPricesFeed::new(Chain::Ethereum, "key".to_string())
+            .unwrap()
+            .base_url(server.url())
+            .unwrap();
+        let mut stream = SnapshotFeedStream::spawn("test", feed);
+
+        let event = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the feed publishes within the timeout")
+            .expect("the stream is not over");
+
+        let SnapshotFeedEvent::Published(prices) = event else {
+            panic!("expected the first poll to be published");
+        };
+        assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
+    }
+
+    #[test]
+    fn the_prices_feed_rejects_an_empty_key() {
+        let error = MetricPricesFeed::new(Chain::Ethereum, String::new()).unwrap_err();
+
+        assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_rejects_an_invalid_base_url() {
+        let error = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
+            .unwrap()
+            .base_url("api.metric.xyz".to_string())
+            .unwrap_err();
+
+        assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_debug_output_omits_the_api_key() {
+        let feed = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
+            .unwrap()
+            .base_url("https://metric.example".to_string())
+            .unwrap();
+        let rendered = format!("{feed:?}");
+
+        assert!(!rendered.contains("secret_key"));
+        assert!(rendered.contains("metric.example"));
     }
 }

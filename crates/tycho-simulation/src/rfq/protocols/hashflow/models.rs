@@ -270,6 +270,15 @@ pub struct HashflowQuoteData {
     pub external_account: Option<Bytes>,
 }
 
+/// Every market maker's price levels as one Hashflow poll returned them, keyed by maker name.
+///
+/// The serde form follows the venue API models, so the writer and the reader must run the same
+/// tycho-simulation version.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HashflowPrices {
+    pub levels_by_maker: HashMap<String, Vec<HashflowMarketMakerLevels>>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

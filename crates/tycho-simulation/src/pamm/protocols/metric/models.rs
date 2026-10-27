@@ -235,6 +235,22 @@ fn q64_to_f64(value: &BigUint) -> Result<f64, FeedError> {
     Ok(raw / Q64_FLOAT)
 }
 
+/// The pools one Metric poll quoted, in whatever order the venue answered.
+///
+/// The serde form follows the venue API models, so the writer and the reader must run the same
+/// tycho-simulation version.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MetricPrices {
+    pub pools: Vec<MetricPoolPrice>,
+}
+
+/// One pool's metadata and bid/ask quote.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MetricPoolPrice {
+    pub metadata: MetricMetadata,
+    pub bid_ask: MetricBidAskResponse,
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
