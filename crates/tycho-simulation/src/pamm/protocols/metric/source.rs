@@ -288,6 +288,7 @@ mod tests {
         assert_eq!(book.component.id.to_string(), POOL);
     }
 
+    /// Pools outside the token list, under the TVL floor or paused are never asked for a quote.
     #[tokio::test]
     async fn fetch_books_drops_failed_and_unquotable_pools_but_keeps_the_rest() {
         const HEALTHY: &str = "0x1111111111111111111111111111111111111111";
@@ -312,6 +313,8 @@ mod tests {
             ],
             None,
         );
+        let quoted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&quoted);
         let server = spawn_http_server(move |request| {
             if request
                 .target
@@ -320,14 +323,16 @@ mod tests {
                 return Some(("200 OK", page.clone()));
             }
             assert_eq!(request.target, BATCH_TARGET);
-            let entries = requested_pools(request)
+            let requested = requested_pools(request);
+            seen.lock()
+                .unwrap()
+                .extend(requested.clone());
+            let entries = requested
                 .into_iter()
                 .filter_map(|pool| match pool.as_str() {
                     FAILING => Some(error_entry(&pool, 500, "boom")),
                     UNQUOTABLE => Some(quote_entry(&pool, &bid_ask_json(SERVER_TS, true))),
                     UNANSWERED => None,
-                    // Pools filtered out on metadata must never get here; answering them as
-                    // healthy makes such a slip show up as an extra emitted book.
                     _ => Some(quote_entry(&pool, &bid_ask_json(SERVER_TS, false))),
                 })
                 .collect();
@@ -340,6 +345,9 @@ mod tests {
 
         let books = source.fetch().await.unwrap().books;
 
+        let mut quoted = quoted.lock().unwrap().clone();
+        quoted.sort();
+        assert_eq!(quoted, [HEALTHY, FAILING, UNQUOTABLE, UNANSWERED]);
         let healthy_id = Bytes::from_str(HEALTHY)
             .unwrap()
             .to_string();
