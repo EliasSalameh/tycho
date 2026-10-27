@@ -1,3 +1,12 @@
+## [0.485.1](https://github.com/propeller-heads/tycho/compare/0.485.0...0.485.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **indexer:** add a zstd level 1 compressor for state answers ([ce64e8a](https://github.com/propeller-heads/tycho/commit/ce64e8a93aac8304635ece25cbf3baa9c18d5586))
+* **indexer:** compress state answers at zstd level 1 ([d5d79ec](https://github.com/propeller-heads/tycho/commit/d5d79ec0027a3ce72a5a29980a86d634fc3ce602))
+* **indexer:** compress state answers at zstd level 1 ([#1676](https://github.com/propeller-heads/tycho/issues/1676)) ([17407bd](https://github.com/propeller-heads/tycho/commit/17407bdce246b96092ee523d2a7b16551ac04c81))
+
 ## [0.485.0](https://github.com/propeller-heads/tycho/compare/0.484.0...0.485.0) (2026-10-27)
 
 
