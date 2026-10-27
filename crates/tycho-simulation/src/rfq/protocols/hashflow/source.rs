@@ -78,7 +78,7 @@ impl HttpSource for HashflowPricesSource {
 #[derive(Clone, Debug)]
 pub struct HashflowBookAssembler {
     /// The protocol system stamped on the components: the venue's own, or its fallback-router
-    /// one for an assembler made with `with_fallback_router()`.
+    /// one for a feed built with `with_fallback_router()`.
     pub(super) protocol_system: &'static str,
     pub(super) book_config: BookFeedConfig,
     /// USD-priced tokens the book's TVL is normalized into before the threshold applies.

@@ -71,7 +71,7 @@ fn taker_url(base_url: Option<&str>) -> String {
 }
 
 impl HashflowClient {
-    /// A client for Hashflow's taker API, whose endpoints share the version's own path.
+    /// A client for Hashflow's taker API, whose rfq endpoint sits on the version's own path.
     /// `base_url` points it somewhere else than the venue, which is how a test reaches a server
     /// of its own.
     pub fn new(

@@ -123,8 +123,8 @@ pub trait WsSource: Send {
     /// must not be a delta.
     type Snapshot: Send + Sync + 'static;
 
-    /// Builds the handshake for one connection. The loop calls this before every reconnect to
-    /// refresh connection-specific headers such as `Sec-WebSocket-Key`.
+    /// Builds the handshake for one connection. The loop calls this before every connection attempt
+    /// to refresh connection-specific headers such as `Sec-WebSocket-Key`.
     ///
     /// Return [`FeedError::Fatal`] when retrying cannot produce a different request; this ends
     /// the feed. Any other error counts as one failed attempt toward `max_consecutive_failures`,
@@ -135,8 +135,9 @@ pub trait WsSource: Send {
     ///
     /// Return `Ok(None)` for frames without snapshots, such as server notices. The loop skips
     /// these frames without changing the failure count. `Err` closes the connection and counts as
-    /// one failure; repeated decode failures trigger reconnects with backoff until
-    /// `max_consecutive_failures` ends the feed. [`FeedError::Fatal`] ends the feed immediately.
+    /// one failure; repeated decode failures trigger reconnects with backoff, and
+    /// `max_consecutive_failures` (unset by default, which reconnects forever) ends the feed once
+    /// reached. [`FeedError::Fatal`] ends the feed immediately.
     /// Only `Ok(Some(_))` clears the failure count.
     fn decode(&mut self, payload: WsPayload) -> Result<Option<Self::Snapshot>, FeedError>;
 }

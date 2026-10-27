@@ -90,8 +90,8 @@ impl BebopPricingClient {
 }
 
 impl BebopClient {
-    /// A client for Bebop's public API on `chain`, whose quote and pricing endpoints share the
-    /// chain's own path.
+    /// A client for Bebop's public API on `chain`, whose quote endpoint sits on the chain's own
+    /// path.
     pub fn new(
         chain: BebopSupportedChain,
         key: String,

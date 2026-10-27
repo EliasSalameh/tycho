@@ -183,9 +183,9 @@ impl SnapshotFeed for BebopFeed {
     }
 }
 
-/// Streams Bebop's pricing WebSocket and publishes every frame as [`BebopPrices`]. Requires only
-/// the chain and API key. [`BebopBookAssembler`] applies the token list and TVL floor. `Debug`
-/// output omits the API key.
+/// Streams Bebop's pricing WebSocket and publishes each binary frame as [`BebopPrices`]; text
+/// frames are skipped. Requires only the chain and API key. [`BebopBookAssembler`] applies the
+/// token list and TVL floor. `Debug` output omits the API key.
 #[derive(Clone, Debug)]
 pub struct BebopPricesFeed {
     feed_config: WsFeedConfig,
