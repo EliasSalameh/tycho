@@ -91,6 +91,13 @@ impl HashflowClient {
         }
     }
 
+    /// Sends this client's requests through `http`, so it can share a connection pool with
+    /// another client.
+    pub(super) fn with_http_client(mut self, http: Client) -> Self {
+        self.http = http;
+        self
+    }
+
     /// Requests a signed quote from `market_maker` alone: the API does not fall back to another
     /// maker when it declines, so a quote always comes from the maker whose levels priced it.
     #[instrument(
@@ -382,6 +389,13 @@ impl HashflowLevelsClient {
             auth_key,
             http: Client::new(),
         }
+    }
+
+    /// Sends this client's requests through `http`, so it can share a connection pool with
+    /// another client.
+    pub(super) fn with_http_client(mut self, http: Client) -> Self {
+        self.http = http;
+        self
     }
 
     /// The query every book request carries: who is asking and about which chain.

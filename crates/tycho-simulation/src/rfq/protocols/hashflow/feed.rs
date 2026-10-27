@@ -117,12 +117,14 @@ impl HashflowFeedBuilder {
     /// it.
     pub fn build(self) -> Result<HashflowFeed, FeedError> {
         let chain_id = chain_id(self.book_config.chain)?;
+        let http = reqwest::Client::new();
         let levels_client = HashflowLevelsClient::new(
             None,
             chain_id,
             self.auth_user.clone(),
             self.auth_key.clone(),
-        );
+        )
+        .with_http_client(http.clone());
         let HashflowFeedBuilder {
             protocol_system,
             component_layout,
@@ -136,13 +138,10 @@ impl HashflowFeedBuilder {
         let assembler = HashflowBookAssembler {
             component_layout,
             protocol_system,
-            client: Arc::new(HashflowClient::new(
-                None,
-                chain_id,
-                auth_user,
-                auth_key,
-                quote_timeout,
-            )),
+            client: Arc::new(
+                HashflowClient::new(None, chain_id, auth_user, auth_key, quote_timeout)
+                    .with_http_client(http),
+            ),
             book_config,
             usd_quote_tokens,
         };
