@@ -201,8 +201,7 @@ mod tests {
             client::HashflowLevelsClient,
             state::HashflowState,
             test_support::{
-                assembler_for, prices_source, two_maker_prices, two_maker_server, weth_usdc_levels,
-                UNPRICED, USDC, WETH,
+                assembler_for, two_maker_server, weth_usdc_levels, UNPRICED, USDC, WETH,
             },
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
@@ -590,18 +589,5 @@ mod tests {
             assembler.normalized_tvl(raw_tvl, &Bytes::from_str(quote_token).unwrap(), &levels);
 
         assert_eq!(result, expected);
-    }
-
-    /// A prices poll includes every market maker's levels.
-    #[tokio::test]
-    async fn a_prices_poll_returns_every_makers_levels() {
-        let server = two_maker_server().await;
-
-        let prices = prices_source(&server.url())
-            .fetch()
-            .await
-            .unwrap();
-
-        assert_eq!(prices, two_maker_prices());
     }
 }

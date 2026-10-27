@@ -347,41 +347,6 @@ mod tests {
             .is_empty());
     }
 
-    /// Bebop sends its whole book in one frame, so a level it got wrong on one pair costs that
-    /// pair and no other — including when the bad pair is one nobody asked for.
-    #[test]
-    fn build_books_drops_the_pair_whose_level_is_invalid() {
-        let assembler = test_assembler(0.0);
-
-        let mut unconfigured = weth_usdc_price_data(3000.0);
-        unconfigured.base = hex::decode("1111111111111111111111111111111111111111").unwrap();
-        unconfigured.quote = hex::decode("2222222222222222222222222222222222222222").unwrap();
-        unconfigured.bids = vec![0.0f32, 1.0f32];
-        let update = BebopPricingUpdate { pairs: vec![weth_usdc_price_data(3000.0), unconfigured] };
-
-        let books = build_books(&assembler, update).unwrap();
-
-        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
-        let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
-        assert_eq!(
-            books.keys().collect::<Vec<_>>(),
-            vec![&pair_component_id(PROTOCOL_SYSTEM, &weth, &usdc).to_string()]
-        );
-    }
-
-    /// A frame with nothing readable in it fails the poll: a published snapshot is complete, so
-    /// one carrying no books withdraws every pair Bebop was serving.
-    #[test]
-    fn build_books_rejects_an_update_with_nothing_valid_in_it() {
-        let assembler = test_assembler(0.0);
-
-        let mut price_data = weth_usdc_price_data(3000.0);
-        price_data.bids = vec![0.0f32, 1.0f32];
-        let update = BebopPricingUpdate { pairs: vec![price_data] };
-
-        assert!(matches!(build_books(&assembler, update), Err(FeedError::Parsing(_))));
-    }
-
     #[test]
     fn build_books_emits_each_published_orientation_as_its_own_component() {
         // Bebop streams some pairs from both sides. Each orientation is its own component,

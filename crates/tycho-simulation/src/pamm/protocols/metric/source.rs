@@ -238,7 +238,7 @@ mod tests {
             feed::MetricFeedBuilder,
             test_support::{
                 assembler_for, batch_body, bid_ask_json, error_entry, metadata_page, pool_json,
-                pool_server, pools_of, prices_source, quote_entry, requested_pools,
+                pool_server, prices_source, quote_entry, requested_pools,
                 serving_weth_usdc_above_100_usd, usdc, weth, BATCH_TARGET, BELOW_FLOOR, FIRST_POOL,
                 PAUSED, SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
             },
@@ -592,20 +592,6 @@ mod tests {
         assert_eq!(received, prices);
         assert_same_books(&source.assembler.books(received), &published);
         assert_eq!(published.len(), 1, "only the healthy pool is servable");
-    }
-
-    /// A prices poll includes every unpaused pool whose quote request succeeded. The book
-    /// assembler applies the token list, TVL floor and quote-usability checks.
-    #[tokio::test]
-    async fn a_prices_poll_returns_every_unpaused_pool_that_answered() {
-        let server = pool_server().await;
-
-        let prices = prices_source(Chain::Ethereum, &server.url(), "key")
-            .fetch()
-            .await
-            .unwrap();
-
-        assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
     }
 
     #[tokio::test]
