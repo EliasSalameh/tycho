@@ -1,3 +1,11 @@
+## [0.485.0](https://github.com/propeller-heads/tycho/compare/0.484.0...0.485.0) (2026-10-27)
+
+
+### Features
+
+* **ekubo-v3:** index the new SignedExclusiveSwap on Ethereum ([7105518](https://github.com/propeller-heads/tycho/commit/71055188c771af4470f3460dbca704a8aececd24))
+* **ekubo-v3:** index the new SignedExclusiveSwap on Ethereum ([#1687](https://github.com/propeller-heads/tycho/issues/1687)) ([7850994](https://github.com/propeller-heads/tycho/commit/7850994e4c8a0eba59f28c49e1776e30f0868fc1))
+
 ## [0.484.0](https://github.com/propeller-heads/tycho/compare/0.483.0...0.484.0) (2026-10-27)
 
 
