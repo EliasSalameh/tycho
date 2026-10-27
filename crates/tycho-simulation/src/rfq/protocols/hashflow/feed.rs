@@ -116,7 +116,7 @@ impl HashflowFeedBuilder {
     /// Whether the venue prices that chain is Hashflow's own answer, and the first poll carries
     /// it.
     pub fn build(self) -> Result<HashflowFeed, FeedError> {
-        let chain_id = self.book_config.chain_id()?;
+        let chain_id = chain_id(self.book_config.chain)?;
         let levels_client = HashflowLevelsClient::new(
             None,
             chain_id,

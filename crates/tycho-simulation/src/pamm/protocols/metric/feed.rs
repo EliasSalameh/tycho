@@ -120,7 +120,7 @@ impl MetricFeedBuilder {
     /// that chain is Metric's own answer, and the first poll carries it.
     pub fn build(self) -> Result<MetricFeed, FeedError> {
         check_api_key(&self.api_key)?;
-        let chain_id = self.assembler.book_config.chain_id()?;
+        let chain_id = chain_id(self.assembler.book_config.chain)?;
         if let Some(base_url) = &self.base_url {
             check_base_url(base_url)?;
         }

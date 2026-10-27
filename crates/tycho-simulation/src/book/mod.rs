@@ -141,12 +141,6 @@ pub struct BookFeedConfig {
 }
 
 impl BookFeedConfig {
-    /// The numeric chain id a venue's API addresses this chain by, or a [`FeedError::Fatal`]
-    /// naming the chain that has none.
-    pub(crate) fn chain_id(&self) -> Result<u64, FeedError> {
-        chain_id(self.chain)
-    }
-
     /// The two tokens of a pair, or `None` when either is outside the universe and the pair is
     /// therefore not served.
     pub(crate) fn pair_tokens(&self, a: &Bytes, b: &Bytes) -> Option<(&Token, &Token)> {
