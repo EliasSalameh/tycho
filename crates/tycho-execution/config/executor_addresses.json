@@ -31,7 +31,8 @@
     "fallback": "0x355d1D7bd40330c235e1132de8D2314b956584c9",
     "fallback:rfq:metric": "0x3067880b419209FC6e961F08E0cDFfC1F21d2873",
     "fallback:rfq:bebop": "0x4dC7b66A563cEB85D3cD5998294c72ce7026894a",
-    "fallback:rfq:hashflow": "0xd2D7794bF5b6266Ba6C753BD3dc392a90a8b6a28"
+    "fallback:rfq:hashflow": "0xd2D7794bF5b6266Ba6C753BD3dc392a90a8b6a28",
+    "aero_basic": "0x9929EE6e01C0d599C4b791c6D6093293b05Ea91C"
   },
   "base": {
     "uniswap_v2": "0x321C00604355DD20A2CB472D44fe8f37d821A82c",
@@ -50,7 +51,8 @@
     "fallback": "0x08f22285d13533d68aA8bE5949536322DB3538De",
     "fallback:rfq:metric": "0x8e0d294fC45fdFb6De21ae533132872E37F22B5b",
     "fallback:rfq:bebop": "0x683fDC846657A5108791C236c395C512bd7bD84B",
-    "pancakeswap_infinity_cl": "0x6EbFE9c9b8Ed29260a1301db5F2a7fDf72899E25"
+    "pancakeswap_infinity_cl": "0x6EbFE9c9b8Ed29260a1301db5F2a7fDf72899E25",
+    "aero_basic": "0xf6F8fb2321FB8431400ae546037cD2AE969a2c22"
   },
   "unichain": {
     "uniswap_v2": "0x55345739FCB5c5393f9BE32864439754649A204A",
@@ -68,7 +70,8 @@
     "native_wrapper": "0x117ABa0Cc2fC158318cC5640A3F8da0C426cD4ab",
     "rfq:native": "0x73ab9F8741a4EF6cB44fc095BFc767B5E458E125",
     "rfq:metric": "0x5dF460efec4cACA38d8115c6b36E9F7A6741eBCF",
-    "fallback:rfq:metric": "0x918335AF35DdDFad0C6E0d3beF95A6F9a0F02C3c"
+    "fallback:rfq:metric": "0x918335AF35DdDFad0C6E0d3beF95A6F9a0F02C3c",
+    "aero_basic": "0xf122B4408662172260Dd60DDFD45e4f9d15B38ce"
   },
   "bsc": {
     "uniswap_v2": "0x450B4a643553912C9aF98dc8b9dB2eF989Fb1444",
@@ -113,11 +116,13 @@
     "native_wrapper": "0x6EAd915f443eB0f8758BE58aFE7eF2dF1e2B927F",
     "rfq:metric": "0x8C18318338915839199271e7f006BEeAdBa2Dd0E",
     "rfq:native": "0x3E3F6eb0f1e98Aa300dbECdF0dBC7d5E6870812D",
-    "fallback:rfq:metric": "0x5ce13B5a3d41F22e28C4f76C115bd0c3ca70EE7C"
+    "fallback:rfq:metric": "0x5ce13B5a3d41F22e28C4f76C115bd0c3ca70EE7C",
+    "aero_basic": "0xCdBfd7f55Df4B60f34d8774c650feBB1baF5E34f"
   },
   "arc": {
     "uniswap_v2": "0x048eEE15C2Ec3b3114a6731f615088e79288Ef1c",
     "uniswap_v3": "0xc2ee3AdEb7a38747EEA9ad31BF9517250912f015",
-    "uniswap_v4": "0xf7630dAAC56f3ee857cC3fCc758F67302542564D"
+    "uniswap_v4": "0xf7630dAAC56f3ee857cC3fCc758F67302542564D",
+    "aero_basic": "0x68F46568a26d46E4fc7FB97BbbDDfd3c4FaBdd0a"
   }
 }
