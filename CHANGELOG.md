@@ -1,3 +1,88 @@
+## [0.485.1](https://github.com/propeller-heads/tycho/compare/0.485.0...0.485.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **indexer:** add a zstd level 1 compressor for state answers ([ce64e8a](https://github.com/propeller-heads/tycho/commit/ce64e8a93aac8304635ece25cbf3baa9c18d5586))
+* **indexer:** compress state answers at zstd level 1 ([d5d79ec](https://github.com/propeller-heads/tycho/commit/d5d79ec0027a3ce72a5a29980a86d634fc3ce602))
+* **indexer:** compress state answers at zstd level 1 ([#1676](https://github.com/propeller-heads/tycho/issues/1676)) ([17407bd](https://github.com/propeller-heads/tycho/commit/17407bdce246b96092ee523d2a7b16551ac04c81))
+
+## [0.485.0](https://github.com/propeller-heads/tycho/compare/0.484.0...0.485.0) (2026-10-27)
+
+
+### Features
+
+* **ekubo-v3:** index the new SignedExclusiveSwap on Ethereum ([7105518](https://github.com/propeller-heads/tycho/commit/71055188c771af4470f3460dbca704a8aececd24))
+* **ekubo-v3:** index the new SignedExclusiveSwap on Ethereum ([#1687](https://github.com/propeller-heads/tycho/issues/1687)) ([7850994](https://github.com/propeller-heads/tycho/commit/7850994e4c8a0eba59f28c49e1776e30f0868fc1))
+
+## [0.484.0](https://github.com/propeller-heads/tycho/compare/0.483.0...0.484.0) (2026-10-27)
+
+
+### Features
+
+* **indexer:** push jemalloc heap profiles to Pyroscope ([4ba4384](https://github.com/propeller-heads/tycho/commit/4ba4384b62f4fcadec3e574aa1b45e5f3a9924d8))
+* **indexer:** upgrade jemalloc and push heap profiles to Pyroscope ([#1674](https://github.com/propeller-heads/tycho/issues/1674)) ([edc3c8d](https://github.com/propeller-heads/tycho/commit/edc3c8df1726ccc46dab480a13a270185db8c521))
+
+## [0.483.0](https://github.com/propeller-heads/tycho/compare/0.482.5...0.483.0) (2026-10-27)
+
+
+### Features
+
+* **indexer:** add the chains to the default profile name ([3723459](https://github.com/propeller-heads/tycho/commit/37234598f399768c7eb3ad6a66d13431438b7d93))
+* **indexer:** label profiles with the ENVIRONMENT variable ([4f771cf](https://github.com/propeller-heads/tycho/commit/4f771cf7ac7a3306c7ce42324dce33d23fab443e))
+* **indexer:** label profiles with the OpenTelemetry resource attributes ([311715a](https://github.com/propeller-heads/tycho/commit/311715a7539df401c68110f5a13f3cf2c638eb8f))
+* **indexer:** push continuous CPU profiles to Pyroscope ([6842575](https://github.com/propeller-heads/tycho/commit/684257561597f0036c4d53ba62a2eb6c10b78e36))
+* **indexer:** push continuous CPU profiles to Pyroscope ([#1668](https://github.com/propeller-heads/tycho/issues/1668)) ([5c37180](https://github.com/propeller-heads/tycho/commit/5c3718068eb5b1aef17731e35ba00f13b56dc710))
+
+
+### Bug Fixes
+
+* **deps:** bump pyroscope to 2.1.2 for the ruzstd advisory ([0434386](https://github.com/propeller-heads/tycho/commit/04343867568bb90088b6985fd3b250e043d5a7b2))
+* **indexer:** name default profiles after the first chain only ([3c05197](https://github.com/propeller-heads/tycho/commit/3c051970a5cf877e28612db76646e3e34bc7ce23))
+* **indexer:** reject a bad Pyroscope sample rate instead of crashing ([17f96f7](https://github.com/propeller-heads/tycho/commit/17f96f7181fb5da675d9c67ea6e2d9921c344d00))
+
+## [0.482.5](https://github.com/propeller-heads/tycho/compare/0.482.4...0.482.5) (2026-10-26)
+
+
+### Bug Fixes
+
+* **execution:** follow Liquorice to its current settlement contract ([2ccf50a](https://github.com/propeller-heads/tycho/commit/2ccf50ac810610e65c0634dfad1bcb7e1432a3ec))
+* **execution:** follow Liquorice to its current settlement contract ([#1487](https://github.com/propeller-heads/tycho/issues/1487)) ([ff895d8](https://github.com/propeller-heads/tycho/commit/ff895d841517fd4bfaf9e503eda556870bb4271b))
+* **execution:** give the Liquorice fallback encoder its venue config ([2f06f3d](https://github.com/propeller-heads/tycho/commit/2f06f3d0f3b4e512667e2cd95fd3ec85efa6b82b))
+* **execution:** read the Liquorice settle selectors from one place ([39dd0ca](https://github.com/propeller-heads/tycho/commit/39dd0cac133e5efa8c371104eda2ffe7bec3a676))
+
+## [0.482.4](https://github.com/propeller-heads/tycho/compare/0.482.3...0.482.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([4627fcf](https://github.com/propeller-heads/tycho/commit/4627fcf42f952a15d6965cd4d14b7b2865c2dbec))
+* **deps:** move to zstd 0.14.3 for the zstd security advisories ([#1681](https://github.com/propeller-heads/tycho/issues/1681)) ([81a3dd9](https://github.com/propeller-heads/tycho/commit/81a3dd92535ec5fcd80aed720061b6af7cd4b47d))
+
+## [0.482.3](https://github.com/propeller-heads/tycho/compare/0.482.2...0.482.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([4bc674c](https://github.com/propeller-heads/tycho/commit/4bc674cad2c48db9ee4d7d6160d937034bdb51a9))
+* **deps:** ignore crypto-bigint advisory RUSTSEC-2026-0387 ([#1679](https://github.com/propeller-heads/tycho/issues/1679)) ([4b7eeb6](https://github.com/propeller-heads/tycho/commit/4b7eeb66e1e09c6b2e511fc999e61b5d46779e76))
+
+## [0.482.2](https://github.com/propeller-heads/tycho/compare/0.482.1...0.482.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([f7e4c79](https://github.com/propeller-heads/tycho/commit/f7e4c79eb301f4849b6e978891a2834eaf5c8def))
+* **deps:** bump ctutils to 0.4.4 for RUSTSEC-2026-0385 ([#1675](https://github.com/propeller-heads/tycho/issues/1675)) ([0257176](https://github.com/propeller-heads/tycho/commit/02571767e045b266e1e355797076a3c92142aa50))
+
+## [0.482.1](https://github.com/propeller-heads/tycho/compare/0.482.0...0.482.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **substreams:** skip Arc V4 account initialization ([09c2227](https://github.com/propeller-heads/tycho/commit/09c22279b0598e3962d38d2a99914b5641349c38))
+* **substreams:** skip Arc V4 account initialization ([#1672](https://github.com/propeller-heads/tycho/issues/1672)) ([e63ef36](https://github.com/propeller-heads/tycho/commit/e63ef3674b01ca5eff5f314fa8181590f610b53f))
+
 ## [0.482.0](https://github.com/propeller-heads/tycho/compare/0.481.0...0.482.0) (2026-10-23)
 
 
