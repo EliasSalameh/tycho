@@ -81,7 +81,9 @@ pub struct HashflowPriceLevelsResponse {
 /// sells, each at a price in the quote token.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HashflowMarketMakerLevels {
+    /// The pair the levels price.
     pub pair: HashflowPair,
+    /// Base token quantities, each at a price in quote token per base token.
     #[serde(with = "hashflow_levels")]
     pub levels: Levels,
 }
@@ -124,8 +126,10 @@ mod hashflow_levels {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HashflowPair {
+    /// The token the maker sells.
     #[serde(deserialize_with = "evm_address::deserialize")]
     pub base_token: Bytes,
+    /// The token the maker prices it in.
     #[serde(deserialize_with = "evm_address::deserialize")]
     pub quote_token: Bytes,
 }
@@ -276,6 +280,7 @@ pub struct HashflowQuoteData {
 /// tycho-simulation version.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HashflowPrices {
+    /// Each maker's levels, one entry per pair the maker prices.
     pub levels_by_maker: HashMap<String, Vec<HashflowMarketMakerLevels>>,
 }
 

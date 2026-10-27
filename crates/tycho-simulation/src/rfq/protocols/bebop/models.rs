@@ -59,7 +59,9 @@ impl BebopPriceData {
 /// validated ladders once, so the state simulates without converting per call.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BebopBook {
+    /// The token the pair sells.
     pub base: Bytes,
+    /// The token the pair is priced in.
     pub quote: Bytes,
     /// Bebop's own update time; milliseconds on the wire.
     pub last_update_ts: u64,
@@ -360,6 +362,7 @@ impl BebopSupportedChain {
 /// tycho-simulation version.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BebopPrices {
+    /// The valid pairs of the frame, in the order Bebop sent them.
     pub pairs: Vec<BebopBook>,
 }
 
