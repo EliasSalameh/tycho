@@ -7,7 +7,7 @@ use ::http::Request;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt};
 use tokio::time::{sleep, timeout};
-pub use tokio_tungstenite::tungstenite::{Bytes, Utf8Bytes};
+pub use tokio_tungstenite::tungstenite::{Bytes as FrameBytes, Utf8Bytes};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{self, Message},
@@ -105,14 +105,15 @@ pub async fn run_ws_feed<S: WsSource>(
 /// reconnects on `Close`, tokio-tungstenite answers pings while the stream is polled, and
 /// tungstenite never yields raw frames on the read side.
 ///
-/// The payloads are tokio-tungstenite's [`Utf8Bytes`] and [`Bytes`], re-exported from this
-/// module. Both dereference to slices; `Bytes` shares its data through reference counting
-/// instead of copying it.
+/// The payloads are tokio-tungstenite's [`Utf8Bytes`] and `Bytes`, re-exported from this module,
+/// the latter as [`FrameBytes`] so it does not collide with `tycho_common::Bytes`. Both
+/// dereference to slices; `FrameBytes` shares its data through reference counting instead of
+/// copying it.
 pub enum WsPayload {
     /// A text frame.
     Text(Utf8Bytes),
     /// A binary frame.
-    Binary(Bytes),
+    Binary(FrameBytes),
 }
 
 /// The provider-specific half of a WebSocket feed: it builds the handshake request and decodes
