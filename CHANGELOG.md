@@ -1,3 +1,12 @@
+## [0.486.0](https://github.com/propeller-heads/tycho/compare/0.485.1...0.486.0) (2026-10-27)
+
+
+### Features
+
+* **integration-test:** add a Grafana dashboard for pAMM simulation quality ([4c5bd57](https://github.com/propeller-heads/tycho/commit/4c5bd5702658db87b6a4bd1a697715058ed0d855))
+* **integration-test:** simulate price level swaps with the stream's overrides ([7f956cc](https://github.com/propeller-heads/tycho/commit/7f956cc6610dea869ba6cd6b6c48ff4c6d9ca2dc))
+* **integration-test:** simulate price level swaps with the stream's overrides ([#1673](https://github.com/propeller-heads/tycho/issues/1673)) ([8dcb726](https://github.com/propeller-heads/tycho/commit/8dcb72683e1452e9753b282df2cf4ddcc13477de))
+
 ## [0.485.1](https://github.com/propeller-heads/tycho/compare/0.485.0...0.485.1) (2026-10-27)
 
 
