@@ -106,7 +106,7 @@ for any protocol indexed by Tycho.
     book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
     the state, so its tokens and its directions agree
   - **Prices feed and book assembler (Bebop, Hashflow, Metric)**: `<Venue>PricesFeed` in
-    `feed.rs` streams or polls the venue and publishes `<Venue>Prices` (`models.rs`, serde),
+    `feed.rs`, built by `<Venue>PricesFeedBuilder`, streams or polls the venue and publishes `<Venue>Prices` (`models.rs`, serde),
     needing only the chain and credentials; `<Venue>BookAssembler::books(prices)` in `source.rs`
     turns prices into the books the `*Feed` publishes. The `*Feed`'s book source holds both.
     `Levels` and `PriceLevel` are re-exported from `book` because the price types expose them

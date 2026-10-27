@@ -138,7 +138,10 @@ impl BebopFeedBuilder {
     pub fn build(self) -> Result<BebopFeed, FeedError> {
         let chain =
             BebopSupportedChain::try_from(self.book_config.chain).map_err(FeedError::Fatal)?;
-        let prices = BebopPricesSource::new(BebopPricingClient::new(chain, self.ws_key.clone()));
+        let BebopPricesFeed { feed_config, source: prices } =
+            BebopPricesFeedBuilder::new(self.book_config.chain, self.ws_key.clone())
+                .feed_config(self.feed_config.clone())
+                .build()?;
         let BebopFeedBuilder {
             protocol_system,
             book_config,
@@ -146,7 +149,7 @@ impl BebopFeedBuilder {
             ws_key,
             quote_timeout,
             origin,
-            feed_config,
+            feed_config: _,
             all_pairs,
         } = self;
         let assembler = BebopBookAssembler {
@@ -197,23 +200,32 @@ pub struct BebopPricesFeed {
     source: BebopPricesSource,
 }
 
-impl BebopPricesFeed {
-    /// Creates a feed that streams Bebop's pricing WebSocket for `chain` with `ws_key`.
-    ///
-    /// Fails with [`FeedError::Fatal`] for a chain Bebop does not serve. The feed tuning starts
-    /// from [`BebopFeedBuilder::default_feed_config`].
-    pub fn new(chain: Chain, ws_key: String) -> Result<Self, FeedError> {
-        let chain = BebopSupportedChain::try_from(chain).map_err(FeedError::Fatal)?;
-        Ok(Self {
-            feed_config: BebopFeedBuilder::default_feed_config(),
-            source: BebopPricesSource::new(BebopPricingClient::new(chain, ws_key)),
-        })
+/// Builds a [`BebopPricesFeed`] from the chain and Bebop's API key.
+pub struct BebopPricesFeedBuilder {
+    chain: Chain,
+    ws_key: String,
+    feed_config: WsFeedConfig,
+}
+
+impl BebopPricesFeedBuilder {
+    /// The feed tuning starts from [`BebopFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, ws_key: String) -> Self {
+        Self { chain, ws_key, feed_config: BebopFeedBuilder::default_feed_config() }
     }
 
     /// Tune the connection loop (timeouts, backoff, failure limit).
     pub fn feed_config(mut self, feed_config: WsFeedConfig) -> Self {
         self.feed_config = feed_config;
         self
+    }
+
+    /// Fails with [`FeedError::Fatal`] for a chain Bebop does not serve.
+    pub fn build(self) -> Result<BebopPricesFeed, FeedError> {
+        let chain = BebopSupportedChain::try_from(self.chain).map_err(FeedError::Fatal)?;
+        Ok(BebopPricesFeed {
+            feed_config: self.feed_config,
+            source: BebopPricesSource::new(BebopPricingClient::new(chain, self.ws_key)),
+        })
     }
 }
 
@@ -500,14 +512,33 @@ mod tests {
 
     #[test]
     fn the_prices_feed_refuses_a_chain_bebop_does_not_serve() {
-        let error = BebopPricesFeed::new(Chain::ZkSync, "key".to_string()).unwrap_err();
+        let error = BebopPricesFeedBuilder::new(Chain::ZkSync, "key".to_string())
+            .build()
+            .unwrap_err();
 
         assert!(error.is_fatal(), "{error}");
     }
 
     #[test]
+    fn the_prices_feed_runs_on_the_feed_tuning_it_is_given() {
+        let tuned = WsFeedConfig {
+            read_idle_timeout: Duration::from_secs(7),
+            ..BebopFeedBuilder::default_feed_config()
+        };
+
+        let feed = BebopPricesFeedBuilder::new(Chain::Ethereum, "key".to_string())
+            .feed_config(tuned)
+            .build()
+            .unwrap();
+
+        assert_eq!(feed.feed_config.read_idle_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
     fn the_prices_feed_debug_output_omits_the_api_key() {
-        let feed = BebopPricesFeed::new(Chain::Ethereum, "secret_key".to_string()).unwrap();
+        let feed = BebopPricesFeedBuilder::new(Chain::Ethereum, "secret_key".to_string())
+            .build()
+            .unwrap();
 
         assert!(!format!("{feed:?}").contains("secret_key"));
     }

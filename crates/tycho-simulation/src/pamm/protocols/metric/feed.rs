@@ -119,15 +119,15 @@ impl MetricFeedBuilder {
     /// numeric chain id, which is all Metric's API is addressed by. Whether the venue serves
     /// that chain is Metric's own answer, and the first poll carries it.
     pub fn build(self) -> Result<MetricFeed, FeedError> {
-        check_api_key(&self.api_key)?;
-        let chain_id = chain_id(self.assembler.book_config.chain)?;
-        if let Some(base_url) = &self.base_url {
-            check_base_url(base_url)?;
-        }
         let MetricFeedBuilder { assembler, base_url, api_key, bid_ask_concurrency, feed_config } =
             self;
-        let client = MetricClient::new(base_url.as_deref(), chain_id, api_key, bid_ask_concurrency);
-        let prices = MetricPricesSource::new(client);
+        let mut prices_builder = MetricPricesFeedBuilder::new(assembler.book_config.chain, api_key)
+            .bid_ask_concurrency(bid_ask_concurrency)
+            .feed_config(feed_config);
+        if let Some(base_url) = base_url {
+            prices_builder = prices_builder.base_url(base_url);
+        }
+        let MetricPricesFeed { feed_config, source: prices } = prices_builder.build()?;
         Ok(MetricFeed { feed_config, source: MetricBookSource { prices, assembler } })
     }
 
@@ -156,7 +156,7 @@ impl SnapshotFeed for MetricFeed {
 /// Rejects empty bearer tokens before starting the feed. Metric reports `Unknown chainId` for both
 /// an empty token and an unsupported chain, but returns 401 for a rejected nonempty key. Without
 /// this check, an empty token would be mistaken for an unsupported chain and end the feed.
-pub(super) fn check_api_key(api_key: &str) -> Result<(), FeedError> {
+fn check_api_key(api_key: &str) -> Result<(), FeedError> {
     if api_key.is_empty() {
         return Err(FeedError::InvalidInput("Metric trading key is empty".to_string()));
     }
@@ -165,7 +165,7 @@ pub(super) fn check_api_key(api_key: &str) -> Result<(), FeedError> {
 
 /// Rejects a base URL that does not parse. Every poll would fail the same way, so the feed does
 /// not start.
-pub(super) fn check_base_url(base_url: &str) -> Result<(), FeedError> {
+fn check_base_url(base_url: &str) -> Result<(), FeedError> {
     Url::parse(base_url)
         .map(drop)
         .map_err(|error| FeedError::InvalidInput(format!("Metric base URL {base_url}: {error}")))
@@ -178,52 +178,46 @@ pub(super) fn check_base_url(base_url: &str) -> Result<(), FeedError> {
 ///
 /// A poll succeeds while any pool answers; a pool that fails is left out, so a reader loses only
 /// that pool's pairs. `Debug` output omits the API key.
-#[derive(derive_more::Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct MetricPricesFeed {
     feed_config: HttpFeedConfig,
-    chain_id: u64,
-    #[debug(skip)]
-    api_key: String,
-    base_url: Option<String>,
-    bid_ask_concurrency: NonZeroUsize,
     source: MetricPricesSource,
 }
 
-impl MetricPricesFeed {
-    /// Creates a feed that polls Metric for `chain` with `api_key`.
-    ///
-    /// Fails with [`FeedError::InvalidInput`] for an empty trading key and with
-    /// [`FeedError::Fatal`] for a chain with no numeric chain id, which is all Metric's API is
-    /// addressed by. Metric reports whether it serves the chain on the first poll. The feed
-    /// tuning starts from [`MetricFeedBuilder::default_feed_config`].
-    pub fn new(chain: Chain, api_key: String) -> Result<Self, FeedError> {
-        check_api_key(&api_key)?;
-        let chain_id = chain_id(chain)?;
-        let bid_ask_concurrency = DEFAULT_BID_ASK_CONCURRENCY;
-        let client = MetricClient::new(None, chain_id, api_key.clone(), bid_ask_concurrency);
-        Ok(Self {
-            feed_config: MetricFeedBuilder::default_feed_config(),
-            chain_id,
+/// Builds a [`MetricPricesFeed`] from the chain and the Bearer trading key. The feed talks to
+/// Metric's public API unless [`base_url`](Self::base_url) says otherwise.
+pub struct MetricPricesFeedBuilder {
+    chain: Chain,
+    api_key: String,
+    base_url: Option<String>,
+    bid_ask_concurrency: NonZeroUsize,
+    feed_config: HttpFeedConfig,
+}
+
+impl MetricPricesFeedBuilder {
+    /// The feed tuning starts from [`MetricFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, api_key: String) -> Self {
+        Self {
+            chain,
             api_key,
             base_url: None,
-            bid_ask_concurrency,
-            source: MetricPricesSource::new(client),
-        })
+            bid_ask_concurrency: DEFAULT_BID_ASK_CONCURRENCY,
+            feed_config: MetricFeedBuilder::default_feed_config(),
+        }
     }
 
-    /// Points the feed at another Metric deployment; fails with [`FeedError::InvalidInput`] for
-    /// a value that is not a URL.
-    pub fn base_url(mut self, base_url: String) -> Result<Self, FeedError> {
-        check_base_url(&base_url)?;
+    /// Points the feed at another Metric deployment; [`build`](Self::build) rejects a value that
+    /// is not a URL.
+    pub fn base_url(mut self, base_url: String) -> Self {
         self.base_url = Some(base_url);
-        Ok(self.with_rebuilt_client())
+        self
     }
 
     /// How many of a poll's batch bid/ask requests run at once. See
     /// [`MetricFeedBuilder::bid_ask_concurrency`].
     pub fn bid_ask_concurrency(mut self, requests_in_flight: NonZeroUsize) -> Self {
         self.bid_ask_concurrency = requests_in_flight;
-        self.with_rebuilt_client()
+        self
     }
 
     /// Tune the poll loop (poll cadence, request timeout, failure limit).
@@ -232,15 +226,26 @@ impl MetricPricesFeed {
         self
     }
 
-    fn with_rebuilt_client(mut self) -> Self {
+    /// Fails with [`FeedError::InvalidInput`] for an empty trading key or a base URL that is not
+    /// one, and with [`FeedError::Fatal`] for a chain with no numeric chain id, which is all
+    /// Metric's API is addressed by. Whether the venue serves that chain is Metric's own answer,
+    /// and the first poll carries it.
+    pub fn build(self) -> Result<MetricPricesFeed, FeedError> {
+        check_api_key(&self.api_key)?;
+        let chain_id = chain_id(self.chain)?;
+        if let Some(base_url) = &self.base_url {
+            check_base_url(base_url)?;
+        }
         let client = MetricClient::new(
             self.base_url.as_deref(),
-            self.chain_id,
-            self.api_key.clone(),
+            chain_id,
+            self.api_key,
             self.bid_ask_concurrency,
         );
-        self.source = MetricPricesSource::new(client);
-        self
+        Ok(MetricPricesFeed {
+            feed_config: self.feed_config,
+            source: MetricPricesSource::new(client),
+        })
     }
 }
 
@@ -323,9 +328,9 @@ mod tests {
     #[tokio::test]
     async fn the_prices_feed_publishes_each_poll() {
         let server = pool_server().await;
-        let feed = MetricPricesFeed::new(Chain::Ethereum, "key".to_string())
-            .unwrap()
+        let feed = MetricPricesFeedBuilder::new(Chain::Ethereum, "key".to_string())
             .base_url(server.url())
+            .build()
             .unwrap();
         let mut stream = SnapshotFeedStream::spawn("test", feed);
 
@@ -342,14 +347,18 @@ mod tests {
 
     #[test]
     fn the_prices_feed_rejects_an_empty_key() {
-        let error = MetricPricesFeed::new(Chain::Ethereum, String::new()).unwrap_err();
+        let error = MetricPricesFeedBuilder::new(Chain::Ethereum, String::new())
+            .build()
+            .unwrap_err();
 
         assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
     }
 
     #[test]
     fn the_prices_feed_refuses_a_chain_with_no_numeric_chain_id() {
-        let error = MetricPricesFeed::new(chain_without_id(), "key".to_string()).unwrap_err();
+        let error = MetricPricesFeedBuilder::new(chain_without_id(), "key".to_string())
+            .build()
+            .unwrap_err();
 
         assert!(error.is_fatal(), "{error}");
         assert!(
@@ -361,10 +370,25 @@ mod tests {
     }
 
     #[test]
+    fn the_prices_feed_runs_on_the_feed_tuning_it_is_given() {
+        let tuned = HttpFeedConfig {
+            poll_interval: Duration::from_secs(7),
+            ..MetricFeedBuilder::default_feed_config()
+        };
+
+        let feed = MetricPricesFeedBuilder::new(Chain::Ethereum, "key".to_string())
+            .feed_config(tuned)
+            .build()
+            .unwrap();
+
+        assert_eq!(feed.feed_config.poll_interval, Duration::from_secs(7));
+    }
+
+    #[test]
     fn the_prices_feed_rejects_an_invalid_base_url() {
-        let error = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
-            .unwrap()
+        let error = MetricPricesFeedBuilder::new(Chain::Ethereum, "secret_key".to_string())
             .base_url("api.metric.xyz".to_string())
+            .build()
             .unwrap_err();
 
         assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
@@ -372,9 +396,9 @@ mod tests {
 
     #[test]
     fn the_prices_feed_debug_output_omits_the_api_key() {
-        let feed = MetricPricesFeed::new(Chain::Ethereum, "secret_key".to_string())
-            .unwrap()
+        let feed = MetricPricesFeedBuilder::new(Chain::Ethereum, "secret_key".to_string())
             .base_url("https://metric.example".to_string())
+            .build()
             .unwrap();
         let rendered = format!("{feed:?}");
 

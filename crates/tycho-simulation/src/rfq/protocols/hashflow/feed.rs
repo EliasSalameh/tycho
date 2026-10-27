@@ -118,13 +118,14 @@ impl HashflowFeedBuilder {
     pub fn build(self) -> Result<HashflowFeed, FeedError> {
         let chain_id = chain_id(self.book_config.chain)?;
         let http = reqwest::Client::new();
-        let levels_client = HashflowLevelsClient::new(
-            None,
-            chain_id,
+        let HashflowPricesFeed { feed_config, source: prices } = HashflowPricesFeedBuilder::new(
+            self.book_config.chain,
             self.auth_user.clone(),
             self.auth_key.clone(),
         )
-        .with_http_client(http.clone());
+        .feed_config(self.feed_config.clone())
+        .http_client(http.clone())
+        .build()?;
         let HashflowFeedBuilder {
             protocol_system,
             component_layout,
@@ -132,7 +133,7 @@ impl HashflowFeedBuilder {
             usd_quote_tokens,
             auth_user,
             auth_key,
-            feed_config,
+            feed_config: _,
             quote_timeout,
         } = self;
         let assembler = HashflowBookAssembler {
@@ -145,13 +146,7 @@ impl HashflowFeedBuilder {
             book_config,
             usd_quote_tokens,
         };
-        Ok(HashflowFeed {
-            feed_config,
-            source: HashflowBookSource {
-                prices: HashflowPricesSource::new(levels_client),
-                assembler,
-            },
-        })
+        Ok(HashflowFeed { feed_config, source: HashflowBookSource { prices, assembler } })
     }
 
     /// Builds a [`HashflowBookAssembler`] that produces the same books as [`build`](Self::build)
@@ -187,24 +182,50 @@ pub struct HashflowPricesFeed {
     source: HashflowPricesSource,
 }
 
-impl HashflowPricesFeed {
-    /// Creates a feed that polls Hashflow's taker API for `chain` with the given credentials.
-    ///
-    /// Fails with [`FeedError::Fatal`] for a chain with no numeric chain id, which is all
-    /// Hashflow's API is addressed by. Hashflow reports whether it prices the chain on the first
-    /// poll. The feed tuning starts from [`HashflowFeedBuilder::default_feed_config`].
-    pub fn new(chain: Chain, auth_user: String, auth_key: String) -> Result<Self, FeedError> {
-        let client = HashflowLevelsClient::new(None, chain_id(chain)?, auth_user, auth_key);
-        Ok(Self {
+/// Builds a [`HashflowPricesFeed`] from the chain and Hashflow's API credentials.
+pub struct HashflowPricesFeedBuilder {
+    chain: Chain,
+    auth_user: String,
+    auth_key: String,
+    feed_config: HttpFeedConfig,
+    http: Option<reqwest::Client>,
+}
+
+impl HashflowPricesFeedBuilder {
+    /// The feed tuning starts from [`HashflowFeedBuilder::default_feed_config`].
+    pub fn new(chain: Chain, auth_user: String, auth_key: String) -> Self {
+        Self {
+            chain,
+            auth_user,
+            auth_key,
             feed_config: HashflowFeedBuilder::default_feed_config(),
-            source: HashflowPricesSource::new(client),
-        })
+            http: None,
+        }
     }
 
     /// Tune the poll loop (poll cadence, request timeout, failure limit).
     pub fn feed_config(mut self, feed_config: HttpFeedConfig) -> Self {
         self.feed_config = feed_config;
         self
+    }
+
+    /// Makes the feed's requests through `http`, which another client of this venue may share.
+    fn http_client(mut self, http: reqwest::Client) -> Self {
+        self.http = Some(http);
+        self
+    }
+
+    /// Fails with [`FeedError::Fatal`] for a chain with no numeric chain id, which is all
+    /// Hashflow's API is addressed by. Hashflow reports whether it prices the chain on the first
+    /// poll.
+    pub fn build(self) -> Result<HashflowPricesFeed, FeedError> {
+        let client =
+            HashflowLevelsClient::new(None, chain_id(self.chain)?, self.auth_user, self.auth_key)
+                .with_http_client(self.http.unwrap_or_default());
+        Ok(HashflowPricesFeed {
+            feed_config: self.feed_config,
+            source: HashflowPricesSource::new(client),
+        })
     }
 }
 
@@ -422,11 +443,12 @@ mod tests {
 
     #[test]
     fn the_prices_feed_refuses_a_chain_with_no_numeric_chain_id() {
-        let error = HashflowPricesFeed::new(
+        let error = HashflowPricesFeedBuilder::new(
             chain_without_id(),
             "test_user".to_string(),
             "test_key".to_string(),
         )
+        .build()
         .unwrap_err();
 
         assert!(error.is_fatal(), "{error}");
@@ -439,12 +461,32 @@ mod tests {
     }
 
     #[test]
+    fn the_prices_feed_runs_on_the_feed_tuning_it_is_given() {
+        let tuned = HttpFeedConfig {
+            poll_interval: Duration::from_secs(7),
+            ..HashflowFeedBuilder::default_feed_config()
+        };
+
+        let feed = HashflowPricesFeedBuilder::new(
+            Chain::Ethereum,
+            "test_user".to_string(),
+            "test_key".to_string(),
+        )
+        .feed_config(tuned)
+        .build()
+        .unwrap();
+
+        assert_eq!(feed.feed_config.poll_interval, Duration::from_secs(7));
+    }
+
+    #[test]
     fn the_prices_feed_debug_output_omits_the_credentials() {
-        let feed = HashflowPricesFeed::new(
+        let feed = HashflowPricesFeedBuilder::new(
             Chain::Ethereum,
             "secret_user".to_string(),
             "secret_key".to_string(),
         )
+        .build()
         .unwrap();
         let rendered = format!("{feed:?}");
 
