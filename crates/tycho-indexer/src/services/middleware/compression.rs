@@ -77,10 +77,137 @@ fn accepts_zstd(req: &HttpRequest) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use actix_web::{test, web, App};
+    use actix_web::{body::to_bytes, http::header::ContentType, test, web, App};
+    use rstest::rstest;
 
     use super::*;
     use crate::services::rpc::health as health_endpoint;
+
+    const JSON_BYTES: usize = 64 * 1024;
+
+    /// A JSON body of `bytes` bytes, hex strings like a state response.
+    fn hex_json(bytes: usize) -> Vec<u8> {
+        let mut body = b"{\"slots\":{".to_vec();
+        let mut i = 0u64;
+        while body.len() < bytes {
+            body.extend(format!("\"0x{i:064x}\":\"0x{:064x}\",", i * 7919).into_bytes());
+            i += 1;
+        }
+        body.extend(b"\"0x\":\"0x\"}}");
+        body
+    }
+
+    async fn state_like(
+        req: HttpRequest,
+        body: web::Data<Vec<u8>>,
+    ) -> Result<HttpResponse, RpcError> {
+        let response = HttpResponse::Ok()
+            .content_type(ContentType::json())
+            .body(body.get_ref().clone());
+        compress_state_response(&req, response).await
+    }
+
+    /// Calls a handler that returns `body` through [`compress_state_response`] and the
+    /// middleware, and returns the response's `Content-Encoding` and its body.
+    async fn call_state_like(body: Vec<u8>, accept: Option<&str>) -> (Option<String>, Vec<u8>) {
+        let app = test::init_service(
+            App::new()
+                .wrap(compression_middleware())
+                .app_data(web::Data::new(body))
+                .service(web::resource("/state").route(web::post().to(state_like))),
+        )
+        .await;
+        let mut req = test::TestRequest::post().uri("/state");
+        if let Some(accept) = accept {
+            req = req.insert_header(("accept-encoding", accept));
+        }
+        let resp = test::call_service(&app, req.to_request()).await;
+        assert!(resp.status().is_success());
+        let encoding = resp
+            .headers()
+            .get("content-encoding")
+            .map(|h| h.to_str().unwrap().to_string());
+        (encoding, test::read_body(resp).await.to_vec())
+    }
+
+    #[rstest]
+    #[case::zstd("zstd")]
+    #[case::gzip_and_zstd("gzip, zstd")]
+    #[actix_web::test]
+    async fn test_zstd_body_decompresses_once_to_the_json(#[case] accept: &str) {
+        let json = hex_json(JSON_BYTES);
+
+        let (encoding, body) = call_state_like(json.clone(), Some(accept)).await;
+
+        assert_eq!(encoding.as_deref(), Some("zstd"));
+        assert_eq!(zstd::decode_all(body.as_slice()).unwrap(), json);
+    }
+
+    #[rstest]
+    #[case::no_header(None)]
+    #[case::identity(Some("identity"))]
+    #[case::gzip_only(Some("gzip"))]
+    #[case::zstd_refused(Some("zstd;q=0"))]
+    #[case::wildcard(Some("*"))]
+    #[actix_web::test]
+    async fn test_response_unchanged_without_zstd(#[case] accept: Option<&str>) {
+        let json = hex_json(JSON_BYTES);
+        let mut req = test::TestRequest::post();
+        if let Some(accept) = accept {
+            req = req.insert_header(("accept-encoding", accept));
+        }
+
+        let response =
+            compress_state_response(&req.to_http_request(), HttpResponse::Ok().body(json.clone()))
+                .await
+                .unwrap();
+
+        assert!(response
+            .headers()
+            .get("content-encoding")
+            .is_none());
+        assert_eq!(
+            to_bytes(response.into_body())
+                .await
+                .unwrap(),
+            json
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_stream_body_left_for_the_middleware() {
+        let json = hex_json(JSON_BYTES);
+        let req = test::TestRequest::post()
+            .insert_header(("accept-encoding", "zstd"))
+            .to_http_request();
+        let stream = futures03::stream::once(futures03::future::ok::<_, actix_web::Error>(
+            web::Bytes::from(json.clone()),
+        ));
+
+        let response = compress_state_response(&req, HttpResponse::Ok().streaming(stream))
+            .await
+            .unwrap();
+
+        assert!(response
+            .headers()
+            .get("content-encoding")
+            .is_none());
+        assert_eq!(
+            to_bytes(response.into_body())
+                .await
+                .unwrap(),
+            json
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_body_uses_state_level() {
+        let json = hex_json(JSON_BYTES);
+
+        let (_, body) = call_state_like(json.clone(), Some("zstd")).await;
+
+        assert_eq!(body, zstd::bulk::compress(&json, STATE_ZSTD_LEVEL).unwrap());
+    }
 
     #[actix_web::test]
     async fn test_without_accept_encoding_header() {
