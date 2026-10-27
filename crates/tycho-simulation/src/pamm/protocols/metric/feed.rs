@@ -265,6 +265,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        book::chain_without_id,
         pamm::protocols::metric::test_support::{
             pool_server, pools_of, BELOW_FLOOR, FIRST_POOL, UNQUOTABLE,
         },
@@ -344,6 +345,19 @@ mod tests {
         let error = MetricPricesFeed::new(Chain::Ethereum, String::new()).unwrap_err();
 
         assert!(matches!(error, FeedError::InvalidInput(_)), "{error}");
+    }
+
+    #[test]
+    fn the_prices_feed_refuses_a_chain_with_no_numeric_chain_id() {
+        let error = MetricPricesFeed::new(chain_without_id(), "key".to_string()).unwrap_err();
+
+        assert!(error.is_fatal(), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("no chain id"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -233,7 +233,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::test_token_map,
+        book::{chain_without_id, test_token_map},
         rfq::protocols::hashflow::test_support::{
             prices_source, two_maker_prices, two_maker_server,
         },
@@ -419,6 +419,24 @@ mod tests {
             panic!("expected the first poll to be published");
         };
         assert_eq!(prices, two_maker_prices());
+    }
+
+    #[test]
+    fn the_prices_feed_refuses_a_chain_with_no_numeric_chain_id() {
+        let error = HashflowPricesFeed::new(
+            chain_without_id(),
+            "test_user".to_string(),
+            "test_key".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.is_fatal(), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("no chain id"),
+            "{error}"
+        );
     }
 
     #[test]

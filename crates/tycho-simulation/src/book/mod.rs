@@ -225,6 +225,13 @@ pub(crate) fn test_token_map(entries: &[(&Bytes, &str, u32)]) -> HashMap<Bytes, 
         .collect()
 }
 
+/// A chain that resolves to no numeric chain id: a custom chain the registry does not know, which
+/// only deserialization can produce.
+#[cfg(test)]
+pub(crate) fn chain_without_id() -> Chain {
+    serde_json::from_str(r#"{"custom":"unregistered"}"#).unwrap()
+}
+
 /// Asserts that two book sets hold the same components under the same ids, with equal states and
 /// provider times.
 #[cfg(test)]
