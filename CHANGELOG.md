@@ -1,3 +1,11 @@
+## [0.484.0](https://github.com/propeller-heads/tycho/compare/0.483.0...0.484.0) (2026-10-27)
+
+
+### Features
+
+* **indexer:** push jemalloc heap profiles to Pyroscope ([4ba4384](https://github.com/propeller-heads/tycho/commit/4ba4384b62f4fcadec3e574aa1b45e5f3a9924d8))
+* **indexer:** upgrade jemalloc and push heap profiles to Pyroscope ([#1674](https://github.com/propeller-heads/tycho/issues/1674)) ([edc3c8d](https://github.com/propeller-heads/tycho/commit/edc3c8df1726ccc46dab480a13a270185db8c521))
+
 ## [0.483.0](https://github.com/propeller-heads/tycho/compare/0.482.5...0.483.0) (2026-10-27)
 
 
