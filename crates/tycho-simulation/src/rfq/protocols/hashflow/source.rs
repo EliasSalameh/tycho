@@ -198,10 +198,10 @@ mod tests {
             levels::{Levels, PriceLevel},
         },
         rfq::protocols::hashflow::{
-            client::HashflowLevelsClient,
             state::HashflowState,
             test_support::{
-                assembler_for, two_maker_server, weth_usdc_levels, UNPRICED, USDC, WETH,
+                assembler_for, levels_client, prices_source, two_maker_server, weth_usdc_levels,
+                UNPRICED, USDC, WETH,
             },
             FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
         },
@@ -211,14 +211,8 @@ mod tests {
     /// A source whose endpoints live under `endpoint`, serving `tokens` (18 decimals each) above
     /// `min_tvl_usd`, with USDC and USDT as the USD quote tokens.
     fn source_for(endpoint: &str, tokens: &[&Bytes], min_tvl_usd: f64) -> HashflowBookSource {
-        let client = HashflowLevelsClient::new(
-            Some(endpoint),
-            1,
-            "test_user".to_string(),
-            "test_key".to_string(),
-        );
         HashflowBookSource {
-            prices: HashflowPricesSource::new(client),
+            prices: prices_source(endpoint),
             assembler: assembler_for(endpoint, tokens, min_tvl_usd),
         }
     }
@@ -408,14 +402,7 @@ mod tests {
         #[case] expected: FeedError,
     ) {
         let server = spawn_http_server(move |_| Some(("200 OK", body.to_string()))).await;
-        let client = HashflowLevelsClient::new(
-            Some(&server.url()),
-            1,
-            "test_user".to_string(),
-            "test_key".to_string(),
-        );
-
-        let error = client
+        let error = levels_client(&server.url())
             .fetch_price_levels(&["mm1".to_string()])
             .await
             .unwrap_err();

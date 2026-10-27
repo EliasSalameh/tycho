@@ -232,15 +232,15 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::{assert_same_books, test_token_map, BookFeedConfig},
+        book::{assert_same_books, BookFeedConfig},
         pamm::protocols::metric::{
             client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
             feed::MetricFeedBuilder,
             test_support::{
                 assembler_for, batch_body, bid_ask_json, error_entry, metadata_page, pool_json,
                 pool_server, prices_source, quote_entry, requested_pools,
-                serving_weth_usdc_above_100_usd, usdc, weth, BATCH_TARGET, BELOW_FLOOR, FIRST_POOL,
-                PAUSED, SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
+                serving_weth_usdc_above_100_usd, BATCH_TARGET, BELOW_FLOOR, FIRST_POOL, PAUSED,
+                SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
             },
         },
         snapshot_feed::http::test_support::{spawn_http_server, MockResponse},
@@ -278,11 +278,7 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "test_key");
-        source.assembler = source.assembler.with_fallback_router();
-        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
-            (&weth().address, "WETH", 18),
-            (&usdc().address, "USDC", 6),
-        ]));
+        source.assembler = serving_weth_usdc_above_100_usd().with_fallback_router();
 
         let books = source.fetch().await.unwrap().books;
 
@@ -340,11 +336,7 @@ mod tests {
         .await;
         let endpoint = server.url();
         let mut source = source(Chain::Ethereum, &endpoint, "key");
-        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
-            (&weth().address, "WETH", 18),
-            (&usdc().address, "USDC", 6),
-        ]));
-        source.assembler.book_config.min_tvl_usd = 100.0;
+        source.assembler = serving_weth_usdc_above_100_usd();
 
         let books = source.fetch().await.unwrap().books;
 
@@ -417,10 +409,7 @@ mod tests {
         .await;
         let endpoint = server.url();
         let mut source = source(Chain::Ethereum, &endpoint, "revoked");
-        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
-            (&weth().address, "WETH", 18),
-            (&usdc().address, "USDC", 6),
-        ]));
+        source.assembler = serving_weth_usdc_above_100_usd();
 
         let result = source.fetch().await;
 
@@ -471,10 +460,7 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "key");
-        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
-            (&weth().address, "WETH", 18),
-            (&usdc().address, "USDC", 6),
-        ]));
+        source.assembler = serving_weth_usdc_above_100_usd();
 
         let books = source.fetch().await.unwrap().books;
 
@@ -505,10 +491,7 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "key");
-        source.assembler.book_config.tokens = Arc::new(test_token_map(&[
-            (&weth().address, "WETH", 18),
-            (&usdc().address, "USDC", 6),
-        ]));
+        source.assembler = serving_weth_usdc_above_100_usd();
         let started = tokio::time::Instant::now();
 
         let error = source

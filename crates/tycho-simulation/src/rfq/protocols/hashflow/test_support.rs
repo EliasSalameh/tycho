@@ -113,11 +113,11 @@ pub(super) fn two_maker_prices() -> HashflowPrices {
     }
 }
 
+/// A levels client against the Hashflow deployment at `endpoint`.
+pub(super) fn levels_client(endpoint: &str) -> HashflowLevelsClient {
+    HashflowLevelsClient::new(Some(endpoint), 1, "test_user".to_string(), "test_key".to_string())
+}
+
 pub(super) fn prices_source(endpoint: &str) -> HashflowPricesSource {
-    HashflowPricesSource::new(HashflowLevelsClient::new(
-        Some(endpoint),
-        1,
-        "test_user".to_string(),
-        "test_key".to_string(),
-    ))
+    HashflowPricesSource::new(levels_client(endpoint))
 }
