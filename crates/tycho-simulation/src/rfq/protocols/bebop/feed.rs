@@ -152,7 +152,12 @@ impl BebopFeedBuilder {
         let assembler = BebopBookAssembler {
             protocol_system,
             book_config,
-            usd_quote_tokens,
+            usd_quote_tokens: Arc::new(
+                usd_quote_tokens
+                    .iter()
+                    .cloned()
+                    .collect(),
+            ),
             client: Arc::new(BebopClient::new(chain, ws_key, quote_timeout, origin)),
             all_pairs,
         };

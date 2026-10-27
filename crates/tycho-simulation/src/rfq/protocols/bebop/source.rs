@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     sync::Arc,
 };
 
@@ -109,7 +109,7 @@ pub struct BebopBookAssembler {
     pub(super) protocol_system: &'static str,
     pub(super) book_config: BookFeedConfig,
     /// USD-priced tokens the book's TVL is normalized into before the threshold applies.
-    pub(super) usd_quote_tokens: Arc<HashSet<Bytes>>,
+    pub(super) usd_quote_tokens: Arc<BTreeSet<Bytes>>,
     /// Requests binding quotes; shared with every state built here.
     pub(super) client: Arc<BebopClient>,
     /// Whether Bebop's pairs are published as one component or one each. Bebop names no
@@ -202,7 +202,8 @@ impl BebopBookAssembler {
     }
 
     /// A pair in the same update that prices `book`'s quote token in a USD quote token, in
-    /// either orientation.
+    /// either orientation. When several USD quote tokens price it, the one with the lowest
+    /// address wins, so every process assembling the same prices picks the same pair.
     fn conversion_book<'a>(
         &self,
         book: &BebopBook,
@@ -238,6 +239,9 @@ mod tests {
         },
     };
 
+    const USDC_HEX: &str = "A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const USDT_HEX: &str = "dAC17F958D2ee523a2206206994597C13D831ec7";
+
     /// Parses the pairs in one pricing update and builds books from them.
     fn build_books(
         assembler: &BebopBookAssembler,
@@ -272,7 +276,7 @@ mod tests {
                 tokens: Arc::new(tokens),
                 min_tvl_usd: tvl,
             },
-            usd_quote_tokens: Arc::new(HashSet::from([usdc])),
+            usd_quote_tokens: Arc::new(BTreeSet::from([usdc])),
             client: test_client(),
         }
     }
@@ -400,7 +404,7 @@ mod tests {
                 tokens: Arc::new(tokens),
                 min_tvl_usd: 0.0,
             },
-            usd_quote_tokens: Arc::new(HashSet::from([usdc])),
+            usd_quote_tokens: Arc::new(BTreeSet::from([usdc])),
             client: test_client(),
         };
 
@@ -485,6 +489,58 @@ mod tests {
             ),
             "Bebop signs once per route, got {second:?}"
         );
+    }
+
+    /// A token priced against both USDC and USDT converts through the USD quote token with the
+    /// lowest address, whatever order the set was filled in.
+    #[rstest]
+    #[case::usdc_first([USDC_HEX, USDT_HEX])]
+    #[case::usdt_first([USDT_HEX, USDC_HEX])]
+    fn the_usd_conversion_pair_does_not_depend_on_the_order_of_the_quote_tokens(
+        #[case] quote_tokens: [&str; 2],
+    ) {
+        const OTHER_HEX: &str = "1234567890123456789012345678901234567890";
+        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let other = Bytes::from_str(OTHER_HEX).unwrap();
+        let usd_quote_tokens: BTreeSet<Bytes> = quote_tokens
+            .iter()
+            .map(|token| Bytes::from_str(token).unwrap())
+            .collect();
+        let assembler = BebopBookAssembler {
+            book_config: BookFeedConfig {
+                chain: Chain::Ethereum,
+                tokens: Arc::new(test_token_map(&[(&weth, "WETH", 18), (&other, "OTHER", 18)])),
+                min_tvl_usd: 0.0,
+            },
+            usd_quote_tokens: Arc::new(usd_quote_tokens),
+            ..test_assembler(0.0)
+        };
+        let pair = |base: &str, quote: &str, price: f32| BebopPriceData {
+            base: hex::decode(base).unwrap(),
+            quote: hex::decode(quote).unwrap(),
+            last_update_ts: 1752617378,
+            bids: vec![price, 1000.0],
+            asks: vec![price, 1000.0],
+        };
+        let update = BebopPricingUpdate {
+            pairs: vec![
+                pair("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", OTHER_HEX, 100.0),
+                pair(OTHER_HEX, USDT_HEX, 20.0),
+                pair(OTHER_HEX, USDC_HEX, 10.0),
+            ],
+        };
+
+        let books = build_books(&assembler, update).unwrap();
+
+        let state = books
+            .values()
+            .next()
+            .unwrap()
+            .state
+            .as_any()
+            .downcast_ref::<BebopState>()
+            .expect("a Bebop state");
+        assert_eq!(state.usd_per_quote_token, 10.0);
     }
 
     fn binary_frame(update: &BebopPricingUpdate) -> WsPayload {
