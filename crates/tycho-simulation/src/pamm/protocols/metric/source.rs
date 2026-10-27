@@ -10,7 +10,7 @@ use crate::{
         client::MetricClient,
         models::{MetricMetadata, MetricPoolPrice, MetricPrices},
         state::MetricState,
-        FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM, PROTOCOL_TYPE,
+        PROTOCOL_TYPE,
     },
     snapshot_feed::{errors::FeedError, http::HttpSource},
 };
@@ -142,32 +142,17 @@ impl HttpSource for MetricPricesSource {
 /// Turns [`MetricPrices`] into the books [`MetricFeed`](super::feed::MetricFeed) would publish
 /// for the same poll: every unpaused, quotable pool between the configured tokens whose USD TVL
 /// clears the threshold, as simulate-ready books. Created by
-/// [`MetricFeedBuilder::build_book_assembler`] with the feed builder's protocol system, chain,
-/// tokens and TVL floor, or by [`new`](Self::new) where no trading key is at hand.
+/// [`MetricBookAssemblerBuilder`](super::feed::MetricBookAssemblerBuilder), which also makes the
+/// one a [`MetricFeed`](super::feed::MetricFeed) uses.
 #[derive(Clone, Debug)]
 pub struct MetricBookAssembler {
     /// The protocol system stamped on the components: the venue's own, or its fallback-router
-    /// one for an assembler made with `with_fallback_router()`.
+    /// one for a feed built with `with_fallback_router()`.
     pub(super) protocol_system: &'static str,
     pub(super) book_config: BookFeedConfig,
 }
 
 impl MetricBookAssembler {
-    /// Creates an assembler that serves the tokens and TVL floor of `book_config`. It needs no
-    /// trading key, since it makes no API call.
-    pub fn new(book_config: BookFeedConfig) -> Self {
-        Self { protocol_system: PROTOCOL_SYSTEM, book_config }
-    }
-
-    /// Settles this venue's swaps through Tycho's `MetricFallbackRouter`, which retries
-    /// against a solver-named fallback pool when the venue reverts. Components then carry
-    /// [`FALLBACK_PROTOCOL_SYSTEM`] rather than [`PROTOCOL_SYSTEM`], which is what selects
-    /// the fallback encoder. Off by default.
-    pub fn with_fallback_router(mut self) -> Self {
-        self.protocol_system = FALLBACK_PROTOCOL_SYSTEM;
-        self
-    }
-
     /// Returns the books for `prices`, keyed by component id.
     pub fn books(&self, prices: MetricPrices) -> HashMap<String, Book> {
         self.collect(prices).into_map()
@@ -235,12 +220,12 @@ mod tests {
         book::{assert_same_books, BookFeedConfig},
         pamm::protocols::metric::{
             client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
-            feed::MetricFeedBuilder,
+            feed::{MetricBookAssemblerBuilder, MetricFeedBuilder},
             test_support::{
                 assembler_for, batch_body, bid_ask_json, error_entry, metadata_page, pool_json,
                 pool_server, prices_source, quote_entry, requested_pools,
-                serving_weth_usdc_above_100_usd, BATCH_TARGET, BELOW_FLOOR, FIRST_POOL, PAUSED,
-                SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
+                serving_weth_usdc_above_100_usd, weth_usdc_book_config, BATCH_TARGET, BELOW_FLOOR,
+                FIRST_POOL, PAUSED, SECOND_POOL, SERVER_TS, UNKNOWN_POOL, UNQUOTABLE,
             },
         },
         snapshot_feed::http::test_support::{spawn_http_server, MockResponse},
@@ -278,7 +263,9 @@ mod tests {
         })
         .await;
         let mut source = source(Chain::Ethereum, &server.url(), "test_key");
-        source.assembler = serving_weth_usdc_above_100_usd().with_fallback_router();
+        source.assembler = MetricBookAssemblerBuilder::new(weth_usdc_book_config())
+            .with_fallback_router()
+            .build();
 
         let books = source.fetch().await.unwrap().books;
 
@@ -544,11 +531,12 @@ mod tests {
             .collect();
         let source = MetricBookSource {
             prices: MetricPricesSource::new(client),
-            assembler: MetricBookAssembler::new(BookFeedConfig {
+            assembler: MetricBookAssemblerBuilder::new(BookFeedConfig {
                 chain: Chain::Base,
                 tokens: Arc::new(tokens),
                 min_tvl_usd: 0.0,
-            }),
+            })
+            .build(),
         };
 
         let budget = MetricFeedBuilder::default_feed_config().request_timeout;

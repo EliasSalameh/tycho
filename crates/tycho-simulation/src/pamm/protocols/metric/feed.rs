@@ -13,6 +13,7 @@ use crate::{
         client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
         models::MetricPrices,
         source::{MetricBookAssembler, MetricBookSource, MetricPricesSource},
+        FALLBACK_PROTOCOL_SYSTEM, PROTOCOL_SYSTEM,
     },
     snapshot_feed::{
         errors::FeedError,
@@ -31,9 +32,12 @@ pub struct MetricFeed {
 }
 
 /// Builds a [`MetricFeed`] from the shared [`BookFeedConfig`] and the Bearer trading key. The feed
-/// talks to Metric's public API unless [`base_url`](Self::base_url) says otherwise.
+/// talks to Metric's public API unless [`base_url`](Self::base_url) says otherwise. The book
+/// settings are those of a [`MetricBookAssemblerBuilder`];
+/// [`with_assembler`](Self::with_assembler) supplies a built assembler instead.
 pub struct MetricFeedBuilder {
-    assembler: MetricBookAssembler,
+    assembler_builder: MetricBookAssemblerBuilder,
+    assembler: Option<MetricBookAssembler>,
     base_url: Option<String>,
     api_key: String,
     bid_ask_concurrency: NonZeroUsize,
@@ -45,12 +49,20 @@ impl MetricFeedBuilder {
     /// valid one no pool is quotable and the feed publishes empty books.
     pub fn new(book_config: BookFeedConfig, api_key: String) -> Self {
         Self {
-            assembler: MetricBookAssembler::new(book_config),
+            assembler_builder: MetricBookAssemblerBuilder::new(book_config),
+            assembler: None,
             base_url: None,
             api_key,
             bid_ask_concurrency: DEFAULT_BID_ASK_CONCURRENCY,
             feed_config: Self::default_feed_config(),
         }
+    }
+
+    /// Makes the feed's books with `assembler` instead of one built from this builder's book
+    /// settings, which are then unused.
+    pub fn with_assembler(mut self, assembler: MetricBookAssembler) -> Self {
+        self.assembler = Some(assembler);
+        self
     }
 
     /// Points the feed at another Metric deployment; [`build`](Self::build) rejects a value
@@ -105,7 +117,9 @@ impl MetricFeedBuilder {
     /// [`PROTOCOL_SYSTEM`](super::PROTOCOL_SYSTEM), which is what selects the fallback encoder.
     /// Off by default.
     pub fn with_fallback_router(mut self) -> Self {
-        self.assembler = self.assembler.with_fallback_router();
+        self.assembler_builder = self
+            .assembler_builder
+            .with_fallback_router();
         self
     }
 
@@ -119,25 +133,44 @@ impl MetricFeedBuilder {
     /// numeric chain id, which is all Metric's API is addressed by. Whether the venue serves
     /// that chain is Metric's own answer, and the first poll carries it.
     pub fn build(self) -> Result<MetricFeed, FeedError> {
-        let MetricFeedBuilder { assembler, base_url, api_key, bid_ask_concurrency, feed_config } =
-            self;
-        let mut prices_builder = MetricPricesFeedBuilder::new(assembler.book_config.chain, api_key)
-            .bid_ask_concurrency(bid_ask_concurrency)
-            .feed_config(feed_config);
-        if let Some(base_url) = base_url {
+        let chain = self.assembler_builder.book_config.chain;
+        let mut prices_builder = MetricPricesFeedBuilder::new(chain, self.api_key)
+            .bid_ask_concurrency(self.bid_ask_concurrency)
+            .feed_config(self.feed_config);
+        if let Some(base_url) = self.base_url {
             prices_builder = prices_builder.base_url(base_url);
         }
         let MetricPricesFeed { feed_config, source: prices } = prices_builder.build()?;
+        let assembler = match self.assembler {
+            Some(assembler) => assembler,
+            None => self.assembler_builder.build(),
+        };
         Ok(MetricFeed { feed_config, source: MetricBookSource { prices, assembler } })
     }
+}
 
-    /// Builds a [`MetricBookAssembler`] that produces the same books as [`build`](Self::build)
-    /// from externally supplied [`MetricPrices`](super::models::MetricPrices), such as those
-    /// published by [`MetricPricesFeed`](super::models::MetricPricesFeed). It does not poll or
-    /// call the API. It ignores the trading key, base URL, feed tuning and bid/ask concurrency,
-    /// and does not validate the key or URL.
-    pub fn build_book_assembler(self) -> MetricBookAssembler {
-        self.assembler
+/// Builds a [`MetricBookAssembler`] from the book settings alone: the shared [`BookFeedConfig`]
+/// and the protocol system. It needs no trading key, since it makes no API call. Pass the result
+/// to [`MetricFeedBuilder::with_assembler`] or use it on its own with prices from a
+/// [`MetricPricesFeed`].
+pub struct MetricBookAssemblerBuilder {
+    protocol_system: &'static str,
+    book_config: BookFeedConfig,
+}
+
+impl MetricBookAssemblerBuilder {
+    pub fn new(book_config: BookFeedConfig) -> Self {
+        Self { protocol_system: PROTOCOL_SYSTEM, book_config }
+    }
+
+    /// See [`MetricFeedBuilder::with_fallback_router`].
+    pub fn with_fallback_router(mut self) -> Self {
+        self.protocol_system = FALLBACK_PROTOCOL_SYSTEM;
+        self
+    }
+
+    pub fn build(self) -> MetricBookAssembler {
+        MetricBookAssembler { protocol_system: self.protocol_system, book_config: self.book_config }
     }
 }
 
@@ -270,11 +303,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        book::chain_without_id,
+        book::{assert_same_books, chain_without_id},
         pamm::protocols::metric::test_support::{
-            pool_server, pools_of, BELOW_FLOOR, FIRST_POOL, UNQUOTABLE,
+            pool_server, pools_of, prices_source, weth_usdc_book_config, BELOW_FLOOR, FIRST_POOL,
+            UNQUOTABLE,
         },
-        snapshot_feed::{SnapshotFeedEvent, SnapshotFeedStream},
+        snapshot_feed::{http::HttpSource, SnapshotFeedEvent, SnapshotFeedStream},
     };
 
     fn builder(chain: Chain) -> MetricFeedBuilder {
@@ -343,6 +377,43 @@ mod tests {
             panic!("expected the first poll to be published");
         };
         assert_eq!(pools_of(&prices), [FIRST_POOL, UNQUOTABLE, BELOW_FLOOR]);
+    }
+
+    /// An assembler built on its own makes the books the feed builder's own assembler makes from
+    /// the same settings.
+    #[tokio::test]
+    async fn the_assembler_builder_makes_the_books_the_feed_builder_does() {
+        let server = pool_server().await;
+        let prices = prices_source(Chain::Ethereum, &server.url(), "key")
+            .fetch()
+            .await
+            .unwrap();
+        let feed = MetricFeedBuilder::new(weth_usdc_book_config(), "key".to_string())
+            .with_fallback_router()
+            .build()
+            .unwrap();
+        let assembler = MetricBookAssemblerBuilder::new(weth_usdc_book_config())
+            .with_fallback_router()
+            .build();
+
+        let books = assembler.books(prices.clone());
+
+        assert_eq!(books.len(), 1);
+        assert_same_books(&books, &feed.source.assembler.books(prices));
+    }
+
+    #[test]
+    fn the_feed_makes_its_books_with_the_assembler_it_is_given() {
+        let assembler = MetricBookAssemblerBuilder::new(weth_usdc_book_config())
+            .with_fallback_router()
+            .build();
+
+        let feed = MetricFeedBuilder::new(weth_usdc_book_config(), "key".to_string())
+            .with_assembler(assembler)
+            .build()
+            .unwrap();
+
+        assert_eq!(feed.source.assembler.protocol_system, FALLBACK_PROTOCOL_SYSTEM);
     }
 
     #[test]

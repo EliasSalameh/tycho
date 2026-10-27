@@ -4,6 +4,7 @@ mod models;
 mod source;
 pub mod state;
 
+pub use feed::BebopBookAssemblerBuilder;
 pub use models::{BebopBook, BebopPrices};
 pub use source::BebopBookAssembler;
 

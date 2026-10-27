@@ -4,6 +4,7 @@ mod models;
 mod source;
 pub mod state;
 
+pub use feed::MetricBookAssemblerBuilder;
 pub use models::{MetricBidAskResponse, MetricMetadata, MetricPoolPrice, MetricPrices};
 pub use source::MetricBookAssembler;
 #[cfg(test)]

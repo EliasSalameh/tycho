@@ -13,6 +13,7 @@ use crate::{
     evm::protocol::utils::bytes_to_address,
     pamm::protocols::metric::{
         client::{MetricClient, DEFAULT_BID_ASK_CONCURRENCY},
+        feed::MetricBookAssemblerBuilder,
         models::MetricPrices,
         source::{MetricBookAssembler, MetricPricesSource},
     },
@@ -157,23 +158,29 @@ pub(super) fn prices_source(chain: Chain, base_url: &str, api_key: &str) -> Metr
 
 /// An assembler over an empty token universe and no TVL floor.
 pub(super) fn assembler_for(chain: Chain) -> MetricBookAssembler {
-    MetricBookAssembler::new(BookFeedConfig {
+    MetricBookAssemblerBuilder::new(BookFeedConfig {
         chain,
         tokens: Arc::new(HashMap::new()),
         min_tvl_usd: 0.0,
     })
+    .build()
 }
 
-/// An assembler serving `[WETH, USDC]` above a floor of 100 USD.
-pub(super) fn serving_weth_usdc_above_100_usd() -> MetricBookAssembler {
-    MetricBookAssembler::new(BookFeedConfig {
+/// A book config serving `[WETH, USDC]` above a floor of 100 USD.
+pub(super) fn weth_usdc_book_config() -> BookFeedConfig {
+    BookFeedConfig {
         chain: Chain::Ethereum,
         tokens: Arc::new(test_token_map(&[
             (&weth().address, "WETH", 18),
             (&usdc().address, "USDC", 6),
         ])),
         min_tvl_usd: 100.0,
-    })
+    }
+}
+
+/// An assembler serving `[WETH, USDC]` above a floor of 100 USD.
+pub(super) fn serving_weth_usdc_above_100_usd() -> MetricBookAssembler {
+    MetricBookAssemblerBuilder::new(weth_usdc_book_config()).build()
 }
 
 pub(super) fn pools_of(prices: &MetricPrices) -> Vec<String> {

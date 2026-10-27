@@ -100,8 +100,8 @@ fn decode_frame(payload: WsPayload) -> Result<Option<BebopPrices>, FeedError> {
 /// Turns [`BebopPrices`] into the books [`BebopFeed`](super::feed::BebopFeed) would publish for
 /// the same frame: each pair between the configured tokens whose normalized TVL clears the
 /// threshold, as simulate-ready books whose states request firm quotes through the assembler's
-/// client. Created by [`BebopFeedBuilder::build_book_assembler`] with the protocol system, book
-/// configuration, USD quote tokens, quote client and all-pairs setting.
+/// client. Created by [`BebopBookAssemblerBuilder`](super::feed::BebopBookAssemblerBuilder), which
+/// also makes the one a [`BebopFeed`](super::feed::BebopFeed) uses.
 #[derive(Clone, Debug)]
 pub struct BebopBookAssembler {
     /// The protocol system stamped on the components: the venue's own, or its fallback-router

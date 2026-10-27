@@ -73,8 +73,8 @@ impl HttpSource for HashflowPricesSource {
 /// publish for the same poll: every market maker's levels between the configured tokens whose
 /// normalized TVL clears the threshold, one simulate-ready book per maker and pair, whose states
 /// request firm quotes through the assembler's client. Created by
-/// [`HashflowFeedBuilder::build_book_assembler`] with the protocol system, book configuration,
-/// USD quote tokens, quote client and component layout.
+/// [`HashflowBookAssemblerBuilder`](super::feed::HashflowBookAssemblerBuilder), which also makes
+/// the one a [`HashflowFeed`](super::feed::HashflowFeed) uses.
 #[derive(Clone, Debug)]
 pub struct HashflowBookAssembler {
     /// The protocol system stamped on the components: the venue's own, or its fallback-router

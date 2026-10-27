@@ -106,12 +106,16 @@ for any protocol indexed by Tycho.
     book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
     the state, so its tokens and its directions agree
   - **Prices feed and book assembler (Bebop, Hashflow, Metric)**: `<Venue>PricesFeed` in
-    `feed.rs`, built by `<Venue>PricesFeedBuilder`, streams or polls the venue and publishes `<Venue>Prices` (`models.rs`, serde),
-    needing only the chain and credentials; `<Venue>BookAssembler::books(prices)` in `source.rs`
-    turns prices into the books the `*Feed` publishes. The `*Feed`'s book source holds both.
-    `Levels` and `PriceLevel` are re-exported from `book` because the price types expose them
-  - Per provider: `feed.rs` (the `*Feed`, the `*PricesFeed` where there is one, and their builders), `client.rs` (everything that talks to
-    the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
+    `feed.rs`, built by `<Venue>PricesFeedBuilder`, streams or polls the venue and publishes
+    `<Venue>Prices` (`models.rs`, serde), needing only the chain and credentials.
+    `<Venue>BookAssembler::books(prices)` in `source.rs` turns prices into the books the `*Feed`
+    publishes; `<Venue>BookAssemblerBuilder` in `feed.rs` makes it from the book settings, and
+    `<Venue>FeedBuilder::with_assembler` hands it to a feed. The `*Feed`'s book source holds both
+    halves. `Levels` and `PriceLevel` are re-exported from `book` because the price types expose
+    them
+  - Per provider: `feed.rs` (the `*Feed`, the `*PricesFeed` and the `*BookAssemblerBuilder`
+    where there are ones, and their builders), `client.rs` (everything that talks to the venue —
+    its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the
     binding-quote request the states make), `source.rs` (what to make of the answers — decoding,
     orientation, TVL normalization, building components and states), `state.rs`, `models.rs` and

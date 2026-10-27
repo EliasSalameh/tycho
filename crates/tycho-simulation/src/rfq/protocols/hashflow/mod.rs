@@ -4,6 +4,7 @@ mod models;
 mod source;
 pub mod state;
 
+pub use feed::HashflowBookAssemblerBuilder;
 pub use models::{HashflowMarketMakerLevels, HashflowPair, HashflowPrices};
 pub use source::HashflowBookAssembler;
 #[cfg(test)]
