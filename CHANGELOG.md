@@ -1,3 +1,29 @@
+## [0.484.0](https://github.com/propeller-heads/tycho/compare/0.483.0...0.484.0) (2026-10-27)
+
+
+### Features
+
+* **indexer:** push jemalloc heap profiles to Pyroscope ([4ba4384](https://github.com/propeller-heads/tycho/commit/4ba4384b62f4fcadec3e574aa1b45e5f3a9924d8))
+* **indexer:** upgrade jemalloc and push heap profiles to Pyroscope ([#1674](https://github.com/propeller-heads/tycho/issues/1674)) ([edc3c8d](https://github.com/propeller-heads/tycho/commit/edc3c8df1726ccc46dab480a13a270185db8c521))
+
+## [0.483.0](https://github.com/propeller-heads/tycho/compare/0.482.5...0.483.0) (2026-10-27)
+
+
+### Features
+
+* **indexer:** add the chains to the default profile name ([3723459](https://github.com/propeller-heads/tycho/commit/37234598f399768c7eb3ad6a66d13431438b7d93))
+* **indexer:** label profiles with the ENVIRONMENT variable ([4f771cf](https://github.com/propeller-heads/tycho/commit/4f771cf7ac7a3306c7ce42324dce33d23fab443e))
+* **indexer:** label profiles with the OpenTelemetry resource attributes ([311715a](https://github.com/propeller-heads/tycho/commit/311715a7539df401c68110f5a13f3cf2c638eb8f))
+* **indexer:** push continuous CPU profiles to Pyroscope ([6842575](https://github.com/propeller-heads/tycho/commit/684257561597f0036c4d53ba62a2eb6c10b78e36))
+* **indexer:** push continuous CPU profiles to Pyroscope ([#1668](https://github.com/propeller-heads/tycho/issues/1668)) ([5c37180](https://github.com/propeller-heads/tycho/commit/5c3718068eb5b1aef17731e35ba00f13b56dc710))
+
+
+### Bug Fixes
+
+* **deps:** bump pyroscope to 2.1.2 for the ruzstd advisory ([0434386](https://github.com/propeller-heads/tycho/commit/04343867568bb90088b6985fd3b250e043d5a7b2))
+* **indexer:** name default profiles after the first chain only ([3c05197](https://github.com/propeller-heads/tycho/commit/3c051970a5cf877e28612db76646e3e34bc7ce23))
+* **indexer:** reject a bad Pyroscope sample rate instead of crashing ([17f96f7](https://github.com/propeller-heads/tycho/commit/17f96f7181fb5da675d9c67ea6e2d9921c344d00))
+
 ## [0.482.5](https://github.com/propeller-heads/tycho/compare/0.482.4...0.482.5) (2026-10-26)
 
 
