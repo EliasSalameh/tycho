@@ -224,10 +224,12 @@ fn spawn_jemalloc_stats_reporter() {
     });
 }
 
-/// Starts continuous CPU profiling if `PYROSCOPE_SERVER_URL` is set and not empty, and returns
-/// `Ok(None)` otherwise. Samples all threads `PYROSCOPE_SAMPLE_RATE` times per CPU-second
-/// (default 100) and pushes the profiles to the server every 10 s, with the pod name as tag.
-/// Profiling runs until the process exits. Dropping the agent does not stop it.
+/// Starts continuous profiling if `PYROSCOPE_SERVER_URL` is set and not empty, and returns no
+/// agent otherwise. The CPU agent samples all threads `PYROSCOPE_SAMPLE_RATE` times per
+/// CPU-second (default 100). When jemalloc heap profiling is active (`_RJEM_MALLOC_CONF` with
+/// `prof:true,prof_active:true`), a second agent sends the jemalloc heap profile. Both push to the
+/// server every 10 s, with the pod name as tag. Profiling runs until the process exits. Dropping
+/// the agents does not stop it.
 ///
 /// The application name is `PYROSCOPE_APPLICATION_NAME`, else `OTEL_SERVICE_NAME` (the service
 /// name of the traces), else `tycho-indexer-<chain>` with the first chain, the one the indexer
@@ -235,16 +237,16 @@ fn spawn_jemalloc_stats_reporter() {
 ///
 /// # Errors
 ///
-/// Returns an error if `PYROSCOPE_SAMPLE_RATE` is not a number from 1 to 1_000_000, or if the
+/// Returns an error if `PYROSCOPE_SAMPLE_RATE` is not a number from 1 to 1_000_000, or if an
 /// agent fails to start.
-fn start_cpu_profiler(
+fn start_profilers(
     chains: &[String],
-) -> Result<Option<PyroscopeAgent<PyroscopeAgentRunning>>, pyroscope::PyroscopeError> {
+) -> Result<Vec<PyroscopeAgent<PyroscopeAgentRunning>>, pyroscope::PyroscopeError> {
     let Some(url) = env::var("PYROSCOPE_SERVER_URL")
         .ok()
         .filter(|url| !url.is_empty())
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let application = env::var("PYROSCOPE_APPLICATION_NAME")
         .or_else(|_| env::var("OTEL_SERVICE_NAME"))
@@ -267,19 +269,36 @@ fn start_cpu_profiler(
         Err(_) => 100,
     };
     let pod = env::var("HOSTNAME").unwrap_or_default();
-    let backend = pprof_backend(PprofConfig { sample_rate }, BackendConfig::default());
-    let agent = PyroscopeAgentBuilder::new(
-        url,
-        application,
-        sample_rate,
-        "pyroscope-rs",
-        env!("CARGO_PKG_VERSION"),
-        backend,
-    )
-    .tags(vec![("pod", pod.as_str())])
-    .build()?
-    .start()?;
-    Ok(Some(agent))
+    let start = |backend| {
+        PyroscopeAgentBuilder::new(
+            &url,
+            &application,
+            sample_rate,
+            "pyroscope-rs",
+            env!("CARGO_PKG_VERSION"),
+            backend,
+        )
+        .tags(vec![("pod", pod.as_str())])
+        .build()?
+        .start()
+    };
+    let cpu = start(pprof_backend(PprofConfig { sample_rate }, BackendConfig::default()))?;
+    #[cfg(feature = "jemalloc")]
+    if heap_profiling_active() {
+        return Ok(vec![cpu, start(pyroscope::backend::jemalloc_backend())?]);
+    }
+    Ok(vec![cpu])
+}
+
+/// Whether jemalloc samples allocations, i.e. it was started with `prof:true,prof_active:true`.
+#[cfg(feature = "jemalloc")]
+fn heap_profiling_active() -> bool {
+    jemalloc_pprof::PROF_CTL
+        .as_ref()
+        .is_some_and(|ctl| {
+            ctl.try_lock()
+                .is_ok_and(|ctl| ctl.activated())
+        })
 }
 
 /// Executes all extractors configured in the extractor configuration file and starts the server.
@@ -299,7 +318,7 @@ fn run_indexer(global_args: GlobalArgs, index_args: IndexArgs) -> Result<(), Ext
         .unwrap_or_else(|_| "3".to_string())
         .parse()
         .expect("MAIN_WORKER_THREADS must be a number");
-    let cpu_profiler = start_cpu_profiler(&index_args.chains);
+    let profilers = start_profilers(&index_args.chains);
     // We spawn a dedicated runtime for extraction
     let extraction_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(extraction_threads)
@@ -321,10 +340,10 @@ fn run_indexer(global_args: GlobalArgs, index_args: IndexArgs) -> Result<(), Ext
             let _metrics_task = create_metrics_exporter();
             #[cfg(feature = "jemalloc")]
             spawn_jemalloc_stats_reporter();
-            match &cpu_profiler {
-                Ok(Some(_)) => info!("Continuous CPU profiling started"),
-                Ok(None) => {}
-                Err(err) => warn!(%err, "Continuous CPU profiling failed to start"),
+            match &profilers {
+                Ok(agents) if agents.is_empty() => {}
+                Ok(agents) => info!(agents = agents.len(), "Continuous profiling started"),
+                Err(err) => warn!(%err, "Continuous profiling failed to start"),
             }
 
             info!("Starting Tycho");
@@ -931,11 +950,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cpu_profiler_rejects_invalid_sample_rate() {
+    fn test_profilers_reject_invalid_sample_rate() {
         std::env::set_var("PYROSCOPE_SERVER_URL", "http://localhost:4040");
         for rate in ["0", "1000001", "-1", "abc"] {
             std::env::set_var("PYROSCOPE_SAMPLE_RATE", rate);
-            assert!(super::start_cpu_profiler(&[]).is_err(), "rate {rate:?}");
+            assert!(super::start_profilers(&[]).is_err(), "rate {rate:?}");
         }
         std::env::remove_var("PYROSCOPE_SAMPLE_RATE");
         std::env::remove_var("PYROSCOPE_SERVER_URL");
