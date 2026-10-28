@@ -119,8 +119,18 @@ pub async fn run_http_poll_feed<S: HttpSource>(
 /// The provider-specific half of an HTTP-polling feed: one call fetches one complete snapshot.
 /// [`run_http_poll_feed`] owns the source and drives it by reference.
 pub trait HttpSource: Send + Sync {
+    /// The complete snapshot one poll yields. Each snapshot replaces the previous one, so it must
+    /// not be a delta.
     type Snapshot: Send + Sync + 'static;
 
+    /// Fetches one complete snapshot. The loop calls this once per poll and gives it the config's
+    /// `request_timeout`; an implementation may be written as `async fn` as long as its future is
+    /// `Send`.
+    ///
+    /// Return [`FeedError::Fatal`] when polling again cannot produce a different answer; this
+    /// ends the feed. Any other error, like a poll that overruns `request_timeout`, counts as one
+    /// failed poll toward `max_consecutive_failures` (unset by default, which polls forever) and
+    /// backs off before the next poll. Only `Ok` clears the failure count.
     fn fetch(&self) -> impl Future<Output = Result<Self::Snapshot, FeedError>> + Send;
 }
 
