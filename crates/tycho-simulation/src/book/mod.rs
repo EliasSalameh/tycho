@@ -25,6 +25,7 @@ pub mod all_pairs;
 pub(crate) mod component;
 pub use component::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE};
 pub(crate) mod levels;
+pub use levels::{Levels, PriceLevel};
 pub mod quote_tokens;
 pub(crate) mod sim;
 pub(crate) mod tvl;
@@ -74,6 +75,11 @@ impl Books {
                 free.insert(book);
             }
         }
+    }
+
+    /// Returns the books as the map stored in a snapshot.
+    pub fn into_map(self) -> HashMap<String, Book> {
+        self.0
     }
 }
 
@@ -135,14 +141,6 @@ pub struct BookFeedConfig {
 }
 
 impl BookFeedConfig {
-    /// The numeric chain id a venue's API addresses this chain by, or a [`FeedError::Fatal`]
-    /// naming the chain that has none.
-    pub(crate) fn chain_id(&self) -> Result<u64, FeedError> {
-        self.chain
-            .try_id()
-            .map_err(|error| FeedError::Fatal(format!("no chain id for {}: {error}", self.chain)))
-    }
-
     /// The two tokens of a pair, or `None` when either is outside the universe and the pair is
     /// therefore not served.
     pub(crate) fn pair_tokens(&self, a: &Bytes, b: &Bytes) -> Option<(&Token, &Token)> {
@@ -163,6 +161,14 @@ impl BookFeedConfig {
         }
         clears
     }
+}
+
+/// Returns the numeric id used by venue APIs for `chain`, or a [`FeedError::Fatal`] naming the
+/// chain if it has no numeric id.
+pub(crate) fn chain_id(chain: Chain) -> Result<u64, FeedError> {
+    chain
+        .try_id()
+        .map_err(|error| FeedError::Fatal(format!("no chain id for {chain}: {error}")))
 }
 
 /// Several book feeds, merged — [`SnapshotFeedStreams`] with the types every book feed uses.
@@ -217,6 +223,30 @@ pub(crate) fn test_token_map(entries: &[(&Bytes, &str, u32)]) -> HashMap<Bytes, 
             )
         })
         .collect()
+}
+
+/// A chain that resolves to no numeric chain id: a custom chain the registry does not know, which
+/// only deserialization can produce.
+#[cfg(test)]
+pub(crate) fn chain_without_id() -> Chain {
+    serde_json::from_str(r#"{"custom":"unregistered"}"#).unwrap()
+}
+
+/// Asserts that two book sets hold the same components under the same ids, with equal states and
+/// provider times.
+#[cfg(test)]
+pub(crate) fn assert_same_books(actual: &HashMap<String, Book>, expected: &HashMap<String, Book>) {
+    let mut actual_ids: Vec<_> = actual.keys().collect();
+    let mut expected_ids: Vec<_> = expected.keys().collect();
+    actual_ids.sort();
+    expected_ids.sort();
+    assert_eq!(actual_ids, expected_ids);
+    for (id, book) in actual {
+        let other = &expected[id];
+        assert_eq!(book.component, other.component, "{id}");
+        assert_eq!(book.updated_at, other.updated_at, "{id}");
+        assert!(book.state.eq(&*other.state), "{id}: states differ");
+    }
 }
 
 #[cfg(test)]
