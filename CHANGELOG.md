@@ -1,3 +1,23 @@
+## [0.490.0](https://github.com/propeller-heads/tycho/compare/0.489.0...0.490.0) (2026-10-28)
+
+
+### Features
+
+* **execution:** add AeroBasicExecutor for aero_basic pools ([d9e4ef4](https://github.com/propeller-heads/tycho/commit/d9e4ef4ce7945d97854a9b33d7d670b8b0613b1f))
+* **execution:** register aero_cl on the existing CL executors ([3dd49ee](https://github.com/propeller-heads/tycho/commit/3dd49ee05d23562a4d1ca7fa71e888cd9356f20b))
+* **execution:** route aero_cl swaps through the Slipstreams encoder ([4a055a7](https://github.com/propeller-heads/tycho/commit/4a055a7cf12f87c6c375c10954ded5716143c39b))
+* integrate AERO v1.1 aero_cl and aero_basic pools ([#1694](https://github.com/propeller-heads/tycho/issues/1694)) ([3eea1f3](https://github.com/propeller-heads/tycho/commit/3eea1f327445047fa2c61d7533fe59cee66070a3))
+* **integration-test:** test aero_cl and aero_basic pools ([ca4865d](https://github.com/propeller-heads/tycho/commit/ca4865d602c7735d293d701a805f067305ab4244))
+* **simulation:** add aero_basic native simulation ([72f6504](https://github.com/propeller-heads/tycho/commit/72f6504725d06e52436027a4259c652b4d0ad58c))
+* **simulation:** simulate aero_cl pools with the AERO swap hook fee ([15c4459](https://github.com/propeller-heads/tycho/commit/15c445914cb9e0adcbc0f00b4d329e3a9a8142d9))
+* **substreams:** index AERO v1.1 basic pools ([e3f669e](https://github.com/propeller-heads/tycho/commit/e3f669ebd4ea0ebb3c920ae089450fcdd594f17a))
+* **substreams:** index AERO v1.1 CL pools ([3c1c8da](https://github.com/propeller-heads/tycho/commit/3c1c8da38b2b07911269608eb9e06e49006606c3))
+
+
+### Bug Fixes
+
+* **execution:** pass forge fmt and Slither on the AeroBasicExecutor PR ([2291c08](https://github.com/propeller-heads/tycho/commit/2291c080405fbe019554e4c13dd3437f09fcca8b))
+
 ## [0.489.0](https://github.com/propeller-heads/tycho/compare/0.488.0...0.489.0) (2026-10-28)
 
 
