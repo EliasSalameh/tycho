@@ -1,3 +1,13 @@
+## [0.489.0](https://github.com/propeller-heads/tycho/compare/0.488.0...0.489.0) (2026-10-28)
+
+
+### Features
+
+* expose the HTTP poll feed, book helpers and the SwapEncoder trait ([#1689](https://github.com/propeller-heads/tycho/issues/1689)) ([978940e](https://github.com/propeller-heads/tycho/commit/978940e27d77eb05ce2d3386cb5e78692f8266ea))
+* **snapshot-feed:** expose default_ws_feed_config and document HttpSource ([4cb995e](https://github.com/propeller-heads/tycho/commit/4cb995eae828abba8ab9d87f59dbf4d0ebccc6b8))
+* **tycho-execution:** make the SwapEncoder trait public ([dc62016](https://github.com/propeller-heads/tycho/commit/dc6201603bb143f71ad2e2c332409afff3999e0b))
+* **tycho-simulation:** expose the HTTP poll feed and book helpers ([ac7794b](https://github.com/propeller-heads/tycho/commit/ac7794b65b9f8e094a915d1305fe2959de0a3a98))
+
 ## [0.488.0](https://github.com/propeller-heads/tycho/compare/0.487.0...0.488.0) (2026-10-28)
 
 
