@@ -71,6 +71,10 @@ for any protocol indexed by Tycho.
     from the builder's `default_feed_config()`). They publish what the source yields, count
     failures and back off (`failures.rs`), and name no venue: the `snapshot_feed{provider}` span
     comes from `SnapshotFeedStream::spawn(provider, feed)`, so a venue is spelled once
+  - the WebSocket half is public — `run_ws_feed`, `WsSource` and `WsPayload` — so a crate outside
+    Tycho implements a source and gets the reconnect, backoff, idle-timeout and staleness loop;
+    the `WsSource` contract is documented in `snapshot_feed/ws.rs`. `default_ws_feed_config` and
+    the HTTP loop stay crate-private
 - **`book/`**: the shared layer for off-chain market-maker venues, whose pricing arrives as a
   complete book rather than as chain state. A feed publishes `BookSnapshot<A>` (a provider's whole
   set of `Book`s at one anchor — `ReceivedAt` for every feed here; a block-anchored feed would pick
@@ -104,8 +108,17 @@ for any protocol indexed by Tycho.
     from those two types, so the four differ only in them and in what a venue refuses before a
     book is picked (`RefusesQuote::check_amount`). A book reporting no direction is left out of
     the state, so its tokens and its directions agree
-  - Per provider: `feed.rs` (the `*Feed` and its builder), `client.rs` (everything that talks to
-    the venue — its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
+  - **Prices feed and book assembler (Bebop, Hashflow, Metric)**: `<Venue>PricesFeed` in
+    `feed.rs`, built by `<Venue>PricesFeedBuilder`, streams or polls the venue and publishes
+    `<Venue>Prices` (`models.rs`, serde), needing only the chain and credentials.
+    `<Venue>BookAssembler::books(prices)` in `source.rs` turns prices into the books the `*Feed`
+    publishes; `<Venue>BookAssemblerBuilder` in `feed.rs` makes it from the book settings, and
+    `<Venue>FeedBuilder::with_assembler` hands it to a feed. The `*Feed`'s book source holds both
+    halves. `Levels` and `PriceLevel` are re-exported from `book` because the price types expose
+    them
+  - Per provider: `feed.rs` (the `*Feed`, the `*PricesFeed` and the `*BookAssemblerBuilder`
+    where there are ones, and their builders), `client.rs` (everything that talks to the venue —
+    its endpoints, its credentials, one pooled `reqwest::Client`, and every request:
     the book poll or WebSocket handshake the feed needs and, where the venue signs quotes, the
     binding-quote request the states make), `source.rs` (what to make of the answers — decoding,
     orientation, TVL normalization, building components and states), `state.rs`, `models.rs` and

@@ -1,3 +1,35 @@
+## [0.488.0](https://github.com/propeller-heads/tycho/compare/0.487.0...0.488.0) (2026-10-28)
+
+
+### Features
+
+* **execution:** add the Native and Liquorice fallback executors ([ca0dbc6](https://github.com/propeller-heads/tycho/commit/ca0dbc6d257314ef83e016dda76a74efd3544235))
+* **execution:** add the Native and Liquorice fallback executors ([#1670](https://github.com/propeller-heads/tycho/issues/1670)) ([cba1603](https://github.com/propeller-heads/tycho/commit/cba1603402405c5cd173ca1032c632cbcfdb5f08))
+
+
+### Bug Fixes
+
+* **execution:** give the Liquorice fallback config its venue addresses ([89695c7](https://github.com/propeller-heads/tycho/commit/89695c7b2f7398e01020465ff8ed16e43394aba8))
+
+## [0.487.0](https://github.com/propeller-heads/tycho/compare/0.486.0...0.487.0) (2026-10-28)
+
+
+### Features
+
+* **bebop:** split the pricing stream from the book assembly ([4f44df5](https://github.com/propeller-heads/tycho/commit/4f44df5c5827d6dbe165b2fdeb4729d1585ad696))
+* **book:** expose book parts that venue price types are built from ([39142e9](https://github.com/propeller-heads/tycho/commit/39142e9ad100201dc054958bbdb2ed7ebb069a00))
+* **hashflow:** split the price poll from the book assembly ([465f159](https://github.com/propeller-heads/tycho/commit/465f1599c75a4215df29738ccc3fff9a0967ff74))
+* **metric:** split the price poll from the book assembly ([b5267c0](https://github.com/propeller-heads/tycho/commit/b5267c0eca03ab0bf0e6d0bd1aa8d8649e8343ce))
+* **snapshot-feed:** let other crates implement a WebSocket source ([37b5247](https://github.com/propeller-heads/tycho/commit/37b5247719bcdb310163789f86a02b570eab2190))
+* **tycho-simulation:** give each assembler its own builder ([db4790e](https://github.com/propeller-heads/tycho/commit/db4790e6a805c25aa4cb1c4117e87e98a4ee5de1))
+* **tycho-simulation:** split RFQ and Metric feeds into prices and books ([#1685](https://github.com/propeller-heads/tycho/issues/1685)) ([f89e72d](https://github.com/propeller-heads/tycho/commit/f89e72d9c086d2a14e55601c869d9d0ed167c40f))
+
+
+### Bug Fixes
+
+* **bebop:** pick the USD conversion pair in a fixed order ([2e919cc](https://github.com/propeller-heads/tycho/commit/2e919ccfc02a8d9ce741f4b30d5a7d2a5e691300))
+* **hashflow:** share one HTTP client between quote and levels ([0f4de90](https://github.com/propeller-heads/tycho/commit/0f4de9011cde35c56027d7afbf813cd57e521de4))
+
 ## [0.486.0](https://github.com/propeller-heads/tycho/compare/0.485.1...0.486.0) (2026-10-27)
 
 
