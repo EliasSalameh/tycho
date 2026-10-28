@@ -1,3 +1,16 @@
+## [0.488.0](https://github.com/propeller-heads/tycho/compare/0.487.0...0.488.0) (2026-10-28)
+
+
+### Features
+
+* **execution:** add the Native and Liquorice fallback executors ([ca0dbc6](https://github.com/propeller-heads/tycho/commit/ca0dbc6d257314ef83e016dda76a74efd3544235))
+* **execution:** add the Native and Liquorice fallback executors ([#1670](https://github.com/propeller-heads/tycho/issues/1670)) ([cba1603](https://github.com/propeller-heads/tycho/commit/cba1603402405c5cd173ca1032c632cbcfdb5f08))
+
+
+### Bug Fixes
+
+* **execution:** give the Liquorice fallback config its venue addresses ([89695c7](https://github.com/propeller-heads/tycho/commit/89695c7b2f7398e01020465ff8ed16e43394aba8))
+
 ## [0.487.0](https://github.com/propeller-heads/tycho/compare/0.486.0...0.487.0) (2026-10-28)
 
 
