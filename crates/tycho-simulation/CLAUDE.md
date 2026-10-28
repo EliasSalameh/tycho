@@ -71,10 +71,11 @@ for any protocol indexed by Tycho.
     from the builder's `default_feed_config()`). They publish what the source yields, count
     failures and back off (`failures.rs`), and name no venue: the `snapshot_feed{provider}` span
     comes from `SnapshotFeedStream::spawn(provider, feed)`, so a venue is spelled once
-  - the WebSocket half is public — `run_ws_feed`, `WsSource` and `WsPayload` — so a crate outside
-    Tycho implements a source and gets the reconnect, backoff, idle-timeout and staleness loop;
-    the `WsSource` contract is documented in `snapshot_feed/ws.rs`. `default_ws_feed_config` and
-    the HTTP loop stay crate-private
+  - both loops are public, so a crate outside Tycho implements a source and gets the shared
+    reconnect or poll, backoff and staleness handling: `run_ws_feed`, `WsSource`, `WsPayload` and
+    `default_ws_feed_config` in `snapshot_feed/ws.rs`; `run_http_poll_feed`, `HttpSource`,
+    `default_http_feed_config`, `fetch_json` and `RefusalCheck` in `snapshot_feed/http.rs`. Each
+    source trait's contract is documented in its module
 - **`book/`**: the shared layer for off-chain market-maker venues, whose pricing arrives as a
   complete book rather than as chain state. A feed publishes `BookSnapshot<A>` (a provider's whole
   set of `Book`s at one anchor — `ReceivedAt` for every feed here; a block-anchored feed would pick
