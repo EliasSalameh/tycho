@@ -1,3 +1,10 @@
+## [0.490.1](https://github.com/propeller-heads/tycho/compare/0.490.0...0.490.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **storage:** rank token owners by numeric balance ([d089a58](https://github.com/propeller-heads/tycho/commit/d089a5872dc71d33ae09d4e8c4b14f7716ee076f))
+
 ## [0.490.0](https://github.com/propeller-heads/tycho/compare/0.489.0...0.490.0) (2026-10-28)
 
 
