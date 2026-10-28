@@ -44,7 +44,7 @@ contract AeroBasicExecutorTest is Constants, TestUtils, AeroBasicTestBase {
     {
         deal(token, executor, amount);
         vm.prank(executor);
-        IERC20(token).transfer(AERO_WETH_USDC_VOLATILE_POOL, amount);
+        assertTrue(IERC20(token).transfer(AERO_WETH_USDC_VOLATILE_POOL, amount));
     }
 
     function testGetTransferData() public view {
