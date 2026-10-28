@@ -11,7 +11,9 @@
       "router_v6": "0x4777A6B3A9A889ABfd4C7666Bdd2a7AB633293be"
     },
     "fallback:rfq:liquorice": {
-      "fallback_router": "0xF2E812386a8Ea1B700003fc4f2e402259446dEC1"
+      "fallback_router": "0xF2E812386a8Ea1B700003fc4f2e402259446dEC1",
+      "settlement_address": "0x43Dcd6586e6209eE7235A21bDC4aa301E5Bc44e8",
+      "balance_manager_address": "0x56B4720e40dF52C560E520238E34e9C33d57E593"
     },
     "uniswap_v4": {
       "angstrom_hook_address": "0x0000000aa232009084Bd71A5797d089AA4Edfad4"
