@@ -127,7 +127,8 @@
     "rfq:native": "0x3E3F6eb0f1e98Aa300dbECdF0dBC7d5E6870812D",
     "fallback:rfq:metric": "0x5ce13B5a3d41F22e28C4f76C115bd0c3ca70EE7C",
     "aero_basic": "0xCdBfd7f55Df4B60f34d8774c650feBB1baF5E34f",
-    "fallback:rfq:native": "0xcfa779974cCDaDD36A0D5dF6Ca61020C74aa038D"
+    "fallback:rfq:native": "0xcfa779974cCDaDD36A0D5dF6Ca61020C74aa038D",
+    "pancakeswap_infinity_cl": "0x4e80394e1cAF5cDeE6D57aEBa2dCE9B333b33E45"
   },
   "arc": {
     "uniswap_v2": "0x048eEE15C2Ec3b3114a6731f615088e79288Ef1c",
