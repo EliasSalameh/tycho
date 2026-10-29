@@ -23,12 +23,15 @@ use crate::{
 
 pub mod all_pairs;
 pub(crate) mod component;
-pub use component::{decode_swap_directions, SWAP_DIRECTIONS_ATTRIBUTE};
+pub use component::{
+    decode_swap_directions, pair_book, pair_component, pair_component_id, PairState,
+    SWAP_DIRECTIONS_ATTRIBUTE,
+};
 pub(crate) mod levels;
 pub use levels::{Levels, PriceLevel};
 pub mod quote_tokens;
-pub(crate) mod sim;
-pub(crate) mod tvl;
+pub mod sim;
+pub mod tvl;
 pub(crate) mod wire;
 
 /// One pair's book: the component that identifies the pair and the ready-to-simulate state
@@ -48,7 +51,7 @@ pub struct Book {
 /// The books a source has decoded out of one answer from its venue, each under the id of the
 /// component it carries.
 #[derive(Debug, Default, derive_more::Deref)]
-pub(crate) struct Books(HashMap<String, Book>);
+pub struct Books(HashMap<String, Book>);
 
 impl Books {
     pub fn new() -> Self {
@@ -111,7 +114,7 @@ pub struct BookSnapshot<A> {
 
 impl BookSnapshot<ReceivedAt> {
     /// `books` as the complete set a feed received just now.
-    pub(crate) fn received_now(books: Books) -> Self {
+    pub fn received_now(books: Books) -> Self {
         BookSnapshot { anchor: ReceivedAt(Utc::now()), books: Arc::new(books.0) }
     }
 }
@@ -143,13 +146,13 @@ pub struct BookFeedConfig {
 impl BookFeedConfig {
     /// The two tokens of a pair, or `None` when either is outside the universe and the pair is
     /// therefore not served.
-    pub(crate) fn pair_tokens(&self, a: &Bytes, b: &Bytes) -> Option<(&Token, &Token)> {
+    pub fn pair_tokens(&self, a: &Bytes, b: &Bytes) -> Option<(&Token, &Token)> {
         Some((self.tokens.get(a)?, self.tokens.get(b)?))
     }
 
     /// Whether a book with `tvl_usd` clears the floor; names the component it would be
     /// published under in the log line when it does not.
-    pub(crate) fn clears_min_tvl(&self, tvl_usd: f64, component_id: &Bytes) -> bool {
+    pub fn clears_min_tvl(&self, tvl_usd: f64, component_id: &Bytes) -> bool {
         let clears = tvl_usd >= self.min_tvl_usd;
         if !clears {
             debug!(

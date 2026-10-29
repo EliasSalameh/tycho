@@ -1,3 +1,40 @@
+## [0.490.1](https://github.com/propeller-heads/tycho/compare/0.490.0...0.490.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **storage:** rank token owners by numeric balance ([d089a58](https://github.com/propeller-heads/tycho/commit/d089a5872dc71d33ae09d4e8c4b14f7716ee076f))
+
+## [0.490.0](https://github.com/propeller-heads/tycho/compare/0.489.0...0.490.0) (2026-10-28)
+
+
+### Features
+
+* **execution:** add AeroBasicExecutor for aero_basic pools ([d9e4ef4](https://github.com/propeller-heads/tycho/commit/d9e4ef4ce7945d97854a9b33d7d670b8b0613b1f))
+* **execution:** register aero_cl on the existing CL executors ([3dd49ee](https://github.com/propeller-heads/tycho/commit/3dd49ee05d23562a4d1ca7fa71e888cd9356f20b))
+* **execution:** route aero_cl swaps through the Slipstreams encoder ([4a055a7](https://github.com/propeller-heads/tycho/commit/4a055a7cf12f87c6c375c10954ded5716143c39b))
+* integrate AERO v1.1 aero_cl and aero_basic pools ([#1694](https://github.com/propeller-heads/tycho/issues/1694)) ([3eea1f3](https://github.com/propeller-heads/tycho/commit/3eea1f327445047fa2c61d7533fe59cee66070a3))
+* **integration-test:** test aero_cl and aero_basic pools ([ca4865d](https://github.com/propeller-heads/tycho/commit/ca4865d602c7735d293d701a805f067305ab4244))
+* **simulation:** add aero_basic native simulation ([72f6504](https://github.com/propeller-heads/tycho/commit/72f6504725d06e52436027a4259c652b4d0ad58c))
+* **simulation:** simulate aero_cl pools with the AERO swap hook fee ([15c4459](https://github.com/propeller-heads/tycho/commit/15c445914cb9e0adcbc0f00b4d329e3a9a8142d9))
+* **substreams:** index AERO v1.1 basic pools ([e3f669e](https://github.com/propeller-heads/tycho/commit/e3f669ebd4ea0ebb3c920ae089450fcdd594f17a))
+* **substreams:** index AERO v1.1 CL pools ([3c1c8da](https://github.com/propeller-heads/tycho/commit/3c1c8da38b2b07911269608eb9e06e49006606c3))
+
+
+### Bug Fixes
+
+* **execution:** pass forge fmt and Slither on the AeroBasicExecutor PR ([2291c08](https://github.com/propeller-heads/tycho/commit/2291c080405fbe019554e4c13dd3437f09fcca8b))
+
+## [0.489.0](https://github.com/propeller-heads/tycho/compare/0.488.0...0.489.0) (2026-10-28)
+
+
+### Features
+
+* expose the HTTP poll feed, book helpers and the SwapEncoder trait ([#1689](https://github.com/propeller-heads/tycho/issues/1689)) ([978940e](https://github.com/propeller-heads/tycho/commit/978940e27d77eb05ce2d3386cb5e78692f8266ea))
+* **snapshot-feed:** expose default_ws_feed_config and document HttpSource ([4cb995e](https://github.com/propeller-heads/tycho/commit/4cb995eae828abba8ab9d87f59dbf4d0ebccc6b8))
+* **tycho-execution:** make the SwapEncoder trait public ([dc62016](https://github.com/propeller-heads/tycho/commit/dc6201603bb143f71ad2e2c332409afff3999e0b))
+* **tycho-simulation:** expose the HTTP poll feed and book helpers ([ac7794b](https://github.com/propeller-heads/tycho/commit/ac7794b65b9f8e094a915d1305fe2959de0a3a98))
+
 ## [0.488.0](https://github.com/propeller-heads/tycho/compare/0.487.0...0.488.0) (2026-10-28)
 
 

@@ -21,9 +21,12 @@ for any protocol indexed by Tycho.
   snapshot's `FailurePolicy`
 - **`evm/protocol/`**: Protocol implementations
   - **Native** (`uniswap_v2/`, `uniswap_v3/`, `uniswap_v4/`, `ekubo/`, `ekubo_v3/`, `cowamm/`,
-    `aerodrome_v1/`, `aerodrome_slipstreams/`, `velodrome_slipstreams/`, `pancakeswap_v2/`,
+    `aero_basic/`, `aerodrome_v1/`, `aerodrome_slipstreams/`, `velodrome_slipstreams/`,
+    `pancakeswap_v2/`,
     `ramses_v3/`, `ring_swap_v2/`, `lunarbase/`, `native_wrapper/`, `sky/`, `etherfi/`,
-    `erc4626/`, `rocketpool/`): Pure Rust math, no EVM execution.
+    `erc4626/`, `rocketpool/`): Pure Rust math, no EVM execution. `aerodrome_slipstreams/` also
+    serves Robinhood `up_v3` and AERO v1.1 `aero_cl` pools; for `aero_cl` the fee comes from the
+    pool's swap hook (`utils/slipstreams/aero_hook_fee.rs`) instead of a dynamic fee module.
     `cpmm.rs` / `clmm.rs` / `safe_math.rs` / `u256_num.rs` / `utils.rs` are shared math helpers,
     not protocols. Uniswap V4 hook handlers register per `(Chain, hook address)` in
     `uniswap_v4/hooks/hook_handler_creator.rs`; the generic VM fallback covers only Ethereum and
@@ -68,10 +71,11 @@ for any protocol indexed by Tycho.
     from the builder's `default_feed_config()`). They publish what the source yields, count
     failures and back off (`failures.rs`), and name no venue: the `snapshot_feed{provider}` span
     comes from `SnapshotFeedStream::spawn(provider, feed)`, so a venue is spelled once
-  - the WebSocket half is public — `run_ws_feed`, `WsSource` and `WsPayload` — so a crate outside
-    Tycho implements a source and gets the reconnect, backoff, idle-timeout and staleness loop;
-    the `WsSource` contract is documented in `snapshot_feed/ws.rs`. `default_ws_feed_config` and
-    the HTTP loop stay crate-private
+  - both loops are public, so a crate outside Tycho implements a source and gets the shared
+    reconnect or poll, backoff and staleness handling: `run_ws_feed`, `WsSource`, `WsPayload` and
+    `default_ws_feed_config` in `snapshot_feed/ws.rs`; `run_http_poll_feed`, `HttpSource`,
+    `default_http_feed_config`, `fetch_json` and `RefusalCheck` in `snapshot_feed/http.rs`. Each
+    source trait's contract is documented in its module
 - **`book/`**: the shared layer for off-chain market-maker venues, whose pricing arrives as a
   complete book rather than as chain state. A feed publishes `BookSnapshot<A>` (a provider's whole
   set of `Book`s at one anchor — `ReceivedAt` for every feed here; a block-anchored feed would pick

@@ -46,7 +46,7 @@ pub struct WsFeedConfig {
 /// The values every WebSocket feed builder starts from. The relation among them worth keeping
 /// through a retune: the withdrawal age is the idle window, so the moment the loop gives up on
 /// the socket it stops serving what that socket brought.
-pub(crate) fn default_ws_feed_config() -> WsFeedConfig {
+pub fn default_ws_feed_config() -> WsFeedConfig {
     WsFeedConfig {
         connect_timeout: Duration::from_secs(10),
         read_idle_timeout: Duration::from_secs(60),
