@@ -1,3 +1,11 @@
+## [0.491.1](https://github.com/propeller-heads/tycho/compare/0.491.0...0.491.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **client:** back off background snapshots per extractor ([74cdcd6](https://github.com/propeller-heads/tycho/commit/74cdcd6d9119275141ec73d03eb0b0b805f12beb))
+* **client:** back off background snapshots per extractor ([#1698](https://github.com/propeller-heads/tycho/issues/1698)) ([36668a7](https://github.com/propeller-heads/tycho/commit/36668a79b224e5de3e4ace225538266f08bdf92a))
+
 ## [0.491.0](https://github.com/propeller-heads/tycho/compare/0.490.1...0.491.0) (2026-10-29)
 
 
