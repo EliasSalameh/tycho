@@ -1,3 +1,11 @@
+## [0.491.0](https://github.com/propeller-heads/tycho/compare/0.490.1...0.491.0) (2026-10-29)
+
+
+### Features
+
+* **execution:** add the Robinhood PancakeSwap Infinity CL executor ([344515c](https://github.com/propeller-heads/tycho/commit/344515c7e916b572d80ddb7bed84595ce0f2bcae))
+* **execution:** add the Robinhood PancakeSwap Infinity CL executor ([#1699](https://github.com/propeller-heads/tycho/issues/1699)) ([73e50ce](https://github.com/propeller-heads/tycho/commit/73e50ce08d48f9bd549200ae73775c0ea7cdd7e8))
+
 ## [0.490.1](https://github.com/propeller-heads/tycho/compare/0.490.0...0.490.1) (2026-10-28)
 
 
